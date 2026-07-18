@@ -5,6 +5,8 @@ import {
   type CanonicalEvent,
   type CheckProposal,
   type EventStore,
+  type Likelihood,
+  type NarratorLikelihoodRecommendation,
   type RandomSource,
   type StructuredPlayApplication,
   type Trait,
@@ -57,6 +59,76 @@ const readTrait = async (io: StructuredPlayIO): Promise<Trait> => {
     }
     io.write("Enter Might, Wits, or Presence.\n");
   }
+};
+
+const readLikelihood = async (io: StructuredPlayIO): Promise<Likelihood> => {
+  while (true) {
+    const answer = (
+      await io.read("Confirm or change Likelihood — Unlikely (u), Even (e), Likely (l): ")
+    )
+      .trim()
+      .toLowerCase();
+    if (answer === "u") return "Unlikely";
+    if (answer === "e") return "Even";
+    if (answer === "l") return "Likely";
+    io.write("Choose u, e, or l.\n");
+  }
+};
+
+const presentNarratorLikelihoodRecommendation = (
+  io: StructuredPlayIO,
+  recommendation: NarratorLikelihoodRecommendation,
+): void => {
+  io.write("\nUnresolved Proposition\n");
+  io.write(`${recommendation.proposition.text}\n`);
+  io.write(`Narrator recommendation: ${recommendation.likelihood}\n`);
+  io.write("Supporting Established Facts:\n");
+  if (recommendation.evidence.length === 0) {
+    io.write("- None\n");
+  } else {
+    recommendation.evidence.forEach((fact) => io.write(`- ${fact.text}\n`));
+  }
+};
+
+const finishNarratorLikelihoodRecommendation = async (
+  app: StructuredPlayApplication,
+  io: StructuredPlayIO,
+  newlyAppendedEvents: readonly CanonicalEvent[] = [],
+): Promise<ApplicationView> => {
+  const recommendation = app.view().state.pendingNarratorRecommendation;
+  if (recommendation === null) return app.view();
+  presentNarratorLikelihoodRecommendation(io, recommendation);
+  if (newlyAppendedEvents.length > 0) {
+    io.write("Committed events:\n");
+    io.write(`${JSON.stringify(newlyAppendedEvents, null, 2)}\n`);
+  }
+  const likelihood = await readLikelihood(io);
+  const answered = app.submit({
+    type: "confirm-oracle-likelihood",
+    recommendationId: recommendation.id,
+    likelihood,
+  });
+  io.write(`\n${answered.message}\n`);
+  if (answered.status === "accepted") {
+    const resolution = answered.state.lastOracleResolution;
+    if (resolution !== null) {
+      io.write(`Confirmed Likelihood: ${resolution.trace.confirmedLikelihood}\n`);
+      io.write(`Rule: ${resolution.trace.rule.id}@${resolution.trace.rule.version}\n`);
+      io.write(`Percentile roll: ${resolution.trace.result.roll}\n`);
+      io.write(`Oracle answer: ${resolution.trace.result.answer}\n`);
+      if (resolution.trace.result.exceptionalConsequence !== null) {
+        io.write(
+          `Exceptional Consequence (${resolution.trace.result.exceptionalConsequence.kind}): ${resolution.trace.result.exceptionalConsequence.establishedFact.text}\n`,
+        );
+      }
+      io.write(`Established Fact: ${resolution.establishedFact.text}\n`);
+    }
+    io.write("Committed events:\n");
+    io.write(`${JSON.stringify(answered.appendedEvents, null, 2)}\n`);
+    io.write("Resulting state:\n");
+    io.write(`${JSON.stringify(answered.state, null, 2)}\n`);
+  }
+  return app.view();
 };
 
 const finishPendingChoice = async (
@@ -189,6 +261,51 @@ const finishCheckProposal = async (
   }
 };
 
+const chooseAvailableAction = async (
+  app: StructuredPlayApplication,
+  io: StructuredPlayIO,
+  view: ApplicationView,
+): Promise<ApplicationView> => {
+  view.availableActions.forEach((action, index) => {
+    io.write(`${index + 1}. ${action.label} [${action.kind}]\n`);
+  });
+  if (view.availableActions.length === 0) return app.view();
+
+  const choice = await io.read("\nChoose an action: ");
+  const selectedAction = view.availableActions[Number(choice) - 1];
+  if (selectedAction === undefined) {
+    io.write("That action is not available in the current Scene.\n");
+    return app.view();
+  }
+
+  const completed = app.submit({
+    type: "choose-action",
+    actionId: selectedAction.id,
+  });
+  io.write(`\n${completed.message}\n\n`);
+  if (completed.state.pendingCheckProposal !== null) {
+    return finishCheckProposal(app, io);
+  }
+  if (completed.state.pendingNarratorRecommendation !== null) {
+    return finishNarratorLikelihoodRecommendation(app, io, completed.appendedEvents);
+  }
+  io.write("Current state:\n");
+  io.write(`${JSON.stringify(completed.state, null, 2)}\n`);
+  const nextView = app.view();
+  if (selectedAction.kind === "Free Action" && nextView.availableActions.length > 0) {
+    const continueChoice = (
+      await io.read("Continue in the current Scene (c) or stop (s): ")
+    )
+      .trim()
+      .toLowerCase();
+    if (continueChoice === "c") {
+      io.write("\n");
+      return chooseAvailableAction(app, io, nextView);
+    }
+  }
+  return app.view();
+};
+
 export const runStructuredPlay = async ({
   io,
   eventStore = createInMemoryEventStore(),
@@ -207,6 +324,17 @@ export const runStructuredPlay = async ({
   if (current.state.pendingCheckProposal !== null) {
     io.write("Resuming Check Proposal.\n");
     return finishCheckProposal(app, io);
+  }
+  if (current.state.pendingNarratorRecommendation !== null) {
+    io.write("Resuming Narrator Likelihood recommendation.\n");
+    return finishNarratorLikelihoodRecommendation(app, io);
+  }
+  if (
+    current.state.playerCharacter !== null &&
+    current.state.activeScene !== null
+  ) {
+    io.write("Resuming Adventure.\n\n");
+    return chooseAvailableAction(app, io, current);
   }
 
   const name = await io.read("Player Character name: ");
@@ -232,26 +360,5 @@ export const runStructuredPlay = async ({
 
   const started = app.submit({ type: "begin-adventure" });
   io.write(`${started.message}\n\n`);
-  started.availableActions.forEach((action, index) => {
-    io.write(`${index + 1}. ${action.label} [${action.kind}]\n`);
-  });
-
-  const choice = await io.read("\nChoose an action: ");
-  const selectedAction = started.availableActions[Number(choice) - 1];
-  if (selectedAction === undefined) {
-    io.write("That action is not available in the current Scene.\n");
-    return app.view();
-  }
-
-  const completed = app.submit({
-    type: "choose-action",
-    actionId: selectedAction.id,
-  });
-  io.write(`\n${completed.message}\n\n`);
-  if (completed.state.pendingCheckProposal !== null) {
-    return finishCheckProposal(app, io);
-  }
-  io.write("Current state:\n");
-  io.write(`${JSON.stringify(completed.state, null, 2)}\n`);
-  return app.view();
+  return chooseAvailableAction(app, io, started);
 };

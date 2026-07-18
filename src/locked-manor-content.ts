@@ -4,6 +4,7 @@ import type {
   EstablishedFact,
   FictionalConsequence,
   MechanicalEffect,
+  OracleActionDefinition,
 } from "./structured-play.js";
 
 export const FRESH_FOOTPRINTS: EstablishedFact = {
@@ -85,5 +86,45 @@ export const DEFAULT_CHECK_ACTIONS: readonly CheckActionDefinition[] = [
         consequences: [SIDE_DOOR_OPEN],
       },
     },
+  },
+];
+
+export const DEFAULT_ORACLE_ACTIONS: readonly OracleActionDefinition[] = [
+  {
+    id: "ask-someone-inside-manor",
+    label: "Ask whether someone is inside the manor",
+    kind: "Oracle",
+    proposition: {
+      id: "someone-inside-manor",
+      text: "Is someone currently inside the manor?",
+      answers: {
+        Yes: {
+          id: "someone-inside-manor-yes",
+          text: "Someone is currently inside the manor.",
+        },
+        No: {
+          id: "someone-inside-manor-no",
+          text: "No one is currently inside the manor.",
+        },
+      },
+      exceptionalConsequences: {
+        favourable: {
+          kind: "favourable",
+          establishedFact: {
+            id: "brass-key-by-footprints",
+            text: "A recently dropped brass key lies beside the fresh footprints.",
+          },
+        },
+        adverse: {
+          kind: "adverse",
+          establishedFact: {
+            id: "sprung-warning-bell",
+            text: "The fresh footprints cross a sprung warning bell at the side entrance.",
+          },
+        },
+      },
+    },
+    recommendedLikelihood: "Likely",
+    supportingFactIds: [FRESH_FOOTPRINTS.id],
   },
 ];

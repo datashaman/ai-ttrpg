@@ -39,6 +39,7 @@ test("scripted Structured Play configures, starts, and completes a Free Action",
     "2",
     "1",
     "1",
+    "s",
   ]);
 
   const view = await runStructuredPlay({ io, eventStore });
@@ -69,6 +70,7 @@ test("invalid rating is explained and reprompted without an invalid setup event"
     "1",
     "2",
     "1",
+    "s",
   ]);
 
   await runStructuredPlay({ io, eventStore });
@@ -207,3 +209,110 @@ test("scripted Structured Play resumes a persisted Pending Choice without reroll
     ],
   );
 });
+
+test("scripted Structured Play visibly establishes a seeded Oracle answer after Player correction", async () => {
+  const eventStore = createInMemoryEventStore();
+  const oracle = scriptedIO([
+    "Mara Vey",
+    "she/her",
+    "Find her missing sister",
+    "0",
+    "2",
+    "1",
+    "1",
+    "c",
+    "3",
+    "u",
+  ]);
+  const view = await runStructuredPlay({
+    io: oracle.io,
+    eventStore,
+    randomSource: createSeededRandomSource(140),
+  });
+  const transcript = oracle.output.join("");
+
+  assert.match(transcript, /Ask whether someone is inside the manor \[Oracle\]/);
+  assert.match(transcript, /Unresolved Proposition/);
+  assert.match(transcript, /Is someone currently inside the manor\?/);
+  assert.match(transcript, /Narrator recommendation: Likely/);
+  assert.match(transcript, /Fresh footprints lead from the manor gate/);
+  assert.match(transcript, /Confirmed Likelihood: Unlikely/);
+  assert.match(transcript, /micro-ruleset\.oracle@1\.0\.0/);
+  assert.match(transcript, /Percentile roll: 30/);
+  assert.match(transcript, /No one is currently inside the manor\./);
+  assert.match(transcript, /"type": "NarratorLikelihoodRecommended"/);
+  assert.match(transcript, /"type": "OracleAnswered"/);
+  assert.equal(view.state.lastOracleResolution?.trace.result.answer, "No");
+  assert.equal(
+    view.state.lastOracleResolution?.trace.confirmedLikelihood,
+    "Unlikely",
+  );
+  assert.ok(
+    view.state.establishedFacts.some(
+      (fact) => fact.id === "someone-inside-manor-no",
+    ),
+  );
+});
+
+for (const example of [
+  {
+    label: "Yes",
+    seed: 140,
+    likelihoodChoice: "l",
+    answer: "Yes",
+    exceptionalKind: null,
+  },
+  {
+    label: "No",
+    seed: 1327,
+    likelihoodChoice: "l",
+    answer: "No",
+    exceptionalKind: null,
+  },
+  {
+    label: "01–05 extreme",
+    seed: 2023,
+    likelihoodChoice: "e",
+    answer: "Yes",
+    exceptionalKind: "favourable",
+  },
+  {
+    label: "96–100 extreme",
+    seed: 1894,
+    likelihoodChoice: "e",
+    answer: "No",
+    exceptionalKind: "adverse",
+  },
+] as const) {
+  test(`seeded Oracle end-to-end covers ${example.label}`, async () => {
+    const eventStore = createInMemoryEventStore();
+    const setup = scriptedIO([
+      "Mara Vey",
+      "she/her",
+      "Find her missing sister",
+      "0",
+      "2",
+      "1",
+      "1",
+      "s",
+    ]);
+    await runStructuredPlay({ io: setup.io, eventStore });
+    const oracle = scriptedIO(["3", example.likelihoodChoice]);
+
+    const view = await runStructuredPlay({
+      io: oracle.io,
+      eventStore,
+      randomSource: createSeededRandomSource(example.seed),
+    });
+
+    assert.equal(
+      view.state.lastOracleResolution?.trace.result.answer,
+      example.answer,
+    );
+    assert.equal(
+      view.state.lastOracleResolution?.trace.result.exceptionalConsequence
+        ?.kind ?? null,
+      example.exceptionalKind,
+    );
+  });
+}

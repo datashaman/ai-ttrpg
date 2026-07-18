@@ -1,5 +1,5 @@
 export interface RandomSource {
-  rollDie(sides: 6): number;
+  rollDie(sides: 6 | 100): number;
   metadata(): { readonly source: string; readonly seed: number | null };
   position(): number;
 }
