@@ -21,22 +21,33 @@ export interface PlayerCharacter {
 
 export interface GameState {
   readonly playerCharacter: PlayerCharacter | null;
-  readonly activeScene: null;
+  readonly activeScene: "arrival" | null;
   readonly establishedFacts: readonly string[];
 }
 
-export interface CanonicalEvent {
+interface EventEnvelope<EventType extends string, Payload> {
   readonly id: string;
   readonly streamId: "adventure";
   readonly sequence: number;
-  readonly type: "PlayerCharacterConfigured";
+  readonly type: EventType;
   readonly schemaVersion: 1;
   readonly timestamp: string;
   readonly origin: "structured-play";
   readonly correlationId: string;
   readonly causationId: string;
-  readonly payload: PlayerCharacter;
+  readonly payload: Payload;
 }
+
+export type CanonicalEvent =
+  | EventEnvelope<"PlayerCharacterConfigured", PlayerCharacter>
+  | EventEnvelope<"SceneStarted", { readonly scene: "arrival" }>
+  | EventEnvelope<
+      "FreeActionCompleted",
+      {
+        readonly actionId: "survey-manor";
+        readonly establishedFact: string;
+      }
+    >;
 
 export interface ConfigurePlayerCharacter {
   readonly type: "configure-player-character";
@@ -46,23 +57,64 @@ export interface ConfigurePlayerCharacter {
   readonly traits: TraitRatings;
 }
 
+export interface BeginAdventure {
+  readonly type: "begin-adventure";
+}
+
+export interface ChooseAction {
+  readonly type: "choose-action";
+  readonly actionId: "survey-manor";
+}
+
+export type StructuredPlayInput =
+  | ConfigurePlayerCharacter
+  | BeginAdventure
+  | ChooseAction;
+
+export interface AvailableAction {
+  readonly id: "survey-manor";
+  readonly label: "Survey the manor grounds";
+  readonly kind: "Free Action";
+}
+
 export interface AcceptedResult {
   readonly status: "accepted";
   readonly message: string;
   readonly state: GameState;
+  readonly availableActions: readonly AvailableAction[];
   readonly appendedEvents: readonly CanonicalEvent[];
 }
 
 export interface RejectedResult {
   readonly status: "rejected";
-  readonly code: "invalid-identity" | "invalid-trait-assignment";
+  readonly code:
+    | "invalid-identity"
+    | "invalid-trait-assignment"
+    | "action-unavailable"
+    | "player-character-required";
   readonly message: string;
   readonly state: GameState;
+  readonly availableActions: readonly AvailableAction[];
   readonly appendedEvents: readonly [];
 }
 
+export interface ApplicationView {
+  readonly state: GameState;
+  readonly availableActions: readonly AvailableAction[];
+}
+
+export interface EventStore {
+  readAll(): readonly CanonicalEvent[];
+  append(event: CanonicalEvent): void;
+}
+
 export interface StructuredPlayApplication {
-  submit(input: ConfigurePlayerCharacter): AcceptedResult | RejectedResult;
+  submit(input: StructuredPlayInput): AcceptedResult | RejectedResult;
+  view(): ApplicationView;
+}
+
+export interface StructuredPlayOptions {
+  readonly eventStore?: EventStore;
 }
 
 const STARTING_INVENTORY = [
@@ -78,20 +130,150 @@ const initialState = (): GameState => ({
   establishedFacts: [],
 });
 
+const availableActionsFor = (
+  state: GameState,
+): readonly AvailableAction[] =>
+  state.activeScene === "arrival" && state.establishedFacts.length === 0
+    ? [
+        {
+          id: "survey-manor",
+          label: "Survey the manor grounds",
+          kind: "Free Action",
+        },
+      ]
+    : [];
+
 const project = (events: readonly CanonicalEvent[]): GameState =>
   events.reduce<GameState>(
-    (state, event) => ({
-      ...state,
-      playerCharacter: event.payload,
-    }),
+    (state, event) => {
+      switch (event.type) {
+        case "PlayerCharacterConfigured":
+          return { ...state, playerCharacter: event.payload };
+        case "SceneStarted":
+          return { ...state, activeScene: event.payload.scene };
+        case "FreeActionCompleted":
+          return {
+            ...state,
+            establishedFacts: [
+              ...state.establishedFacts,
+              event.payload.establishedFact,
+            ],
+          };
+      }
+    },
     initialState(),
   );
 
-export const createStructuredPlayApplication = (): StructuredPlayApplication => {
+export const createInMemoryEventStore = (): EventStore => {
   const events: CanonicalEvent[] = [];
 
   return {
+    readAll: () => [...events],
+    append: (event) => {
+      events.push(event);
+    },
+  };
+};
+
+export const createStructuredPlayApplication = (
+  options: StructuredPlayOptions = {},
+): StructuredPlayApplication => {
+  const eventStore = options.eventStore ?? createInMemoryEventStore();
+
+  return {
+    view() {
+      const state = project(eventStore.readAll());
+      return {
+        state,
+        availableActions: availableActionsFor(state),
+      };
+    },
     submit(input) {
+      const events = eventStore.readAll();
+      if (input.type === "choose-action") {
+        const state = project(events);
+        const actionIsAvailable = availableActionsFor(state).some(
+          (action) => action.id === input.actionId,
+        );
+        if (!actionIsAvailable) {
+          return {
+            status: "rejected",
+            code: "action-unavailable",
+            message: "That action is not available in the current Scene.",
+            state,
+            availableActions: availableActionsFor(state),
+            appendedEvents: [],
+          };
+        }
+
+        const eventId = randomUUID();
+        const event: CanonicalEvent = {
+          id: eventId,
+          streamId: "adventure",
+          sequence: events.length + 1,
+          type: "FreeActionCompleted",
+          schemaVersion: 1,
+          timestamp: new Date().toISOString(),
+          origin: "structured-play",
+          correlationId: eventId,
+          causationId: eventId,
+          payload: {
+            actionId: input.actionId,
+            establishedFact:
+              "Fresh footprints lead from the manor gate toward a dark side entrance.",
+          },
+        };
+        eventStore.append(event);
+        const nextState = project(eventStore.readAll());
+
+        return {
+          status: "accepted",
+          message:
+            "Fresh footprints lead from the manor gate toward a dark side entrance.",
+          state: nextState,
+          availableActions: availableActionsFor(nextState),
+          appendedEvents: [event],
+        };
+      }
+
+      if (input.type === "begin-adventure") {
+        const state = project(events);
+        if (state.playerCharacter === null) {
+          return {
+            status: "rejected",
+            code: "player-character-required",
+            message: "Configure the Player Character before beginning.",
+            state,
+            availableActions: availableActionsFor(state),
+            appendedEvents: [],
+          };
+        }
+
+        const eventId = randomUUID();
+        const event: CanonicalEvent = {
+          id: eventId,
+          streamId: "adventure",
+          sequence: events.length + 1,
+          type: "SceneStarted",
+          schemaVersion: 1,
+          timestamp: new Date().toISOString(),
+          origin: "structured-play",
+          correlationId: eventId,
+          causationId: eventId,
+          payload: { scene: "arrival" },
+        };
+        eventStore.append(event);
+        const nextState = project(eventStore.readAll());
+
+        return {
+          status: "accepted",
+          message: "The Adventure begins at the locked manor.",
+          state: nextState,
+          availableActions: availableActionsFor(nextState),
+          appendedEvents: [event],
+        };
+      }
+
       if (
         input.name.trim() === "" ||
         input.pronouns.trim() === "" ||
@@ -102,6 +284,7 @@ export const createStructuredPlayApplication = (): StructuredPlayApplication => 
           code: "invalid-identity",
           message: "Name, pronouns, and Motivation are required.",
           state: project(events),
+          availableActions: [],
           appendedEvents: [],
         };
       }
@@ -120,6 +303,7 @@ export const createStructuredPlayApplication = (): StructuredPlayApplication => 
           code: "invalid-trait-assignment",
           message: "Assign +0, +1, and +2 exactly once among the three Traits.",
           state: project(events),
+          availableActions: [],
           appendedEvents: [],
         };
       }
@@ -147,12 +331,13 @@ export const createStructuredPlayApplication = (): StructuredPlayApplication => 
         payload: playerCharacter,
       };
 
-      events.push(event);
+      eventStore.append(event);
 
       return {
         status: "accepted",
         message: `${playerCharacter.name} is ready for the Adventure.`,
-        state: project(events),
+        state: project(eventStore.readAll()),
+        availableActions: [],
         appendedEvents: [event],
       };
     },

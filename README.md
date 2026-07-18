@@ -5,7 +5,25 @@ An AI-assisted tabletop role-playing game engine designed around a deterministic
 The engine will interpret natural-language player input, retrieve relevant rules and world facts, resolve mechanics, persist campaign state, and narrate the result. Language models assist with interpretation and presentation; they do not own dice, rules, or canonical state.
 
 > [!IMPORTANT]
-> This repository is currently in the design and planning stage. It contains the implementation specification and interactive architecture diagrams, but no runnable engine yet.
+> This repository is in early implementation. The current runnable slice covers Player Character setup, entry into the arrival Scene, and one Structured Play Free Action; it is not yet a complete Adventure.
+
+## Try the current slice
+
+Requirements: Node.js 20 or newer.
+
+```sh
+npm install
+npm start
+```
+
+Choose a name, pronouns, Motivation, and assign `0`, `1`, and `2` exactly once among Might, Wits, and Presence. The CLI then starts the arrival Scene and offers its authored Free Action. This path does not call a language model.
+
+For development:
+
+```sh
+npm test
+npm run typecheck
+```
 
 ## Goals
 
