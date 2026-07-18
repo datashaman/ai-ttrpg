@@ -5,7 +5,7 @@ An AI-assisted tabletop role-playing game engine designed around a deterministic
 The engine will interpret natural-language player input, retrieve relevant rules and world facts, resolve mechanics, persist campaign state, and narrate the result. Language models assist with interpretation and presentation; they do not own dice, rules, or canonical state.
 
 > [!IMPORTANT]
-> This repository is in early implementation. The current runnable slice covers Player Character setup, entry into the arrival Scene, and one Structured Play Free Action; it is not yet a complete Adventure.
+> This repository is in early implementation. The current runnable slice covers Player Character setup, entry into the arrival Scene, a Structured Play Free Action, and a confirmed Check; it is not yet a complete Adventure.
 
 ## Try the current slice
 
@@ -16,7 +16,7 @@ npm install
 npm start
 ```
 
-Choose a name, pronouns, Motivation, and assign `0`, `1`, and `2` exactly once among Might, Wits, and Presence. The CLI then starts the arrival Scene and offers its authored Free Action. This path does not call a language model.
+Choose a name, pronouns, Motivation, and assign `0`, `1`, and `2` exactly once among Might, Wits, and Presence. The CLI then starts the arrival Scene and offers authored Free Actions and uncertain actions. An uncertain action presents its complete Check Proposal before you confirm, correct, revise, or withdraw it. A confirmed Check rolls `2d6 + Trait`, commits only its predeclared matching stakes, and displays an auditable rules trace. This path does not call a language model.
 
 For development:
 
@@ -104,21 +104,9 @@ The first vertical slice is intentionally narrow: one campaign, one player, text
 
 See the [full implementation plan](docs/engine-implementation-plan.md#implementation-phases) for phase-specific deliverables and acceptance criteria.
 
-## Current repository structure
-
-```text
-.
-├── README.md
-└── docs
-    ├── engine-implementation-plan.md
-    ├── event-sourcing.html
-    ├── player-turn.html
-    └── system-architecture.html
-```
-
 ## Contributing
 
-The project is pre-implementation, so the most useful contributions are currently design reviews, executable scenario proposals, domain terminology corrections, and feedback on authority boundaries. Before proposing implementation work, read the implementation plan and keep changes aligned with its core rule: models may assist, but only deterministic code may commit mechanically significant facts.
+The project is in early implementation, so useful contributions include vertical slices, executable scenarios, design reviews, domain terminology corrections, and feedback on authority boundaries. Before proposing implementation work, read the implementation plan and keep changes aligned with its core rule: models may assist, but only deterministic code may commit mechanically significant facts.
 
 ## License
 
