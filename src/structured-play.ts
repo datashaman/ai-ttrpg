@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createInMemoryEventStore } from "./in-memory-event-store.js";
 import {
   DEFAULT_CHECK_ACTIONS,
+  DEFAULT_ORACLE_ACTIONS,
   FRESH_FOOTPRINTS,
 } from "./locked-manor-content.js";
 import {
@@ -16,6 +17,8 @@ export type { RandomSource } from "./random-source.js";
 
 export type Trait = "Might" | "Wits" | "Presence";
 export type CheckOutcome = "Setback" | "Success with Cost" | "Clean Success";
+export type Likelihood = "Unlikely" | "Even" | "Likely";
+export type OracleAnswer = "Yes" | "No";
 export type Health = 0 | 1 | 2 | 3;
 export type Resolve = 0 | 1 | 2 | 3;
 
@@ -24,6 +27,57 @@ export type TraitRatings = Readonly<Record<Trait, 0 | 1 | 2>>;
 export interface EstablishedFact {
   readonly id: string;
   readonly text: string;
+}
+
+export interface UnresolvedProposition {
+  readonly id: string;
+  readonly text: string;
+  readonly answers: Readonly<Record<OracleAnswer, EstablishedFact>>;
+  readonly exceptionalConsequences: Readonly<
+    Record<ExceptionalConsequence["kind"], ExceptionalConsequence>
+  >;
+}
+
+export interface NarratorLikelihoodRecommendation {
+  readonly id: string;
+  readonly proposition: UnresolvedProposition;
+  readonly likelihood: Likelihood;
+  readonly evidence: readonly EstablishedFact[];
+}
+
+export interface ExceptionalConsequence {
+  readonly kind: "favourable" | "adverse";
+  readonly establishedFact: EstablishedFact;
+}
+
+export interface OracleTrace {
+  readonly rule: {
+    readonly id: "micro-ruleset.oracle";
+    readonly version: "1.0.0";
+  };
+  readonly random: {
+    readonly source: string;
+    readonly seed: number | null;
+    readonly inputs: readonly [number];
+  };
+  readonly proposition: UnresolvedProposition;
+  readonly recommendation: {
+    readonly likelihood: Likelihood;
+    readonly evidence: readonly EstablishedFact[];
+  };
+  readonly confirmedLikelihood: Likelihood;
+  readonly result: {
+    readonly roll: number;
+    readonly yesThreshold: 25 | 50 | 75;
+    readonly answer: OracleAnswer;
+    readonly exceptionalConsequence: ExceptionalConsequence | null;
+  };
+}
+
+export interface OracleResolution {
+  readonly recommendationId: string;
+  readonly establishedFact: EstablishedFact;
+  readonly trace: OracleTrace;
 }
 
 export interface PlayerCharacter {
@@ -144,6 +198,9 @@ export interface GameState {
   readonly pendingCheckProposal: CheckProposal | null;
   readonly pendingChoice: PendingChoice | null;
   readonly lastCheckResolution: CheckResolution | null;
+  readonly pendingNarratorRecommendation: NarratorLikelihoodRecommendation | null;
+  readonly lastOracleResolution: OracleResolution | null;
+  readonly resolvedPropositionIds: readonly string[];
 }
 
 interface EventEnvelope<EventType extends string, Payload> {
@@ -175,6 +232,10 @@ interface EventPayloads {
   readonly CheckProposalWithdrawn: { readonly proposalId: string };
   readonly CheckRollRevealed: { readonly pendingChoice: PendingChoice };
   readonly CheckResolved: CheckResolution;
+  readonly NarratorLikelihoodRecommended: {
+    readonly recommendation: NarratorLikelihoodRecommendation;
+  };
+  readonly OracleAnswered: OracleResolution;
 }
 
 export type CanonicalEvent = {
@@ -236,6 +297,19 @@ export interface AmendCheckStakes {
   readonly stakes: CheckStakes;
 }
 
+export interface RecommendLikelihood {
+  readonly type: "recommend-likelihood";
+  readonly proposition: UnresolvedProposition;
+  readonly likelihood: Likelihood;
+  readonly supportingFactIds: readonly string[];
+}
+
+export interface ConfirmOracleLikelihood {
+  readonly type: "confirm-oracle-likelihood";
+  readonly recommendationId: string;
+  readonly likelihood: Likelihood;
+}
+
 export type StructuredPlayInput =
   | ConfigurePlayerCharacter
   | BeginAdventure
@@ -245,7 +319,9 @@ export type StructuredPlayInput =
   | CorrectCheckProposal
   | ReviseCheckAction
   | WithdrawCheckProposal
-  | AmendCheckStakes;
+  | AmendCheckStakes
+  | RecommendLikelihood
+  | ConfirmOracleLikelihood;
 
 export interface FreeAction {
   readonly id: "survey-manor";
@@ -259,12 +335,24 @@ export interface CheckAction {
   readonly kind: "Check";
 }
 
-export type AvailableAction = FreeAction | CheckAction;
+export interface OracleAction {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: "Oracle";
+}
+
+export type AvailableAction = FreeAction | CheckAction | OracleAction;
 
 export interface CheckActionDefinition extends CheckAction {
   readonly goal: string;
   readonly trait: Trait;
   readonly stakes: CheckStakes;
+}
+
+export interface OracleActionDefinition extends OracleAction {
+  readonly proposition: UnresolvedProposition;
+  readonly recommendedLikelihood: Likelihood;
+  readonly supportingFactIds: readonly string[];
 }
 
 export interface AcceptedResult {
@@ -287,7 +375,9 @@ export interface RejectedResult {
     | "pending-choice-unavailable"
     | "resolve-unavailable"
     | "invalid-check-correction"
-    | "check-stakes-immutable";
+    | "check-stakes-immutable"
+    | "invalid-likelihood-recommendation"
+    | "likelihood-recommendation-unavailable";
   readonly message: string;
   readonly state: GameState;
   readonly availableActions: readonly AvailableAction[];
@@ -313,6 +403,7 @@ export interface StructuredPlayOptions {
   readonly eventStore?: EventStore;
   readonly randomSource?: RandomSource;
   readonly checkActions?: readonly CheckActionDefinition[];
+  readonly oracleActions?: readonly OracleActionDefinition[];
 }
 
 const STARTING_INVENTORY = [
@@ -329,10 +420,67 @@ const initialState = (): GameState => ({
   pendingCheckProposal: null,
   pendingChoice: null,
   lastCheckResolution: null,
+  pendingNarratorRecommendation: null,
+  lastOracleResolution: null,
+  resolvedPropositionIds: [],
 });
 
 const isTrait = (value: unknown): value is Trait =>
   value === "Might" || value === "Wits" || value === "Presence";
+
+const isLikelihood = (value: unknown): value is Likelihood =>
+  value === "Unlikely" || value === "Even" || value === "Likely";
+
+const validateEstablishedFact = (fact: unknown): fact is EstablishedFact => {
+  if (typeof fact !== "object" || fact === null) return false;
+  const candidate = fact as Partial<EstablishedFact>;
+  return (
+    typeof candidate.id === "string" &&
+    candidate.id.trim() !== "" &&
+    typeof candidate.text === "string" &&
+    candidate.text.trim() !== ""
+  );
+};
+
+const validateUnresolvedProposition = (
+  proposition: unknown,
+): proposition is UnresolvedProposition => {
+  if (typeof proposition !== "object" || proposition === null) return false;
+  const candidate = proposition as Partial<UnresolvedProposition>;
+  const isStructurallyValid =
+    typeof candidate.id === "string" &&
+    candidate.id.trim() !== "" &&
+    typeof candidate.text === "string" &&
+    candidate.text.trim() !== "" &&
+    validateEstablishedFact(candidate.answers?.Yes) &&
+    validateEstablishedFact(candidate.answers?.No) &&
+    candidate.answers.Yes.id !== candidate.answers.No.id &&
+    candidate.exceptionalConsequences?.favourable?.kind === "favourable" &&
+    validateEstablishedFact(
+      candidate.exceptionalConsequences.favourable.establishedFact,
+    ) &&
+    candidate.exceptionalConsequences?.adverse?.kind === "adverse" &&
+    validateEstablishedFact(
+      candidate.exceptionalConsequences.adverse.establishedFact,
+    );
+  if (!isStructurallyValid) return false;
+  const factIds = [
+    candidate.answers.Yes.id,
+    candidate.answers.No.id,
+    candidate.exceptionalConsequences.favourable.establishedFact.id,
+    candidate.exceptionalConsequences.adverse.establishedFact.id,
+  ];
+  return new Set(factIds).size === factIds.length;
+};
+
+const oracleEstablishedFactsFor = (
+  proposition: UnresolvedProposition,
+): readonly EstablishedFact[] => [
+  ...Object.values(proposition.answers),
+  ...Object.values(proposition.exceptionalConsequences).map(
+    (consequence) => consequence.establishedFact,
+  ),
+];
 
 const validateOutcomeConsequence = (
   consequence: unknown,
@@ -388,14 +536,31 @@ const validateCheckAction = (action: CheckActionDefinition): void => {
   }
 };
 
+const validateOracleAction = (action: OracleActionDefinition): void => {
+  if (
+    typeof action.id !== "string" ||
+    action.id.trim() === "" ||
+    typeof action.label !== "string" ||
+    action.label.trim() === "" ||
+    action.kind !== "Oracle" ||
+    !validateUnresolvedProposition(action.proposition) ||
+    !isLikelihood(action.recommendedLikelihood) ||
+    new Set(action.supportingFactIds).size !== action.supportingFactIds.length
+  ) {
+    throw new Error(`Invalid Oracle action definition: ${action.id || "<unknown>"}.`);
+  }
+};
+
 const availableActionsFor = (
   state: GameState,
   checkActions: readonly CheckActionDefinition[],
+  oracleActions: readonly OracleActionDefinition[],
 ): readonly AvailableAction[] => {
   if (
     state.activeScene !== "arrival" ||
     state.pendingCheckProposal !== null ||
-    state.pendingChoice !== null
+    state.pendingChoice !== null ||
+    state.pendingNarratorRecommendation !== null
   ) {
     return [];
   }
@@ -411,6 +576,23 @@ const availableActionsFor = (
   if (state.lastCheckResolution === null) {
     actions.push(
       ...checkActions.map(({ id, label, kind }) => ({ id, label, kind })),
+    );
+  }
+  if (oracleActions.some(
+    (action) => !state.resolvedPropositionIds.includes(action.proposition.id),
+  )) {
+    actions.push(
+      ...oracleActions
+        .filter(
+          (action) =>
+            !state.resolvedPropositionIds.includes(action.proposition.id),
+        )
+        .filter((action) =>
+          action.supportingFactIds.every((factId) =>
+            state.establishedFacts.some((fact) => fact.id === factId),
+          ),
+        )
+        .map(({ id, label, kind }) => ({ id, label, kind })),
     );
   }
   return actions;
@@ -487,6 +669,33 @@ const project = (events: readonly CanonicalEvent[]): GameState =>
           pendingChoice: null,
           lastCheckResolution: event.payload,
         };
+      case "NarratorLikelihoodRecommended":
+        return {
+          ...state,
+          pendingNarratorRecommendation: event.payload.recommendation,
+        };
+      case "OracleAnswered":
+        const exceptionalFact =
+          event.payload.trace.result.exceptionalConsequence?.establishedFact;
+        const stateWithOracleFacts = applyConsequences(state, [
+          { type: "establish-fact", fact: event.payload.establishedFact },
+          ...(exceptionalFact === undefined
+            ? []
+            : [{ type: "establish-fact" as const, fact: exceptionalFact }]),
+        ]);
+        return {
+          ...stateWithOracleFacts,
+          pendingNarratorRecommendation: null,
+          lastOracleResolution: event.payload,
+          resolvedPropositionIds: state.resolvedPropositionIds.includes(
+            event.payload.trace.proposition.id,
+          )
+            ? state.resolvedPropositionIds
+            : [
+                ...state.resolvedPropositionIds,
+                event.payload.trace.proposition.id,
+              ],
+        };
     }
   }, initialState());
 
@@ -516,8 +725,49 @@ const createProposal = (definition: CheckActionDefinition): CheckProposal => ({
   stakes: definition.stakes,
 });
 
+const establishedFactsFor = (
+  factIds: readonly string[],
+  state: GameState,
+): readonly EstablishedFact[] | null => {
+  const evidence = factIds.map((factId) =>
+    state.establishedFacts.find((fact) => fact.id === factId),
+  );
+  return evidence.every(
+    (fact): fact is EstablishedFact => fact !== undefined,
+  )
+    ? evidence
+    : null;
+};
+
+const createNarratorLikelihoodRecommendation = (
+  proposition: UnresolvedProposition,
+  likelihood: Likelihood,
+  evidence: readonly EstablishedFact[],
+): NarratorLikelihoodRecommendation => ({
+  id: randomUUID(),
+  proposition,
+  likelihood,
+  evidence,
+});
+
 const outcomeFor = (total: number): CheckOutcome =>
   total <= 6 ? "Setback" : total <= 9 ? "Success with Cost" : "Clean Success";
+
+const yesThresholdFor = (likelihood: Likelihood): 25 | 50 | 75 =>
+  likelihood === "Unlikely" ? 25 : likelihood === "Even" ? 50 : 75;
+
+const exceptionalConsequenceFor = (
+  roll: number,
+  proposition: UnresolvedProposition,
+): ExceptionalConsequence | null => {
+  if (roll <= 5) {
+    return proposition.exceptionalConsequences.favourable;
+  }
+  if (roll >= 96) {
+    return proposition.exceptionalConsequences.adverse;
+  }
+  return null;
+};
 
 export const createStructuredPlayApplication = (
   options: StructuredPlayOptions = {},
@@ -525,11 +775,37 @@ export const createStructuredPlayApplication = (
   const eventStore = options.eventStore ?? createInMemoryEventStore();
   const randomSource = options.randomSource ?? createSeededRandomSource(Date.now());
   const checkActions = options.checkActions ?? DEFAULT_CHECK_ACTIONS;
+  const oracleActions = options.oracleActions ?? DEFAULT_ORACLE_ACTIONS;
   checkActions.forEach(validateCheckAction);
+  oracleActions.forEach(validateOracleAction);
+  const checkEstablishedFactIds = new Set(
+    checkActions.flatMap((action) =>
+      Object.values(action.stakes).flatMap((stake) =>
+        stake.consequences.flatMap((consequence: OutcomeConsequence) =>
+          consequence.type === "establish-fact" ? [consequence.fact.id] : [],
+        ),
+      ),
+    ),
+  );
+  const authoredOracleFactIds = new Set(
+    oracleActions.flatMap((action) =>
+      oracleEstablishedFactsFor(action.proposition).map((fact) => fact.id),
+    ),
+  );
+  for (const factId of authoredOracleFactIds) {
+    if (checkEstablishedFactIds.has(factId)) {
+      throw new Error(
+        `Check actions cannot establish Oracle-owned fact: ${factId}.`,
+      );
+    }
+  }
 
   const view = (): ApplicationView => {
     const state = project(eventStore.readAll());
-    return { state, availableActions: availableActionsFor(state, checkActions) };
+    return {
+      state,
+      availableActions: availableActionsFor(state, checkActions, oracleActions),
+    };
   };
 
   const reject = (
@@ -541,7 +817,7 @@ export const createStructuredPlayApplication = (
     code,
     message,
     state,
-    availableActions: availableActionsFor(state, checkActions),
+    availableActions: availableActionsFor(state, checkActions, oracleActions),
     appendedEvents: [],
   });
 
@@ -569,9 +845,31 @@ export const createStructuredPlayApplication = (
       status: "accepted",
       message,
       state,
-      availableActions: availableActionsFor(state, checkActions),
+      availableActions: availableActionsFor(state, checkActions, oracleActions),
       appendedEvents,
     };
+  };
+
+  const commitNarratorRecommendation = (
+    proposition: UnresolvedProposition,
+    likelihood: Likelihood,
+    evidence: readonly EstablishedFact[],
+    commandId: string,
+  ): AcceptedResult => {
+    const recommendation = createNarratorLikelihoodRecommendation(
+      proposition,
+      likelihood,
+      evidence,
+    );
+    const event = append(
+      "NarratorLikelihoodRecommended",
+      { recommendation },
+      commandId,
+    );
+    return accept(
+      `The Narrator recommends ${recommendation.likelihood}; the Player must confirm or change it before rolling.`,
+      [event],
+    );
   };
 
   return {
@@ -580,6 +878,105 @@ export const createStructuredPlayApplication = (
       const events = eventStore.readAll();
       const state = project(events);
       const commandId = randomUUID();
+
+      if (input.type === "confirm-oracle-likelihood") {
+        const recommendation = state.pendingNarratorRecommendation;
+        if (
+          recommendation?.id !== input.recommendationId ||
+          !isLikelihood(input.likelihood)
+        ) {
+          return reject(
+            "likelihood-recommendation-unavailable",
+            "That Narrator Likelihood recommendation is no longer available.",
+            state,
+          );
+        }
+
+        const roll = randomSource.rollDie(100);
+        const yesThreshold = yesThresholdFor(input.likelihood);
+        const answer: OracleAnswer = roll <= yesThreshold ? "Yes" : "No";
+        const exceptionalConsequence = exceptionalConsequenceFor(
+          roll,
+          recommendation.proposition,
+        );
+        const establishedFact = recommendation.proposition.answers[answer];
+        const recommendationTrace = {
+          likelihood: recommendation.likelihood,
+          evidence: recommendation.evidence,
+        };
+        const resolution: OracleResolution = {
+          recommendationId: recommendation.id,
+          establishedFact,
+          trace: {
+            rule: { id: "micro-ruleset.oracle", version: "1.0.0" },
+            random: {
+              ...randomSource.metadata(),
+              inputs: [roll],
+            },
+            proposition: recommendation.proposition,
+            recommendation: recommendationTrace,
+            confirmedLikelihood: input.likelihood,
+            result: {
+              roll,
+              yesThreshold,
+              answer,
+              exceptionalConsequence,
+            },
+          },
+        };
+        const event = append("OracleAnswered", resolution, commandId);
+        return accept(
+          `${answer} (${roll} <= ${yesThreshold}): ${establishedFact.text}`,
+          [event],
+        );
+      }
+
+      if (input.type === "recommend-likelihood") {
+        if (
+          state.activeScene === null ||
+          state.pendingCheckProposal !== null ||
+          state.pendingChoice !== null ||
+          state.pendingNarratorRecommendation !== null
+        ) {
+          return reject(
+            "likelihood-recommendation-unavailable",
+            "A Narrator Likelihood recommendation cannot be made right now.",
+            state,
+          );
+        }
+        if (
+          !isLikelihood(input.likelihood) ||
+          !validateUnresolvedProposition(input.proposition) ||
+          input.supportingFactIds.length === 0 ||
+          state.resolvedPropositionIds.includes(input.proposition.id) ||
+          oracleEstablishedFactsFor(input.proposition).some((fact) =>
+            checkEstablishedFactIds.has(fact.id),
+          )
+        ) {
+          return reject(
+            "invalid-likelihood-recommendation",
+            "A Narrator recommendation requires a valid Unresolved Proposition and Likelihood.",
+            state,
+          );
+        }
+        const evidence = establishedFactsFor(input.supportingFactIds, state);
+        if (
+          new Set(input.supportingFactIds).size !== input.supportingFactIds.length ||
+          evidence === null
+        ) {
+          return reject(
+            "invalid-likelihood-recommendation",
+            "Oracle evidence must name distinct Player-visible Established Facts.",
+            state,
+          );
+        }
+        return commitNarratorRecommendation(
+          input.proposition,
+          input.likelihood,
+          evidence,
+          commandId,
+        );
+      }
 
       if (input.type === "resolve-pending-check") {
         const pendingChoice = state.pendingChoice;
@@ -789,9 +1186,11 @@ export const createStructuredPlayApplication = (
       }
 
       if (input.type === "choose-action") {
-        const actionIsAvailable = availableActionsFor(state, checkActions).some(
-          (action) => action.id === input.actionId,
-        );
+        const actionIsAvailable = availableActionsFor(
+          state,
+          checkActions,
+          oracleActions,
+        ).some((action) => action.id === input.actionId);
         if (!actionIsAvailable) {
           return reject(
             "action-unavailable",
@@ -807,6 +1206,29 @@ export const createStructuredPlayApplication = (
             commandId,
           );
           return accept(FRESH_FOOTPRINTS.text, [event]);
+        }
+
+        const oracleDefinition = oracleActions.find(
+          (action) => action.id === input.actionId,
+        );
+        if (oracleDefinition !== undefined) {
+          const evidence = establishedFactsFor(
+            oracleDefinition.supportingFactIds,
+            state,
+          );
+          if (evidence === null) {
+            return reject(
+              "invalid-likelihood-recommendation",
+              "Oracle evidence must name Player-visible Established Facts.",
+              state,
+            );
+          }
+          return commitNarratorRecommendation(
+            oracleDefinition.proposition,
+            oracleDefinition.recommendedLikelihood,
+            evidence,
+            commandId,
+          );
         }
 
         const definition = checkActions.find(
