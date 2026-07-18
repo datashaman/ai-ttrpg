@@ -4,6 +4,11 @@ export type Trait = "Might" | "Wits" | "Presence";
 
 export type TraitRatings = Readonly<Record<Trait, 0 | 1 | 2>>;
 
+export interface EstablishedFact {
+  readonly id: "fresh-footprints";
+  readonly text: string;
+}
+
 export interface PlayerCharacter {
   readonly name: string;
   readonly pronouns: string;
@@ -22,7 +27,7 @@ export interface PlayerCharacter {
 export interface GameState {
   readonly playerCharacter: PlayerCharacter | null;
   readonly activeScene: "arrival" | null;
-  readonly establishedFacts: readonly string[];
+  readonly establishedFacts: readonly EstablishedFact[];
 }
 
 interface EventEnvelope<EventType extends string, Payload> {
@@ -45,7 +50,7 @@ export type CanonicalEvent =
       "FreeActionCompleted",
       {
         readonly actionId: "survey-manor";
-        readonly establishedFact: string;
+        readonly establishedFact: EstablishedFact;
       }
     >;
 
@@ -91,6 +96,7 @@ export interface RejectedResult {
     | "invalid-identity"
     | "invalid-trait-assignment"
     | "action-unavailable"
+    | "player-character-already-configured"
     | "player-character-required";
   readonly message: string;
   readonly state: GameState;
@@ -124,6 +130,11 @@ const STARTING_INVENTORY = [
   "Field Kit",
 ] as const;
 
+const FRESH_FOOTPRINTS: EstablishedFact = {
+  id: "fresh-footprints",
+  text: "Fresh footprints lead from the manor gate toward a dark side entrance.",
+};
+
 const initialState = (): GameState => ({
   playerCharacter: null,
   activeScene: null,
@@ -133,7 +144,8 @@ const initialState = (): GameState => ({
 const availableActionsFor = (
   state: GameState,
 ): readonly AvailableAction[] =>
-  state.activeScene === "arrival" && state.establishedFacts.length === 0
+  state.activeScene === "arrival" &&
+  !state.establishedFacts.some((fact) => fact.id === FRESH_FOOTPRINTS.id)
     ? [
         {
           id: "survey-manor",
@@ -164,6 +176,24 @@ const project = (events: readonly CanonicalEvent[]): GameState =>
     initialState(),
   );
 
+const createEvent = <EventType extends CanonicalEvent["type"], Payload>(
+  type: EventType,
+  payload: Payload,
+  sequence: number,
+  commandId: string,
+): EventEnvelope<EventType, Payload> => ({
+  id: randomUUID(),
+  streamId: "adventure",
+  sequence,
+  type,
+  schemaVersion: 1,
+  timestamp: new Date().toISOString(),
+  origin: "structured-play",
+  correlationId: commandId,
+  causationId: commandId,
+  payload,
+});
+
 export const createInMemoryEventStore = (): EventStore => {
   const events: CanonicalEvent[] = [];
 
@@ -190,6 +220,7 @@ export const createStructuredPlayApplication = (
     },
     submit(input) {
       const events = eventStore.readAll();
+      const commandId = randomUUID();
       if (input.type === "choose-action") {
         const state = project(events);
         const actionIsAvailable = availableActionsFor(state).some(
@@ -206,30 +237,21 @@ export const createStructuredPlayApplication = (
           };
         }
 
-        const eventId = randomUUID();
-        const event: CanonicalEvent = {
-          id: eventId,
-          streamId: "adventure",
-          sequence: events.length + 1,
-          type: "FreeActionCompleted",
-          schemaVersion: 1,
-          timestamp: new Date().toISOString(),
-          origin: "structured-play",
-          correlationId: eventId,
-          causationId: eventId,
-          payload: {
+        const event: CanonicalEvent = createEvent(
+          "FreeActionCompleted",
+          {
             actionId: input.actionId,
-            establishedFact:
-              "Fresh footprints lead from the manor gate toward a dark side entrance.",
+            establishedFact: FRESH_FOOTPRINTS,
           },
-        };
+          events.length + 1,
+          commandId,
+        );
         eventStore.append(event);
         const nextState = project(eventStore.readAll());
 
         return {
           status: "accepted",
-          message:
-            "Fresh footprints lead from the manor gate toward a dark side entrance.",
+          message: FRESH_FOOTPRINTS.text,
           state: nextState,
           availableActions: availableActionsFor(nextState),
           appendedEvents: [event],
@@ -249,19 +271,12 @@ export const createStructuredPlayApplication = (
           };
         }
 
-        const eventId = randomUUID();
-        const event: CanonicalEvent = {
-          id: eventId,
-          streamId: "adventure",
-          sequence: events.length + 1,
-          type: "SceneStarted",
-          schemaVersion: 1,
-          timestamp: new Date().toISOString(),
-          origin: "structured-play",
-          correlationId: eventId,
-          causationId: eventId,
-          payload: { scene: "arrival" },
-        };
+        const event: CanonicalEvent = createEvent(
+          "SceneStarted",
+          { scene: "arrival" as const },
+          events.length + 1,
+          commandId,
+        );
         eventStore.append(event);
         const nextState = project(eventStore.readAll());
 
@@ -271,6 +286,18 @@ export const createStructuredPlayApplication = (
           state: nextState,
           availableActions: availableActionsFor(nextState),
           appendedEvents: [event],
+        };
+      }
+
+      const state = project(events);
+      if (state.playerCharacter !== null) {
+        return {
+          status: "rejected",
+          code: "player-character-already-configured",
+          message: "The Player Character is already configured.",
+          state,
+          availableActions: availableActionsFor(state),
+          appendedEvents: [],
         };
       }
 
@@ -317,19 +344,12 @@ export const createStructuredPlayApplication = (
         resolve: 3,
         inventory: STARTING_INVENTORY,
       };
-      const eventId = randomUUID();
-      const event: CanonicalEvent = {
-        id: eventId,
-        streamId: "adventure",
-        sequence: events.length + 1,
-        type: "PlayerCharacterConfigured",
-        schemaVersion: 1,
-        timestamp: new Date().toISOString(),
-        origin: "structured-play",
-        correlationId: eventId,
-        causationId: eventId,
-        payload: playerCharacter,
-      };
+      const event: CanonicalEvent = createEvent(
+        "PlayerCharacterConfigured",
+        playerCharacter,
+        events.length + 1,
+        commandId,
+      );
 
       eventStore.append(event);
 
