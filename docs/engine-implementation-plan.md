@@ -168,11 +168,17 @@ Define what the first product does, what it deliberately excludes, and which sce
 
 ### Implementation steps
 
-1. Select the initial slice: one campaign, one player, text input, one hand-authored micro-ruleset, and one bounded adventure.
-2. Describe canonical scenarios as Given/When/Then examples, including free action, check, opposed check, resource use, combat exchange, rules query, invalid command, save/reload, undo-by-branching, and scene transition.
-3. Define authority boundaries among player, human GM, deterministic engine, ruleset, oracle, and LLM.
-4. Define latency, cost, durability, privacy, portability, and accessibility targets.
-5. Mark voice, automatic PDF execution, rich tactical maps, and multiplayer synchronization as later phases.
+1. Use the initial slice: one solo player with no human GM, natural-language and structured text input, an original hand-authored 2d6 micro-ruleset, and a three-scene fantasy mystery set in a locked manor.
+2. Resolve uncertain actions as `2d6 + trait`: 6 or less is a Setback, 7–9 is a Success with Cost, and 10 or more is a Clean Success.
+3. Offer arrival and exploration, social discovery, and confrontation scenes as a non-linear graph, allowing event-driven scene skipping and favourable, adverse, or unresolved endings through combat and non-combat paths.
+4. Treat unanswered questions about the world as unresolved propositions until play makes an answer relevant; the oracle then establishes a player-visible fact. Defer persistent facts hidden from the player.
+5. Start with one pregenerated player character whose Health and Resolve are fixed; whose inventory contains a Lantern, Lockpick Set, Short Blade, and Field Kit; and whose name, pronouns, motivation, and one-time assignment of +0, +1, and +2 among Might, Wits, and Presence the player chooses during setup.
+6. Prevent Trait reassignment after the adventure begins, and defer full character creation and advancement.
+7. Treat the player character's motivation as fictional context only, with no modifier, resource, oracle, or outcome-stake effect.
+8. Describe canonical scenarios as Given/When/Then examples, including free action, check, player-facing contested action, resource use, confrontation exchange, rules query, invalid command, save/reload, undo-by-branching, and scene transition.
+9. Define authority boundaries among player, human GM, deterministic engine, ruleset, oracle, and LLM.
+10. Define latency, cost, durability, privacy, portability, and accessibility targets.
+11. Mark voice, automatic PDF execution, rich tactical maps, and multiplayer synchronization as later phases.
 
 ### Acceptance criteria
 
@@ -180,6 +186,12 @@ Define what the first product does, what it deliberately excludes, and which sce
 - Every proposed feature maps to a phase or is explicitly out of scope.
 - The authority matrix states who may propose, validate, commit, override, and narrate each outcome.
 - Stakeholders can explain the v1 vertical slice using the same domain terms.
+- A new player can complete the locked-manor adventure without documentation in moderated testing.
+- Natural-language and Structured Play modes can each complete the adventure through at least one Confrontation ending and one non-Confrontation ending.
+- Replaying every v1 fixture produces identical projected state, including after save/resume and branching.
+- Save/resume restores every pending choice with its recorded random result unchanged.
+- Branching preserves the source timeline and inherits its random-stream position.
+- Language-model failure returns a playable mechanical summary, and no model output can directly commit or alter game state.
 
 ## Phase 1 — Architecture Contracts and Repository Skeleton
 
@@ -261,8 +273,10 @@ Make the event stream canonical and derive all mutable world views from it.
 3. Build projections for entities/components, relationships, timeline, active scene, open threads, and resources.
 4. Record projection versions and resumable checkpoints.
 5. Add snapshots as disposable optimization, never canonical data.
-6. Implement campaign branching from an event position instead of deleting history.
-7. Add event export and import with integrity checks.
+6. Implement rewind exclusively by creating a new timeline from a selected event position; preserve the original timeline unchanged and available for inspection or continuation.
+7. Copy the parent's random-stream position into a new timeline so repeating the same confirmed action from the same branch point reproduces the same roll.
+8. Add event export and import with integrity checks.
+9. Persist every accepted event immediately and project pending player choices so interruption after a revealed roll resumes with the identical roll and unresolved choice.
 
 ### Acceptance criteria
 
@@ -270,6 +284,9 @@ Make the event stream canonical and derive all mutable world views from it.
 - A failed append writes no partial events.
 - Retrying an idempotent command does not duplicate events.
 - Deleting all projections and rebuilding them restores the same state.
+- Rewinding never deletes or rewrites an accepted event, and continuing either timeline appends events only to that timeline.
+- A branched timeline given the same confirmed commands as its parent produces the same random results from the branch point.
+- Closing and resuming after any accepted event restores the active timeline and any pending choice without rerolling or silently advancing resolution.
 - A branch can diverge from its parent while the parent remains unchanged.
 - Corrupt or out-of-order imports are rejected with a diagnostic report.
 
@@ -284,6 +301,7 @@ Resolve mechanics reproducibly without delegating arithmetic, legality, dice, or
 - Rule definition schema.
 - Rule registry and version resolver.
 - Dice/random service.
+- Percentile oracle with Unlikely (25%), Even (50%), and Likely (75%) odds.
 - Expression and modifier evaluator.
 - Command handlers for the initial micro-ruleset.
 - Rules trace format.
@@ -295,7 +313,21 @@ Resolve mechanics reproducibly without delegating arithmetic, legality, dice, or
 3. Inject the random source; record seed or entropy reference, individual rolls, modifiers, and final result.
 4. Reject invalid expressions, excessive dice, missing inputs, illegal targets, and unmet prerequisites.
 5. Produce a human-readable and machine-readable trace for each resolution.
-6. Hand-author 10–20 rules spanning action checks, damage, conditions, inventory, opposed resolution, and scene clocks.
+6. Hand-author 10–20 rules spanning action checks, damage, conditions, inventory, player-facing contested actions, and confrontation clocks.
+7. Allow the narrator to recommend an oracle likelihood with evidence from established facts, but require the player to confirm or change it before rolling.
+8. Resolve oracle questions with a recorded percentile roll: at or below the confirmed likelihood is Yes and above it is No; results from 01–05 and 96–100 attach an exceptional consequence.
+9. Treat routine actions as free actions; when uncertainty and meaningful consequences require a check, have the narrator propose the intended goal, trait, and explicit stakes for Setback, Success with Cost, and Clean Success, then require player confirmation before rolling.
+10. Restrict mechanically significant stakes to ruleset-defined effects that pass deterministic validation; allow fictional consequences only as explicit established facts with no hidden mechanical modifier.
+11. Let the player correct the interpreted goal or trait, revise the attempted action, or withdraw; do not allow direct editing of outcome stakes while retaining the same action, and validate a fresh proposal after any revision.
+12. Resolve contested actions with one player-facing check; represent non-player character capability through validated stakes, conditions, and clocks rather than an opposed roll.
+13. Resolve confrontations without initiative, rounds, movement grids, or non-player character turns: successes advance a Resistance Clock, while costs and Setbacks may advance a Danger Clock or apply another predeclared effect.
+14. Exclude player character death from the initial ruleset; a filled Danger Clock or depleted Health causes a predeclared defeat such as capture, forced retreat, incapacitation, or a lasting condition and transitions to a consequence scene.
+15. After revealing a check roll but before committing its outcome, allow the player to spend at most one Resolve to add +1 to the final total; record the original roll, spend, adjusted total, and selected predeclared stakes together.
+16. Start Health and Resolve at 3, constrain both to the inclusive range 0–3, and treat ordinary harm as one Health loss; zero Health causes Defeat, while zero Resolve only prevents further Resolve spending.
+17. Provide one Field Kit in the fixed inventory; outside a confrontation, consuming it restores either one Health or one Resolve, with no passive recovery during the adventure.
+18. Treat inventory items as fictional permission rather than numeric bonuses and track only carried or removed state; any loss, breakage, surrender, or consumption must be a predeclared, validated stake and removes the item.
+19. Limit the initial Condition catalogue to Shaken, which prevents Resolve spending, and Restrained, which prevents actions requiring free movement; neither changes a numeric modifier.
+20. Clear Shaken when its Scene ends; persist Restrained across Scene transitions until an established fact or successful action explicitly removes it.
 
 ### Acceptance criteria
 
@@ -304,6 +336,18 @@ Resolve mechanics reproducibly without delegating arithmetic, legality, dice, or
 - Each accepted mechanical event cites the invoked rule and version.
 - Property tests cover dice bounds, modifier ordering, resource floors/ceilings, and invariant preservation.
 - At least 95% of the canonical mechanical scenarios execute solely through registered rules; remaining cases are explicitly deferred or require GM adjudication.
+- Oracle traces expose the proposition, recommended and player-confirmed likelihoods, percentile roll, Yes or No answer, and any exceptional consequence to the player.
+- No check rolls before the player confirms its goal, trait, and all three outcome stakes; the committed result applies only the matching predeclared stakes, and free actions produce no roll.
+- A narrator-proposed stake containing an undefined or invalid mechanical effect is rejected before it reaches the player.
+- Reject execution of any proposal whose action or trait changed after validation; revised actions receive a new complete proposal.
+- A confrontation ends in the matching predeclared outcome when its Resistance Clock or Danger Clock fills, and replaying its exchanges reproduces the same clock state.
+- Defeat never silently ends the adventure or kills the player character; it commits the declared consequence and starts the corresponding consequence scene.
+- A Resolve spend cannot occur after a check outcome is committed, cannot reduce Resolve below zero, and deterministically selects the outcome band from the adjusted total.
+- Resource changes reject values outside 0–3; ordinary harm removes exactly one Health unless a cited rule explicitly says otherwise.
+- The Field Kit cannot be used during a confrontation, cannot restore a resource above 3, and is removed after one valid use.
+- Removed inventory items grant no fictional permission; no rule creates a damaged or repairable item state in v1.
+- While Shaken, Resolve spending is rejected; while Restrained, an action requiring free movement is rejected before a Check Proposal is produced.
+- Scene transition removes Shaken but not Restrained, and replay reproduces the same Condition lifecycle.
 
 ## Phase 5 — World State and Memory Layers
 
@@ -461,6 +505,9 @@ Complete the text-first game loop from utterance through committed events to gro
 6. Separate fictional color from mechanically binding claims.
 7. Validate narration for contradictions such as wrong names, impossible locations, incorrect resources, or uncommitted outcomes.
 8. Support GM approval, edit, override-as-command, and regenerate-presentation-only actions.
+9. Define pre-authored exit conditions for each scene and end it automatically only when a committed event satisfies one; narration presents but never decides the transition.
+10. Let an exit condition target another authored scene or an adventure ending, including paths that skip scenes or resolve the adventure without a confrontation.
+11. If narration fails after events commit, return a deterministic mechanical summary and offer presentation-only regeneration from the same visible evidence, trace, and committed events; never repeat or roll back the action.
 
 ### Acceptance criteria
 
@@ -470,6 +517,9 @@ Complete the text-first game loop from utterance through committed events to gro
 - Rules queries do not advance the scene unless the user separately issues a command.
 - Table chat and out-of-character input do not trigger game events.
 - Every response can display its rule trace and evidence on demand.
+- Replaying the same committed events satisfies the same scene exit condition and produces the same lifecycle transitions.
+- No scenario requires an inactive scene merely because it appears earlier in an authored sequence; only satisfied transition conditions determine the path.
+- Narration failure still returns the committed outcome, and any number of regeneration attempts leave the event stream and projections byte-equivalent.
 
 ## Phase 10 — Testing, Simulation, and Evaluation Harness
 
@@ -514,6 +564,7 @@ Expose play, evidence, state, and intervention controls without overwhelming pla
 ### Deliverables
 
 - Responsive text-play interface.
+- Structured Play interface requiring no language model.
 - GM dashboard.
 - Character, scene, timeline, thread, and rules views.
 - Event inspection and branch controls.
@@ -528,6 +579,7 @@ Expose play, evidence, state, and intervention controls without overwhelming pla
 5. Add timeline inspection, event correlation, branch creation, and comparison.
 6. Support streaming presentation without treating partial text as committed state.
 7. Add keyboard navigation, screen-reader semantics, reduced motion, contrast, captions hooks, and responsive layouts.
+8. Provide deterministic prompts for authored actions, oracle questions, targets, and available choices so the full adventure remains playable without a language model.
 
 ### Acceptance criteria
 
@@ -537,6 +589,7 @@ Expose play, evidence, state, and intervention controls without overwhelming pla
 - Partial or interrupted streamed narration leaves committed state intact and recoverable.
 - Core flows meet the selected accessibility conformance target.
 - Usability testing records success rate, time on task, error rate, and trust rating for key workflows.
+- Given equivalent confirmed choices, natural-language and Structured Play modes emit equivalent commands and committed events.
 
 ## Phase 12 — Voice and Real-Time Conversation
 

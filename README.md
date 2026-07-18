@@ -62,7 +62,9 @@ The central authority boundary is simple: the model may classify, extract, propo
 
 | Document | Description |
 | --- | --- |
+| [Domain glossary](CONTEXT.md) | Canonical gameplay language and the boundaries between closely related concepts. |
 | [Implementation plan](docs/engine-implementation-plan.md) | Domain model, quality requirements, phased roadmap, acceptance criteria, risks, and success criteria. |
+| [Architecture decisions](docs/adr/) | Durable decisions whose trade-offs would otherwise be difficult to reconstruct. |
 | [System architecture](docs/system-architecture.html) | Interactive component and authority-boundary diagram. |
 | [Player turn](docs/player-turn.html) | Interactive sequence showing interpretation, resolution, commit, projection, and narration. |
 | [Event-sourced world state](docs/event-sourcing.html) | Interactive view of commands, immutable events, projections, and integrations. |
