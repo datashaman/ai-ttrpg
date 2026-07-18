@@ -5,7 +5,7 @@ An AI-assisted tabletop role-playing game engine designed around a deterministic
 The engine will interpret natural-language player input, retrieve relevant rules and world facts, resolve mechanics, persist campaign state, and narrate the result. Language models assist with interpretation and presentation; they do not own dice, rules, or canonical state.
 
 > [!IMPORTANT]
-> This repository is in early implementation. The current runnable slice covers Player Character setup, entry into the arrival Scene, a Structured Play Free Action, and a confirmed Check; it is not yet a complete Adventure.
+> This repository is in early implementation. The current runnable slice covers Player Character setup, entry into the arrival Scene, a Structured Play Free Action, and a confirmed Check with a recoverable Resolve decision; it is not yet a complete Adventure.
 
 ## Try the current slice
 
@@ -16,7 +16,7 @@ npm install
 npm start
 ```
 
-Choose a name, pronouns, Motivation, and assign `0`, `1`, and `2` exactly once among Might, Wits, and Presence. The CLI then starts the arrival Scene and offers authored Free Actions and uncertain actions. An uncertain action presents its complete Check Proposal before you confirm, correct, revise, or withdraw it. A confirmed Check rolls `2d6 + Trait`, commits only its predeclared matching stakes, and displays an auditable rules trace. This path does not call a language model.
+Choose a name, pronouns, Motivation, and assign `0`, `1`, and `2` exactly once among Might, Wits, and Presence. The CLI then starts the arrival Scene and offers authored Free Actions and uncertain actions. An uncertain action presents its complete Check Proposal before you confirm, correct, revise, or withdraw it. A confirmed Check records and reveals `2d6 + Trait`; before the outcome commits, you may spend one Resolve for `+1` or decline. The selected predeclared stakes commit only after that Pending Choice is resolved, and the event stream can restore the exact roll and choice after interruption. This path does not call a language model.
 
 For development:
 

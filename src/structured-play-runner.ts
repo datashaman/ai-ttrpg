@@ -2,6 +2,7 @@ import {
   createInMemoryEventStore,
   createStructuredPlayApplication,
   type ApplicationView,
+  type CanonicalEvent,
   type CheckProposal,
   type EventStore,
   type RandomSource,
@@ -58,6 +59,58 @@ const readTrait = async (io: StructuredPlayIO): Promise<Trait> => {
   }
 };
 
+const finishPendingChoice = async (
+  app: StructuredPlayApplication,
+  io: StructuredPlayIO,
+  newlyAppendedEvents: readonly CanonicalEvent[] = [],
+): Promise<ApplicationView> => {
+  const pendingChoice = app.view().state.pendingChoice;
+  if (pendingChoice === null) return app.view();
+  const roll = pendingChoice.roll;
+  io.write(`Rule: ${roll.rule.id}@${roll.rule.version}\n`);
+  io.write(`Random inputs: ${roll.random.inputs.join(", ")}\n`);
+  io.write(
+    `Modifiers: ${roll.modifiers.map((modifier) => `${modifier.source} +${modifier.value}`).join(", ")}\n`,
+  );
+  io.write(
+    `Roll: ${roll.result.diceTotal} + ${roll.modifiers[0].value} = ${roll.result.total}\n`,
+  );
+  if (newlyAppendedEvents.length > 0) {
+    io.write("Committed events:\n");
+    io.write(`${JSON.stringify(newlyAppendedEvents, null, 2)}\n`);
+  }
+
+  while (true) {
+    const canSpend = pendingChoice.availableChoices.includes("spend-resolve");
+    const resolveChoice = (
+      await io.read(
+        canSpend
+          ? "Spend 1 Resolve (s) or decline (d): "
+          : "No Resolve is available; decline (d): ",
+      )
+    )
+      .trim()
+      .toLowerCase();
+    if (resolveChoice !== "d" && (resolveChoice !== "s" || !canSpend)) {
+      io.write(canSpend ? "Choose s or d.\n" : "Choose d.\n");
+      continue;
+    }
+    const resolved = app.submit({
+      type: "resolve-pending-check",
+      pendingChoiceId: pendingChoice.id,
+      choice: resolveChoice === "s" ? "spend-resolve" : "decline",
+    });
+    io.write(`\n${resolved.message}\n`);
+    if (resolved.status === "accepted") {
+      io.write("Committed events:\n");
+      io.write(`${JSON.stringify(resolved.appendedEvents, null, 2)}\n`);
+      io.write("Resulting state:\n");
+      io.write(`${JSON.stringify(resolved.state, null, 2)}\n`);
+    }
+    return app.view();
+  }
+};
+
 const finishCheckProposal = async (
   app: StructuredPlayApplication,
   io: StructuredPlayIO,
@@ -75,27 +128,13 @@ const finishCheckProposal = async (
       .toLowerCase();
 
     if (choice === "c") {
-      const resolved = app.submit({
+      const revealed = app.submit({
         type: "confirm-check-proposal",
         proposalId: proposal.id,
       });
-      io.write(`\n${resolved.message}\n`);
-      if (resolved.status === "accepted") {
-        const trace = resolved.state.lastCheckResolution?.trace;
-        if (trace !== undefined) {
-          io.write(`Rule: ${trace.rule.id}@${trace.rule.version}\n`);
-          io.write(`Random inputs: ${trace.random.inputs.join(", ")}\n`);
-          io.write(
-            `Modifiers: ${trace.modifiers.map((modifier) => `${modifier.source} ${modifier.value >= 0 ? "+" : ""}${modifier.value}`).join(", ")}\n`,
-          );
-          io.write(
-            `Result: ${trace.result.diceTotal} + ${trace.modifiers[0].value} = ${trace.result.total} (${trace.result.outcome})\n`,
-          );
-        }
-        io.write("Committed events:\n");
-        io.write(`${JSON.stringify(resolved.appendedEvents, null, 2)}\n`);
-        io.write("Resulting state:\n");
-        io.write(`${JSON.stringify(resolved.state, null, 2)}\n`);
+      io.write(`\n${revealed.message}\n`);
+      if (revealed.status === "accepted") {
+        return finishPendingChoice(app, io, revealed.appendedEvents);
       }
       return app.view();
     }
@@ -159,6 +198,16 @@ export const runStructuredPlay = async ({
     randomSource === undefined ? { eventStore } : { eventStore, randomSource },
   );
   io.write("AI TTRPG — Structured Play\n\n");
+
+  const current = app.view();
+  if (current.state.pendingChoice !== null) {
+    io.write("Resuming Pending Choice.\n");
+    return finishPendingChoice(app, io);
+  }
+  if (current.state.pendingCheckProposal !== null) {
+    io.write("Resuming Check Proposal.\n");
+    return finishCheckProposal(app, io);
+  }
 
   const name = await io.read("Player Character name: ");
   const pronouns = await io.read("Pronouns: ");

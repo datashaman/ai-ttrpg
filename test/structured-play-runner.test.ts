@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createInMemoryEventStore,
   createSeededRandomSource,
+  createStructuredPlayApplication,
   type CheckOutcome,
 } from "../src/structured-play.js";
 import {
@@ -97,6 +98,7 @@ for (const example of [
       "1",
       "2",
       "c",
+      "d",
     ]);
 
     const view = await runStructuredPlay({
@@ -113,9 +115,95 @@ for (const example of [
     assert.match(transcript, new RegExp(example.outcome));
     assert.match(transcript, /micro-ruleset\.check@1\.0\.0/);
     assert.match(transcript, /Random inputs:/);
+    assert.match(transcript, /Spend 1 Resolve \(s\) or decline \(d\)/);
     assert.match(transcript, /Committed events:\n\[/);
+    assert.match(transcript, /"type": "CheckRollRevealed"/);
     assert.match(transcript, /"type": "CheckResolved"/);
-    assert.match(transcript, /"sequence": 4/);
+    assert.match(transcript, /"sequence": 5/);
     assert.equal(view.state.lastCheckResolution?.outcome, example.outcome);
   });
 }
+
+test("scripted Structured Play spends Resolve after the roll is revealed", async () => {
+  const eventStore = createInMemoryEventStore();
+  const { io, output } = scriptedIO([
+    "Mara Vey",
+    "she/her",
+    "Find her missing sister",
+    "0",
+    "2",
+    "1",
+    "2",
+    "c",
+    "s",
+  ]);
+
+  const view = await runStructuredPlay({
+    io,
+    eventStore,
+    randomSource: createSeededRandomSource(260),
+  });
+
+  assert.match(output.join(""), /Clean Success \(10\)/);
+  assert.equal(view.state.playerCharacter?.resolve, 2);
+  assert.equal(view.state.lastCheckResolution?.resolveSpent, 1);
+  assert.deepEqual(
+    eventStore.readAll().map((event) => event.type),
+    [
+      "PlayerCharacterConfigured",
+      "SceneStarted",
+      "CheckProposalCreated",
+      "CheckRollRevealed",
+      "CheckResolved",
+    ],
+  );
+});
+
+test("scripted Structured Play resumes a persisted Pending Choice without rerolling", async () => {
+  const eventStore = createInMemoryEventStore();
+  const firstRandomSource = createSeededRandomSource(5);
+  const firstSession = createStructuredPlayApplication({
+    eventStore,
+    randomSource: firstRandomSource,
+  });
+  firstSession.submit({
+    type: "configure-player-character",
+    name: "Mara Vey",
+    pronouns: "she/her",
+    motivation: "Find her missing sister",
+    traits: { Might: 0, Wits: 2, Presence: 1 },
+  });
+  firstSession.submit({ type: "begin-adventure" });
+  const proposed = firstSession.submit({
+    type: "choose-action",
+    actionId: "force-side-door",
+  });
+  assert.ok(proposed.state.pendingCheckProposal);
+  firstSession.submit({
+    type: "confirm-check-proposal",
+    proposalId: proposed.state.pendingCheckProposal.id,
+  });
+
+  const { io, output } = scriptedIO(["d"]);
+  const resumedRandomSource = createSeededRandomSource(999);
+  const view = await runStructuredPlay({
+    io,
+    eventStore,
+    randomSource: resumedRandomSource,
+  });
+
+  assert.match(output.join(""), /Resuming Pending Choice/);
+  assert.match(output.join(""), /Spend 1 Resolve \(s\) or decline \(d\)/);
+  assert.equal(view.state.lastCheckResolution?.outcome, "Success with Cost");
+  assert.equal(resumedRandomSource.position(), 0);
+  assert.deepEqual(
+    eventStore.readAll().map((event) => event.type),
+    [
+      "PlayerCharacterConfigured",
+      "SceneStarted",
+      "CheckProposalCreated",
+      "CheckRollRevealed",
+      "CheckResolved",
+    ],
+  );
+});

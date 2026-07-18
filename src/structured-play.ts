@@ -17,6 +17,7 @@ export type { RandomSource } from "./random-source.js";
 export type Trait = "Might" | "Wits" | "Presence";
 export type CheckOutcome = "Setback" | "Success with Cost" | "Clean Success";
 export type Health = 0 | 1 | 2 | 3;
+export type Resolve = 0 | 1 | 2 | 3;
 
 export type TraitRatings = Readonly<Record<Trait, 0 | 1 | 2>>;
 
@@ -31,7 +32,7 @@ export interface PlayerCharacter {
   readonly motivation: string;
   readonly traits: TraitRatings;
   readonly health: Health;
-  readonly resolve: 3;
+  readonly resolve: Resolve;
   readonly inventory: readonly [
     "Lantern",
     "Lockpick Set",
@@ -71,7 +72,7 @@ export interface CheckProposal {
   readonly stakes: CheckStakes;
 }
 
-export interface CheckTrace {
+interface CheckRollEvidence {
   readonly rule: {
     readonly id: "micro-ruleset.check";
     readonly version: "1.0.0";
@@ -81,9 +82,33 @@ export interface CheckTrace {
     readonly seed: number | null;
     readonly inputs: readonly [number, number];
   };
-  readonly modifiers: readonly [{ readonly source: Trait; readonly value: 0 | 1 | 2 }];
+}
+
+interface TraitModifier {
+  readonly source: Trait;
+  readonly value: 0 | 1 | 2;
+}
+
+interface ResolveModifier {
+  readonly source: "Resolve";
+  readonly value: 1;
+}
+
+export interface RevealedCheckRoll extends CheckRollEvidence {
+  readonly modifiers: readonly [TraitModifier];
   readonly result: {
     readonly diceTotal: number;
+    readonly total: number;
+  };
+}
+
+export interface CheckTrace extends CheckRollEvidence {
+  readonly modifiers:
+    | readonly [TraitModifier]
+    | readonly [TraitModifier, ResolveModifier];
+  readonly result: {
+    readonly diceTotal: number;
+    readonly originalTotal: number;
     readonly total: number;
     readonly outcome: CheckOutcome;
   };
@@ -91,11 +116,25 @@ export interface CheckTrace {
 
 export interface CheckResolution {
   readonly proposalId: string;
+  readonly pendingChoiceId: string;
   readonly goal: string;
   readonly trait: Trait;
+  readonly resolveSpent: 0 | 1;
+  readonly adjustedTotal: number;
   readonly outcome: CheckOutcome;
   readonly committedStake: CheckStake;
+  readonly resultingResolve: Resolve;
   readonly trace: CheckTrace;
+}
+
+export type ResolveChoice = "decline" | "spend-resolve";
+
+export interface PendingChoice {
+  readonly id: string;
+  readonly type: "spend-resolve";
+  readonly proposal: CheckProposal;
+  readonly roll: RevealedCheckRoll;
+  readonly availableChoices: readonly ResolveChoice[];
 }
 
 export interface GameState {
@@ -103,6 +142,7 @@ export interface GameState {
   readonly activeScene: "arrival" | null;
   readonly establishedFacts: readonly EstablishedFact[];
   readonly pendingCheckProposal: CheckProposal | null;
+  readonly pendingChoice: PendingChoice | null;
   readonly lastCheckResolution: CheckResolution | null;
 }
 
@@ -133,6 +173,7 @@ interface EventPayloads {
     readonly reason: "correction" | "revised-action";
   };
   readonly CheckProposalWithdrawn: { readonly proposalId: string };
+  readonly CheckRollRevealed: { readonly pendingChoice: PendingChoice };
   readonly CheckResolved: CheckResolution;
 }
 
@@ -165,6 +206,12 @@ export interface ConfirmCheckProposal {
   readonly proposalId: string;
 }
 
+export interface ResolvePendingCheck {
+  readonly type: "resolve-pending-check";
+  readonly pendingChoiceId: string;
+  readonly choice: ResolveChoice;
+}
+
 export interface CorrectCheckProposal {
   readonly type: "correct-check-proposal";
   readonly proposalId: string;
@@ -194,6 +241,7 @@ export type StructuredPlayInput =
   | BeginAdventure
   | ChooseAction
   | ConfirmCheckProposal
+  | ResolvePendingCheck
   | CorrectCheckProposal
   | ReviseCheckAction
   | WithdrawCheckProposal
@@ -236,6 +284,8 @@ export interface RejectedResult {
     | "player-character-already-configured"
     | "player-character-required"
     | "check-proposal-unavailable"
+    | "pending-choice-unavailable"
+    | "resolve-unavailable"
     | "invalid-check-correction"
     | "check-stakes-immutable";
   readonly message: string;
@@ -277,6 +327,7 @@ const initialState = (): GameState => ({
   activeScene: null,
   establishedFacts: [],
   pendingCheckProposal: null,
+  pendingChoice: null,
   lastCheckResolution: null,
 });
 
@@ -341,7 +392,11 @@ const availableActionsFor = (
   state: GameState,
   checkActions: readonly CheckActionDefinition[],
 ): readonly AvailableAction[] => {
-  if (state.activeScene !== "arrival" || state.pendingCheckProposal !== null) {
+  if (
+    state.activeScene !== "arrival" ||
+    state.pendingCheckProposal !== null ||
+    state.pendingChoice !== null
+  ) {
     return [];
   }
 
@@ -405,13 +460,31 @@ const project = (events: readonly CanonicalEvent[]): GameState =>
         return { ...state, pendingCheckProposal: event.payload.proposal };
       case "CheckProposalWithdrawn":
         return { ...state, pendingCheckProposal: null };
+      case "CheckRollRevealed":
+        return {
+          ...state,
+          pendingCheckProposal: null,
+          pendingChoice: event.payload.pendingChoice,
+        };
       case "CheckResolved":
+        const playerCharacter = state.playerCharacter;
+        const stateWithResolve =
+          playerCharacter === null
+            ? state
+            : {
+                ...state,
+                playerCharacter: {
+                  ...playerCharacter,
+                  resolve: event.payload.resultingResolve,
+                },
+              };
         return {
           ...applyConsequences(
-            state,
+            stateWithResolve,
             event.payload.committedStake.consequences,
           ),
           pendingCheckProposal: null,
+          pendingChoice: null,
           lastCheckResolution: event.payload,
         };
     }
@@ -508,6 +581,72 @@ export const createStructuredPlayApplication = (
       const state = project(events);
       const commandId = randomUUID();
 
+      if (input.type === "resolve-pending-check") {
+        const pendingChoice = state.pendingChoice;
+        const playerCharacter = state.playerCharacter;
+        if (
+          pendingChoice?.id !== input.pendingChoiceId ||
+          playerCharacter === null
+        ) {
+          return reject(
+            "pending-choice-unavailable",
+            "That Pending Choice is no longer available.",
+            state,
+          );
+        }
+        if (
+          input.choice === "spend-resolve" &&
+          (playerCharacter.resolve === 0 ||
+            !pendingChoice.availableChoices.includes("spend-resolve"))
+        ) {
+          return reject(
+            "resolve-unavailable",
+            "Resolve cannot be spent for this Check.",
+            state,
+          );
+        }
+
+        const resolveSpent = input.choice === "spend-resolve" ? 1 : 0;
+        const adjustedTotal = pendingChoice.roll.result.total + resolveSpent;
+        const outcome = outcomeFor(adjustedTotal);
+        const resultingResolve = (
+          playerCharacter.resolve - resolveSpent
+        ) as Resolve;
+        const resolution: CheckResolution = {
+          proposalId: pendingChoice.proposal.id,
+          pendingChoiceId: pendingChoice.id,
+          goal: pendingChoice.proposal.goal,
+          trait: pendingChoice.proposal.trait,
+          resolveSpent,
+          adjustedTotal,
+          outcome,
+          committedStake: pendingChoice.proposal.stakes[outcome],
+          resultingResolve,
+          trace: {
+            rule: pendingChoice.roll.rule,
+            random: pendingChoice.roll.random,
+            modifiers:
+              resolveSpent === 1
+                ? [
+                    ...pendingChoice.roll.modifiers,
+                    { source: "Resolve", value: 1 },
+                  ]
+                : pendingChoice.roll.modifiers,
+            result: {
+              diceTotal: pendingChoice.roll.result.diceTotal,
+              originalTotal: pendingChoice.roll.result.total,
+              total: adjustedTotal,
+              outcome,
+            },
+          },
+        };
+        const event = append("CheckResolved", resolution, commandId);
+        return accept(
+          `${outcome} (${adjustedTotal}): ${resolution.committedStake.summary}`,
+          [event],
+        );
+      }
+
       if (input.type === "confirm-check-proposal") {
         const proposal = state.pendingCheckProposal;
         if (proposal?.id !== input.proposalId || state.playerCharacter === null) {
@@ -530,23 +669,24 @@ export const createStructuredPlayApplication = (
         const modifier = state.playerCharacter.traits[proposal.trait];
         const diceTotal = inputs[0] + inputs[1];
         const total = diceTotal + modifier;
-        const outcome = outcomeFor(total);
-        const resolution: CheckResolution = {
-          proposalId: proposal.id,
-          goal: proposal.goal,
-          trait: proposal.trait,
-          outcome,
-          committedStake: proposal.stakes[outcome],
-          trace: {
+        const pendingChoice: PendingChoice = {
+          id: randomUUID(),
+          type: "spend-resolve",
+          proposal,
+          roll: {
             rule: { id: "micro-ruleset.check", version: "1.0.0" },
             random: { ...randomSource.metadata(), inputs },
             modifiers: [{ source: proposal.trait, value: modifier }],
-            result: { diceTotal, total, outcome },
+            result: { diceTotal, total },
           },
+          availableChoices:
+            state.playerCharacter.resolve === 0
+              ? ["decline"]
+              : ["decline", "spend-resolve"],
         };
-        const event = append("CheckResolved", resolution, commandId);
+        const event = append("CheckRollRevealed", { pendingChoice }, commandId);
         return accept(
-          `${outcome} (${inputs.join(" + ")} + ${modifier} = ${total}): ${resolution.committedStake.summary}`,
+          `Roll revealed (${inputs.join(" + ")} + ${modifier} = ${total}). Decide whether to spend Resolve.`,
           [event],
         );
       }
