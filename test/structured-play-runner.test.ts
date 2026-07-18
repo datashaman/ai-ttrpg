@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createInMemoryEventStore } from "../src/structured-play.js";
-import { runStructuredPlay, type TextPlayIO } from "../src/text-play.js";
+import {
+  runStructuredPlay,
+  type StructuredPlayIO,
+} from "../src/structured-play-runner.js";
 
 const scriptedIO = (answers: readonly string[]) => {
   const remainingAnswers = [...answers];
   const output: string[] = [];
-  const io: TextPlayIO = {
+  const io: StructuredPlayIO = {
     read: async (prompt) => {
       output.push(prompt);
       const answer = remainingAnswers.shift();
@@ -21,7 +24,7 @@ const scriptedIO = (answers: readonly string[]) => {
   return { io, output };
 };
 
-test("scripted text play configures, starts, and completes a Free Action", async () => {
+test("scripted Structured Play configures, starts, and completes a Free Action", async () => {
   const eventStore = createInMemoryEventStore();
   const { io, output } = scriptedIO([
     "Mara Vey",

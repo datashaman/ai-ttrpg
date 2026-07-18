@@ -6,18 +6,18 @@ import {
   type TraitRatings,
 } from "./structured-play.js";
 
-export interface TextPlayIO {
+export interface StructuredPlayIO {
   read(prompt: string): Promise<string>;
   write(text: string): void;
 }
 
-export interface TextPlayOptions {
-  readonly io: TextPlayIO;
+export interface StructuredPlayRunnerOptions {
+  readonly io: StructuredPlayIO;
   readonly eventStore?: EventStore;
 }
 
 const readRating = async (
-  io: TextPlayIO,
+  io: StructuredPlayIO,
   trait: keyof TraitRatings,
 ): Promise<0 | 1 | 2> => {
   while (true) {
@@ -32,7 +32,7 @@ const readRating = async (
 export const runStructuredPlay = async ({
   io,
   eventStore = createInMemoryEventStore(),
-}: TextPlayOptions): Promise<ApplicationView> => {
+}: StructuredPlayRunnerOptions): Promise<ApplicationView> => {
   const app = createStructuredPlayApplication({ eventStore });
   io.write("AI TTRPG — Structured Play\n\n");
 

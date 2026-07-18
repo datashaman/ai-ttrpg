@@ -1,11 +1,14 @@
 import { createInterface } from "node:readline";
 import { stderr, stdin, stdout } from "node:process";
 
-import { runStructuredPlay, type TextPlayIO } from "./text-play.js";
+import {
+  runStructuredPlay,
+  type StructuredPlayIO,
+} from "./structured-play-runner.js";
 
 const terminal = createInterface({ input: stdin, output: stdout });
 const answers = terminal[Symbol.asyncIterator]();
-const io: TextPlayIO = {
+const io: StructuredPlayIO = {
   read: async (prompt) => {
     stdout.write(prompt);
     const answer = await answers.next();
