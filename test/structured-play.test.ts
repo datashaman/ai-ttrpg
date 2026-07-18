@@ -127,13 +127,12 @@ test("configured Player Character enters the arrival Scene with an authored Free
 
   assert.equal(result.status, "accepted");
   assert.equal(result.state.activeScene, "arrival");
-  assert.deepEqual(result.availableActions, [
-    {
-      id: "survey-manor",
-      label: "Survey the manor grounds",
-      kind: "Free Action",
-    },
-  ]);
+  assert.deepEqual(result.availableActions[0], {
+    id: "survey-manor",
+    label: "Survey the manor grounds",
+    kind: "Free Action",
+  });
+  assert.ok(result.availableActions.some((action) => action.kind === "Check"));
   assert.deepEqual(
     result.appendedEvents.map((event) => event.type),
     ["SceneStarted"],
@@ -157,7 +156,10 @@ test("Player Character completes the survey-manor Free Action and sees projected
       text: "Fresh footprints lead from the manor gate toward a dark side entrance.",
     },
   ]);
-  assert.deepEqual(result.availableActions, []);
+  assert.equal(
+    result.availableActions.some((action) => action.id === "survey-manor"),
+    false,
+  );
   assert.deepEqual(
     result.appendedEvents.map((event) => event.type),
     ["FreeActionCompleted"],
@@ -198,5 +200,8 @@ test("application reconstructs Player-visible state from a replaceable event sto
       text: "Fresh footprints lead from the manor gate toward a dark side entrance.",
     },
   ]);
-  assert.deepEqual(view.availableActions, []);
+  assert.equal(
+    view.availableActions.some((action) => action.id === "survey-manor"),
+    false,
+  );
 });

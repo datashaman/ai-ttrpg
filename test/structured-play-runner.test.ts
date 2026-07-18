@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createInMemoryEventStore } from "../src/structured-play.js";
+import {
+  createInMemoryEventStore,
+  createSeededRandomSource,
+  type CheckOutcome,
+} from "../src/structured-play.js";
 import {
   runStructuredPlay,
   type StructuredPlayIO,
@@ -76,3 +80,42 @@ test("invalid rating is explained and reprompted without an invalid setup event"
     1,
   );
 });
+
+for (const example of [
+  { seed: 1, outcome: "Setback" },
+  { seed: 5, outcome: "Success with Cost" },
+  { seed: 690, outcome: "Clean Success" },
+] as const satisfies readonly { seed: number; outcome: CheckOutcome }[]) {
+  test(`scripted Structured Play visibly resolves a seeded ${example.outcome}`, async () => {
+    const eventStore = createInMemoryEventStore();
+    const { io, output } = scriptedIO([
+      "Mara Vey",
+      "she/her",
+      "Find her missing sister",
+      "0",
+      "2",
+      "1",
+      "2",
+      "c",
+    ]);
+
+    const view = await runStructuredPlay({
+      io,
+      eventStore,
+      randomSource: createSeededRandomSource(example.seed),
+    });
+    const transcript = output.join("");
+
+    assert.match(transcript, /Check Proposal/);
+    assert.match(transcript, /Setback:.*stays shut/i);
+    assert.match(transcript, /Success with Cost:.*opens/i);
+    assert.match(transcript, /Clean Success:.*quietly/i);
+    assert.match(transcript, new RegExp(example.outcome));
+    assert.match(transcript, /micro-ruleset\.check@1\.0\.0/);
+    assert.match(transcript, /Random inputs:/);
+    assert.match(transcript, /Committed events:\n\[/);
+    assert.match(transcript, /"type": "CheckResolved"/);
+    assert.match(transcript, /"sequence": 4/);
+    assert.equal(view.state.lastCheckResolution?.outcome, example.outcome);
+  });
+}
