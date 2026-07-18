@@ -9,6 +9,7 @@ import {
   type NarratorLikelihoodRecommendation,
   type RandomSource,
   type StructuredPlayApplication,
+  type StructuredPlayOptions,
   type Trait,
   type TraitRatings,
 } from "./structured-play.js";
@@ -22,6 +23,10 @@ export interface StructuredPlayRunnerOptions {
   readonly io: StructuredPlayIO;
   readonly eventStore?: EventStore;
   readonly randomSource?: RandomSource;
+  readonly applicationOptions?: Omit<
+    StructuredPlayOptions,
+    "eventStore" | "randomSource"
+  >;
 }
 
 const readRating = async (
@@ -237,7 +242,7 @@ const finishCheckProposal = async (
 
     if (choice === "r") {
       const actionId = (
-        await io.read("Revised action id (force-side-door or pick-side-door-lock): ")
+        await io.read("Revised action id: ")
       ).trim();
       const revised = app.submit({
         type: "revise-check-action",
@@ -278,6 +283,25 @@ const chooseAvailableAction = async (
     return app.view();
   }
 
+  if (
+    selectedAction.kind === "Recovery" ||
+    selectedAction.kind === "Scene Transition"
+  ) {
+    const completed = app.submit(
+      selectedAction.kind === "Recovery"
+        ? { type: "use-field-kit", resource: selectedAction.resource }
+        : { type: "transition-scene", scene: selectedAction.scene },
+    );
+    io.write(`\n${completed.message}\n\n`);
+    if (completed.status === "accepted") {
+      io.write("Committed events:\n");
+      io.write(`${JSON.stringify(completed.appendedEvents, null, 2)}\n`);
+      io.write("Current state:\n");
+      io.write(`${JSON.stringify(completed.state, null, 2)}\n`);
+    }
+    return app.view();
+  }
+
   const completed = app.submit({
     type: "choose-action",
     actionId: selectedAction.id,
@@ -310,9 +334,12 @@ export const runStructuredPlay = async ({
   io,
   eventStore = createInMemoryEventStore(),
   randomSource,
+  applicationOptions = {},
 }: StructuredPlayRunnerOptions): Promise<ApplicationView> => {
   const app = createStructuredPlayApplication(
-    randomSource === undefined ? { eventStore } : { eventStore, randomSource },
+    randomSource === undefined
+      ? { ...applicationOptions, eventStore }
+      : { ...applicationOptions, eventStore, randomSource },
   );
   io.write("AI TTRPG — Structured Play\n\n");
 

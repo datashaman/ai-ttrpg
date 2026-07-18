@@ -5,6 +5,7 @@ import {
   createInMemoryEventStore,
   createSeededRandomSource,
   createStructuredPlayApplication,
+  type CheckActionDefinition,
   type CheckOutcome,
 } from "../src/structured-play.js";
 import {
@@ -126,6 +127,150 @@ for (const example of [
   });
 }
 
+test("Structured Play runs item recovery and distinct Condition lifecycles end to end", async () => {
+  const sceneExitFact = {
+    id: "runner-scene-exit-open",
+    text: "The cellar passage opens into the discovery Scene.",
+  };
+  const checkActions: readonly CheckActionDefinition[] = [
+    {
+      id: "lantern-search",
+      label: "Search by Lantern light",
+      kind: "Check",
+      goal: "Search the dark cellar",
+      trait: "Wits",
+      requiredItem: "Lantern",
+      requiresFreeMovement: true,
+      stakes: {
+        Setback: { summary: "The search fails.", consequences: [] },
+        "Success with Cost": { summary: "The search succeeds noisily.", consequences: [] },
+        "Clean Success": { summary: "The search succeeds.", consequences: [] },
+      },
+    },
+    {
+      id: "pick-trapped-lock",
+      label: "Pick the trapped lock with the Lockpick Set",
+      kind: "Check",
+      goal: "Open the trapped lock",
+      trait: "Wits",
+      requiredItem: "Lockpick Set",
+      requiresFreeMovement: true,
+      stakes: {
+        Setback: {
+          summary: "The trap springs, causing harm and binding you.",
+          consequences: [
+            { type: "lose-health", amount: 1 },
+            { type: "add-condition", condition: "Shaken" },
+            { type: "add-condition", condition: "Restrained" },
+            {
+              type: "remove-inventory-item",
+              item: "Lockpick Set",
+              reason: "breakage",
+            },
+            { type: "establish-fact", fact: sceneExitFact },
+          ],
+        },
+        "Success with Cost": { summary: "The lock opens noisily.", consequences: [] },
+        "Clean Success": { summary: "The lock opens.", consequences: [] },
+      },
+    },
+    {
+      id: "cut-bonds",
+      label: "Cut the bonds with the Short Blade",
+      kind: "Check",
+      goal: "Cut the bonds",
+      trait: "Might",
+      requiredItem: "Short Blade",
+      requiresFreeMovement: false,
+      stakes: {
+        Setback: { summary: "The bonds hold.", consequences: [] },
+        "Success with Cost": {
+          summary: "The bonds part noisily.",
+          consequences: [{ type: "remove-condition", condition: "Restrained" }],
+        },
+        "Clean Success": {
+          summary: "The bonds part.",
+          consequences: [{ type: "remove-condition", condition: "Restrained" }],
+        },
+      },
+    },
+  ];
+  const applicationOptions = {
+    checkActions,
+    oracleActions: [],
+    sceneTransitions: [
+      {
+        from: "arrival" as const,
+        to: "discovery" as const,
+        requiredFactIds: [sceneExitFact.id],
+      },
+    ],
+  };
+  const eventStore = createInMemoryEventStore();
+  const trapped = scriptedIO([
+    "Mara Vey",
+    "she/her",
+    "Find her missing sister",
+    "0",
+    "2",
+    "1",
+    "3",
+    "c",
+    "d",
+  ]);
+  let view = await runStructuredPlay({
+    io: trapped.io,
+    eventStore,
+    randomSource: createSeededRandomSource(8),
+    applicationOptions,
+  });
+  assert.match(trapped.output.join(""), /Lantern light/);
+  assert.match(trapped.output.join(""), /Lockpick Set/);
+  assert.match(trapped.output.join(""), /Short Blade/);
+  assert.equal(view.state.playerCharacter?.health, 2);
+  assert.deepEqual(view.state.conditions, ["Shaken", "Restrained"]);
+  assert.equal(
+    view.state.playerCharacter?.inventory.find(
+      (item) => item.name === "Lockpick Set",
+    )?.state,
+    "removed",
+  );
+
+  const recovery = scriptedIO(["3"]);
+  view = await runStructuredPlay({
+    io: recovery.io,
+    eventStore,
+    applicationOptions,
+  });
+  assert.match(recovery.output.join(""), /restore 1 Health \[Recovery\]/);
+  assert.equal(view.state.playerCharacter?.health, 3);
+  assert.equal(
+    view.state.playerCharacter?.inventory.find(
+      (item) => item.name === "Field Kit",
+    )?.state,
+    "removed",
+  );
+
+  const transition = scriptedIO(["3"]);
+  view = await runStructuredPlay({
+    io: transition.io,
+    eventStore,
+    applicationOptions,
+  });
+  assert.match(transition.output.join(""), /discovery Scene \[Scene Transition\]/);
+  assert.deepEqual(view.state.conditions, ["Restrained"]);
+
+  const escape = scriptedIO(["1", "c", "d"]);
+  view = await runStructuredPlay({
+    io: escape.io,
+    eventStore,
+    randomSource: createSeededRandomSource(690),
+    applicationOptions,
+  });
+  assert.doesNotMatch(escape.output.join(""), /Search by Lantern light/);
+  assert.deepEqual(view.state.conditions, []);
+});
+
 test("scripted Structured Play spends Resolve after the roll is revealed", async () => {
   const eventStore = createInMemoryEventStore();
   const { io, output } = scriptedIO([
@@ -221,7 +366,7 @@ test("scripted Structured Play visibly establishes a seeded Oracle answer after 
     "1",
     "1",
     "c",
-    "3",
+    "5",
     "u",
   ]);
   const view = await runStructuredPlay({
@@ -297,7 +442,7 @@ for (const example of [
       "s",
     ]);
     await runStructuredPlay({ io: setup.io, eventStore });
-    const oracle = scriptedIO(["3", example.likelihoodChoice]);
+    const oracle = scriptedIO(["5", example.likelihoodChoice]);
 
     const view = await runStructuredPlay({
       io: oracle.io,

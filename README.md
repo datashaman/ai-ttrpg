@@ -5,7 +5,7 @@ An AI-assisted tabletop role-playing game engine designed around a deterministic
 The engine will interpret natural-language player input, retrieve relevant rules and world facts, resolve mechanics, persist campaign state, and narrate the result. Language models assist with interpretation and presentation; they do not own dice, rules, or canonical state.
 
 > [!IMPORTANT]
-> This repository is in early implementation. The current runnable slice covers Player Character setup, entry into the arrival Scene, a Structured Play Free Action, a confirmed Check with a recoverable Resolve decision, and a grounded Oracle answer; it is not yet a complete Adventure.
+> This repository is in early implementation. The current runnable slice covers Player Character setup, entry into the arrival Scene, Structured Play actions, recoverable Check and Resolve decisions, grounded Oracle answers, Inventory Item permissions and removal, Field Kit recovery, and temporary Conditions; it is not yet a complete Adventure.
 
 ## Try the current slice
 
@@ -19,6 +19,8 @@ npm start
 Choose a name, pronouns, Motivation, and assign `0`, `1`, and `2` exactly once among Might, Wits, and Presence. The CLI then starts the arrival Scene and offers authored Free Actions and uncertain actions. An uncertain action presents its complete Check Proposal before you confirm, correct, revise, or withdraw it. A confirmed Check records and reveals `2d6 + Trait`; before the outcome commits, you may spend one Resolve for `+1` or decline. The selected predeclared stakes commit only after that Pending Choice is resolved, and the event stream can restore the exact roll and choice after interruption.
 
 Surveying the manor establishes visible evidence for an authored Unresolved Proposition. Continue in the Scene to ask the Oracle question: the Narrator recommends a grounded Likelihood, the Player confirms or changes it, and a recorded percentile roll establishes a visible Yes or No fact. Extreme rolls attach an Exceptional Consequence without changing the answer. The recommendation, evidence, confirmation, roll, committed events, and projected fact remain inspectable in the trace. This path does not call a language model.
+
+Inventory Items are explicitly either `carried` or `removed`. The Lantern, Lockpick Set, and Short Blade permit authored approaches but never add numeric modifiers. Predeclared loss, breakage, surrender, or consumption removes an item. Outside a Confrontation, the single-use Field Kit restores exactly one Health or Resolve (up to 3); neither resource recovers passively. Shaken blocks Resolve spending until its Scene ends, while Restrained blocks actions requiring free movement until explicitly removed.
 
 For development:
 
