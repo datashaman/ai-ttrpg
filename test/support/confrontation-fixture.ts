@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type {
   CheckActionDefinition,
   RandomSource,
+  ResolveChoice,
   StructuredPlayApplication,
 } from "../../src/structured-play.js";
 
@@ -52,6 +53,7 @@ export const scriptedRandomSource = (rolls: readonly number[]): RandomSource => 
 export const resolveAction = (
   app: StructuredPlayApplication,
   actionId: string,
+  choice: ResolveChoice = "decline",
 ) => {
   const chosen = app.submit({ type: "choose-action", actionId });
   assert.equal(chosen.status, "accepted");
@@ -65,7 +67,7 @@ export const resolveAction = (
   return app.submit({
     type: "resolve-pending-check",
     pendingChoiceId: revealed.state.pendingChoice.id,
-    choice: "decline",
+    choice,
   });
 };
 

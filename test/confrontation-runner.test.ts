@@ -68,7 +68,11 @@ test("Structured Play completes a visible Confrontation victory without an oppos
   assert.equal(victory.view.state.confrontation?.status, "victory");
   assert.equal(victory.view.state.activeScene, null);
   assert.match(victory.transcript, /cellar is secured/);
-  assert.match(victory.transcript, /"type": "ConfrontationEnded"/);
+  assert.doesNotMatch(victory.transcript, /Committed events:|Resulting state:/);
+  assert.deepEqual(
+    eventStore.readAll().slice(-3).map((event) => event.type),
+    ["CheckResolved", "ConfrontationEnded", "AdventureEnded"],
+  );
 });
 
 test("Structured Play completes Defeat when the Danger Clock fills", async () => {

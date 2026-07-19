@@ -14,20 +14,17 @@ import {
   type InterpretationRequest,
 } from "../src/natural-language-play.js";
 import { runStructuredPlay } from "../src/structured-play-runner.js";
+import { beginAdventureFixture } from "./support/adventure-fixture.js";
 import { scriptedIO } from "./support/scripted-io.js";
 
-const startedAdventure = (): EventStore => {
-  const eventStore = createInMemoryEventStore();
-  const app = createStructuredPlayApplication({ eventStore });
-  app.submit({
-    type: "configure-player-character",
-    name: "Mara Vey",
-    pronouns: "she/her",
-    motivation: "Find her missing sister",
-    traits: { Might: 0, Wits: 2, Presence: 1 },
-  });
-  app.submit({ type: "begin-adventure" });
-  return eventStore;
+const startedAdventure = (
+  traits: {
+    readonly Might: 0 | 1 | 2;
+    readonly Wits: 0 | 1 | 2;
+    readonly Presence: 0 | 1 | 2;
+  } = { Might: 0, Wits: 2, Presence: 1 },
+): EventStore => {
+  return beginAdventureFixture({ traits }).eventStore;
 };
 
 const actionNumber = (eventStore: EventStore, actionId: string): string => {
@@ -93,6 +90,18 @@ const capabilitySequence = (
   };
 };
 
+const playStructuredCapability = (
+  eventStore: EventStore,
+  randomSource: RandomSource,
+  actionId: string,
+  answers: readonly string[],
+): Promise<unknown> =>
+  runStructuredPlay({
+    io: scriptedIO([actionNumber(eventStore, actionId), ...answers]).io,
+    eventStore,
+    randomSource,
+  });
+
 test("natural-language Player action selects a currently available capability", async () => {
   const eventStore = createInMemoryEventStore();
   const requests: InterpretationRequest[] = [];
@@ -149,6 +158,39 @@ test("natural-language Player action selects a currently available capability", 
     ["PlayerCharacterConfigured", "SceneStarted", "FreeActionCompleted"],
   );
   assert.match(script.output.join(""), /Fresh footprints lead from the manor gate/);
+});
+
+test("natural-language play lets a new Player recover from invalid setup", async () => {
+  const eventStore = createInMemoryEventStore();
+  const script = scriptedIO([
+    "Mara Vey",
+    "she/her",
+    "Find her missing sister",
+    "1",
+    "1",
+    "1",
+    "Mara Vey",
+    "she/her",
+    "Find her missing sister",
+    "0",
+    "2",
+    "1",
+    "I survey the grounds.",
+    "I leave before going inside.",
+  ]);
+
+  const result = await runNaturalLanguagePlay({
+    io: script.io,
+    interpreter: capabilitySequence(["survey-manor", "withdraw-from-manor"]),
+    eventStore,
+    runToAdventureEnd: true,
+  });
+
+  const output = script.output.join("");
+  assert.match(output, /Create your Player Character/);
+  assert.match(output, /Please try setup again/);
+  assert.equal(output.match(/Player Character name:/g)?.length, 2);
+  assert.equal(result.state.adventureEnding?.kind, "unresolved");
 });
 
 test("a natural-language rules query exposes visible evidence without advancing play", async () => {
@@ -496,6 +538,12 @@ test("an interpreter cannot finalize Oracle Likelihood in its action selection",
 
 test("natural-language play reaches a non-Confrontation favourable ending", async () => {
   const eventStore = createInMemoryEventStore();
+  const structuredStore = startedAdventure({
+    Might: 0,
+    Wits: 2,
+    Presence: 1,
+  });
+  const structuredRandom = scriptedRandomSource([10, 6, 6, 6, 6]);
   const interpreter = capabilitySequence(
     [
       "survey-manor",
@@ -530,6 +578,30 @@ test("natural-language play reaches a non-Confrontation favourable ending", asyn
     randomSource: scriptedRandomSource([10, 6, 6, 6, 6]),
     runToAdventureEnd: true,
   });
+  await playStructuredCapability(
+    structuredStore,
+    structuredRandom,
+    "survey-manor",
+    ["s"],
+  );
+  await playStructuredCapability(
+    structuredStore,
+    structuredRandom,
+    "ask-someone-inside-manor",
+    ["l"],
+  );
+  await playStructuredCapability(
+    structuredStore,
+    structuredRandom,
+    "force-side-door",
+    ["c", "d"],
+  );
+  await playStructuredCapability(
+    structuredStore,
+    structuredRandom,
+    "question-housekeeper",
+    ["c", "d"],
+  );
 
   assert.equal(result.state.adventureEnding?.kind, "favourable");
   assert.equal(result.state.adventureEnding?.id, "sister-escaped-safely");
@@ -548,10 +620,17 @@ test("natural-language play reaches a non-Confrontation favourable ending", asyn
       "question-housekeeper",
     ],
   );
+  assert.equal(normalizedEvents(eventStore), normalizedEvents(structuredStore));
 });
 
 test("natural-language play reaches a Confrontation ending", async () => {
   const eventStore = createInMemoryEventStore();
+  const structuredStore = startedAdventure({
+    Might: 2,
+    Wits: 1,
+    Presence: 0,
+  });
+  const structuredRandom = scriptedRandomSource([100, 6, 6, 6, 6, 6, 6]);
   const interpreter = capabilitySequence([
     "survey-manor",
     "ask-someone-inside-manor",
@@ -587,6 +666,36 @@ test("natural-language play reaches a Confrontation ending", async () => {
     randomSource: scriptedRandomSource([100, 6, 6, 6, 6, 6, 6]),
     runToAdventureEnd: true,
   });
+  await playStructuredCapability(
+    structuredStore,
+    structuredRandom,
+    "survey-manor",
+    ["s"],
+  );
+  await playStructuredCapability(
+    structuredStore,
+    structuredRandom,
+    "ask-someone-inside-manor",
+    ["l"],
+  );
+  await playStructuredCapability(
+    structuredStore,
+    structuredRandom,
+    "force-side-door",
+    ["c", "d"],
+  );
+  await playStructuredCapability(
+    structuredStore,
+    structuredRandom,
+    "drive-back-cult-guardian",
+    ["c", "d"],
+  );
+  await playStructuredCapability(
+    structuredStore,
+    structuredRandom,
+    "drive-back-cult-guardian",
+    ["c", "d"],
+  );
 
   assert.equal(result.state.confrontation?.status, "victory");
   assert.equal(result.state.adventureEnding?.kind, "favourable");
@@ -597,6 +706,19 @@ test("natural-language play reaches a Confrontation ending", async () => {
   assert.ok(
     eventStore.readAll().some((event) => event.type === "ConfrontationEnded"),
   );
+  assert.deepEqual(
+    result.interpretedCommands.map((command) =>
+      command.type === "choose-action" ? command.actionId : command.type,
+    ),
+    [
+      "survey-manor",
+      "ask-someone-inside-manor",
+      "force-side-door",
+      "drive-back-cult-guardian",
+      "drive-back-cult-guardian",
+    ],
+  );
+  assert.equal(normalizedEvents(eventStore), normalizedEvents(structuredStore));
 });
 
 test("ambiguous interpretation asks for clarification without appending events", async () => {

@@ -15,7 +15,7 @@ import {
   invokeWithinTimeout,
   isRecord,
 } from "./model-boundary.js";
-import { readTraitRating } from "./text-play-input.js";
+import { completePlayerCharacterSetup } from "./player-character-setup.js";
 import {
   runStructuredPlay,
   type PresentationModel,
@@ -390,24 +390,7 @@ export const runNaturalLanguagePlay = async (
   let app = createApplication(options, eventStore);
   let view = app.view();
   if (view.state.playerCharacter === null) {
-    const name = await options.io.read("Player Character name: ");
-    const pronouns = await options.io.read("Pronouns: ");
-    const motivation = await options.io.read("Motivation: ");
-    const configured = app.submit({
-      type: "configure-player-character",
-      name,
-      pronouns,
-      motivation,
-      traits: {
-        Might: await readTraitRating(options.io, "Might"),
-        Wits: await readTraitRating(options.io, "Wits"),
-        Presence: await readTraitRating(options.io, "Presence"),
-      },
-    });
-    options.io.write(`\n${configured.message}\n`);
-    if (configured.status === "rejected") {
-      return { ...app.view(), interpretedCommands: [] };
-    }
+    await completePlayerCharacterSetup(app, options.io);
     const started = app.submit({ type: "begin-adventure" });
     options.io.write(`${started.message}\n\n`);
     view = started;
