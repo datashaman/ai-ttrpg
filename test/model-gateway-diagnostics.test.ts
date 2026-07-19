@@ -31,6 +31,12 @@ test("raw provider diagnostics require explicit local capture and redact credent
     invoke: async () => ({
       output: {
         authorization: "Bearer provider-secret",
+        access_token: "opaque-access-credential",
+        refreshToken: "opaque-refresh-credential",
+        client_secret: "opaque-client-credential",
+        secretAccessKey: "opaque-aws-credential",
+        "x-api-key": "opaque-api-credential",
+        cookie: "session=opaque-cookie-credential",
         explanation: "Provider echoed sk-provider-secret in prose.",
       },
       usage: null,
@@ -49,6 +55,6 @@ test("raw provider diagnostics require explicit local capture and redact credent
   assert.match(captured, /interpret-player-input|scripted-sensitive|\[REDACTED\]/);
   assert.doesNotMatch(
     captured,
-    /sk-player-secret|provider-secret|sk-provider-secret/,
+    /sk-player-secret|provider-secret|sk-provider-secret|opaque-/,
   );
 });

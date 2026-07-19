@@ -91,7 +91,13 @@ export const createDurableModelCallRecordStore = (
   },
   readAll: () => {
     if (!existsSync(path)) return [];
-    const records = readFileSync(path, "utf8")
+    let serialized: string;
+    try {
+      serialized = readFileSync(path, "utf8");
+    } catch {
+      return [];
+    }
+    const records = serialized
       .split("\n")
       .filter((line) => line.length > 0)
       .map(parsedRecord)

@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -177,6 +183,21 @@ test("unreadable Model Call Records cannot change replay or prevent reopening", 
     beforeClose,
   );
   reopened.close();
+
+  const modelCallsPath = join(directory, adventureId, "model-calls.jsonl");
+  rmSync(modelCallsPath);
+  mkdirSync(modelCallsPath);
+  const reopenedWithIoFailure = createLocalAdventureRepository(directory).open(
+    adventureId,
+  );
+  assert.deepEqual(reopenedWithIoFailure.modelCallStore.readAll(), []);
+  assert.deepEqual(
+    createStructuredPlayApplication({
+      timelineStore: reopenedWithIoFailure.timelineStore,
+    }).view().state,
+    beforeClose,
+  );
+  reopenedWithIoFailure.close();
 });
 
 test("branching and portable export leave Model Call Records outside canonical history", () => {

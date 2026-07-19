@@ -1,9 +1,33 @@
 import { appendFileSync } from "node:fs";
 
-const sensitiveKey =
-  /^(?:authorization|api[-_]?key|token|secret|credential|password)$/i;
+const sensitiveKeys = new Set([
+  "authorization",
+  "proxyauthorization",
+  "apikey",
+  "xapikey",
+  "token",
+  "accesstoken",
+  "refreshtoken",
+  "idtoken",
+  "authtoken",
+  "bearertoken",
+  "secret",
+  "clientsecret",
+  "secretaccesskey",
+  "awssecretaccesskey",
+  "credential",
+  "credentials",
+  "password",
+  "passwd",
+  "privatekey",
+  "cookie",
+  "setcookie",
+]);
 const credentialPattern = /\b(?:sk-[a-z0-9_-]+|bearer\s+[^\s"']+)/gi;
 const redacted = "[REDACTED]";
+
+const isSensitiveKey = (key: string): boolean =>
+  sensitiveKeys.has(key.replace(/[^a-z0-9]/gi, "").toLocaleLowerCase("en"));
 
 export const redactModelDiagnosticValue = (value: unknown): unknown => {
   if (typeof value === "string") {
@@ -16,7 +40,7 @@ export const redactModelDiagnosticValue = (value: unknown): unknown => {
   return Object.fromEntries(
     Object.entries(value).map(([key, child]) => [
       key,
-      sensitiveKey.test(key) ? redacted : redactModelDiagnosticValue(child),
+      isSensitiveKey(key) ? redacted : redactModelDiagnosticValue(child),
     ]),
   );
 };
