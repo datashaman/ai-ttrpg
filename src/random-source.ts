@@ -1,3 +1,5 @@
+import type { CanonicalEvent } from "./structured-play.js";
+
 export interface RandomSource {
   rollDie(sides: 6 | 100): number;
   metadata(): { readonly source: string; readonly seed: number | null };
@@ -17,4 +19,27 @@ export const createSeededRandomSource = (seed: number): RandomSource => {
     metadata: () => ({ source: "seeded-lcg", seed: normalizedSeed }),
     position: () => rolls,
   };
+};
+
+export const committedRandomPosition = (
+  events: readonly CanonicalEvent[],
+): number =>
+  events.reduce(
+    (position, event) =>
+      position +
+      (event.type === "CheckRollRevealed"
+        ? event.payload.pendingChoice.roll.random.inputs.length
+        : event.type === "OracleAnswered"
+          ? event.payload.trace.random.inputs.length
+          : 0),
+    0,
+  );
+
+export const createSeededRandomSourceAtPosition = (
+  seed: number,
+  position: number,
+): RandomSource => {
+  const source = createSeededRandomSource(seed);
+  for (let index = 0; index < position; index += 1) source.rollDie(6);
+  return source;
 };

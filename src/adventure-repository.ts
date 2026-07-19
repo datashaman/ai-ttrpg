@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import {
   appendFileSync,
   existsSync,
@@ -13,7 +13,12 @@ import {
   createStructuredPlayApplication,
   type CanonicalEvent,
   type EventStore,
+  type RandomSource,
 } from "./structured-play.js";
+import {
+  committedRandomPosition,
+  createSeededRandomSourceAtPosition,
+} from "./random-source.js";
 
 export interface AdventureIdentity {
   readonly id: string;
@@ -26,6 +31,7 @@ export interface AdventureSummary extends AdventureIdentity {
 
 export interface OpenAdventure extends AdventureIdentity {
   readonly eventStore: EventStore;
+  readonly randomSource: RandomSource;
   close(): void;
 }
 
@@ -37,9 +43,12 @@ export interface AdventureRepository {
 
 interface AdventureRecord extends AdventureIdentity {
   readonly events: CanonicalEvent[];
+  readonly randomSeed: number;
 }
 
-type AdventureMetadata = AdventureIdentity;
+interface AdventureMetadata extends AdventureIdentity {
+  readonly randomSeed: number;
+}
 
 const adventureName = (name: string): string => {
   const normalized = name.trim();
@@ -60,6 +69,10 @@ const openAdventure = (
   return {
     id: record.id,
     name: record.name,
+    randomSource: createSeededRandomSourceAtPosition(
+      record.randomSeed,
+      committedRandomPosition(record.events),
+    ),
     eventStore: {
       readAll: () => {
         ensureOpen();
@@ -93,6 +106,7 @@ export const createInMemoryAdventureRepository = (): AdventureRepository => {
         id: randomUUID(),
         name: adventureName(name),
         events: [],
+        randomSeed: randomInt(0x1_0000_0000),
       };
       records.set(record.id, record);
       return open(record.id);
@@ -268,7 +282,10 @@ const isMetadata = (value: unknown): value is AdventureMetadata =>
   typeof value === "object" &&
   value !== null &&
   typeof Reflect.get(value, "id") === "string" &&
-  typeof Reflect.get(value, "name") === "string";
+  typeof Reflect.get(value, "name") === "string" &&
+  Number.isInteger(Reflect.get(value, "randomSeed")) &&
+  (Reflect.get(value, "randomSeed") as number) >= 0 &&
+  (Reflect.get(value, "randomSeed") as number) <= 0xffff_ffff;
 
 const readRecord = (rootDirectory: string, id: string): AdventureRecord => {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(id)) {
@@ -305,7 +322,12 @@ const readRecord = (rootDirectory: string, id: string): AdventureRecord => {
         },
       },
     }).view();
-    return { id: metadata.id, name: metadata.name, events };
+    return {
+      id: metadata.id,
+      name: metadata.name,
+      events,
+      randomSeed: metadata.randomSeed,
+    };
   } catch {
     throw new Error(`Adventure "${id}" could not be read.`);
   }
@@ -330,6 +352,7 @@ export const createLocalAdventureRepository = (
       const metadata: AdventureMetadata = {
         id: randomUUID(),
         name: adventureName(name),
+        randomSeed: randomInt(0x1_0000_0000),
       };
       const directory = join(rootDirectory, metadata.id);
       mkdirSync(directory);
