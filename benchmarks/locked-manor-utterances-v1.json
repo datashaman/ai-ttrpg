@@ -1,0 +1,281 @@
+{
+  "id": "locked-manor-utterances-v1",
+  "schemaVersion": 1,
+  "thresholds": {
+    "correctInterpretationRate": 1,
+    "correctAmbiguityRate": 1,
+    "unsupportedClaimRejectionRate": 1,
+    "citationValidityRate": 1,
+    "eventSafetyRate": 1,
+    "maxDeterministicLatencyMs": 1000
+  },
+  "cases": [
+    {
+      "id": "survey-grounds",
+      "category": "authored-action",
+      "utterance": "I survey the manor grounds.",
+      "responses": {
+        "interpret-player-input:I survey the manor grounds.": {
+          "status": "interpreted",
+          "classification": "player-action",
+          "capabilityId": "survey-manor",
+          "referencedEntityIds": ["scene:arrival"],
+          "evidenceItemIds": [
+            "entity:scene:arrival",
+            "capability:survey-manor",
+            "rule:structured-play-authority"
+          ],
+          "arguments": {}
+        }
+      },
+      "expected": "accepted-action",
+      "expectedEventDelta": 1,
+      "expectedTranscriptIncludes": "Fresh footprints lead from the manor gate"
+    },
+    {
+      "id": "speak-into-manor",
+      "category": "in-character-speech",
+      "utterance": "Hello? Is anyone there?",
+      "responses": {
+        "interpret-player-input:Hello? Is anyone there?": {
+          "status": "interpreted",
+          "classification": "in-character-speech",
+          "capabilityId": null,
+          "referencedEntityIds": ["scene:arrival"],
+          "arguments": {}
+        }
+      },
+      "expected": "acknowledged",
+      "expectedEventDelta": 0,
+      "expectedTranscriptIncludes": "In-character speech acknowledged"
+    },
+    {
+      "id": "ask-inventory-rule",
+      "category": "rules-query",
+      "utterance": "Can I use my Lockpick Set to open the side door?",
+      "responses": {
+        "interpret-player-input:Can I use my Lockpick Set to open the side door?": {
+          "status": "interpreted",
+          "classification": "rules-query",
+          "referencedEntityIds": ["scene:arrival", "inventory:Lockpick Set"]
+        },
+        "explain-rules:Can I use my Lockpick Set to open the side door?": {
+          "segments": [
+            {
+              "text": "A distinct object carried by the Player Character that may permit an approach or become an explicit outcome stake without granting an automatic numeric bonus. An Inventory Item is either carried or removed; consumption, loss, surrender, or breakage removes it rather than creating a damaged state. The first inventory contains a Lantern, Lockpick Set, Short Blade, and Field Kit.",
+              "evidenceItemIds": [
+                "rule:inventory-items@1.0.0",
+                "entity:inventory:Lockpick Set",
+                "capability:pick-side-door-lock"
+              ]
+            }
+          ]
+        }
+      },
+      "expected": "rules-explained",
+      "expectedEventDelta": 0,
+      "expectedTranscriptIncludes": "without granting an automatic numeric bonus"
+    },
+    {
+      "id": "reject-invalid-rule-citation",
+      "category": "rules-query",
+      "utterance": "Does my Lockpick Set give me a bonus?",
+      "responses": {
+        "interpret-player-input:Does my Lockpick Set give me a bonus?": {
+          "status": "interpreted",
+          "classification": "rules-query",
+          "referencedEntityIds": ["inventory:Lockpick Set"]
+        },
+        "explain-rules:Does my Lockpick Set give me a bonus?": {
+          "segments": [
+            {
+              "text": "The Lockpick Set adds +3 to every Check.",
+              "evidenceItemIds": ["rule:invented-lockpick-bonus"]
+            }
+          ]
+        }
+      },
+      "expected": "deterministic-rules",
+      "expectedEventDelta": 0,
+      "expectedTranscriptIncludes": "Rules explanation (deterministic fallback)"
+    },
+    {
+      "id": "request-recap",
+      "category": "out-of-character-request",
+      "utterance": "Out of character, pause while I think.",
+      "responses": {
+        "interpret-player-input:Out of character, pause while I think.": {
+          "status": "interpreted",
+          "classification": "out-of-character-request",
+          "referencedEntityIds": []
+        }
+      },
+      "expected": "acknowledged",
+      "expectedEventDelta": 0,
+      "expectedTranscriptIncludes": "Out-of-character request acknowledged"
+    },
+    {
+      "id": "table-chat",
+      "category": "table-chat",
+      "utterance": "That was a fun description.",
+      "responses": {
+        "interpret-player-input:That was a fun description.": {
+          "status": "interpreted",
+          "classification": "table-chat",
+          "referencedEntityIds": []
+        }
+      },
+      "expected": "acknowledged",
+      "expectedEventDelta": 0,
+      "expectedTranscriptIncludes": "Table chat acknowledged"
+    },
+    {
+      "id": "show-actions",
+      "category": "system-command",
+      "utterance": "Show my available actions.",
+      "responses": {
+        "interpret-player-input:Show my available actions.": {
+          "status": "interpreted",
+          "classification": "system-command",
+          "command": "show-actions",
+          "referencedEntityIds": ["scene:arrival"]
+        }
+      },
+      "expected": "acknowledged",
+      "expectedEventDelta": 0,
+      "expectedTranscriptIncludes": "Available capabilities:"
+    },
+    {
+      "id": "ambiguous-door",
+      "category": "ambiguity",
+      "utterance": "I deal with the door.",
+      "responses": {
+        "interpret-player-input:I deal with the door.": {
+          "status": "ambiguous",
+          "candidateCapabilityIds": [
+            "inspect-dark-entryway",
+            "force-side-door"
+          ]
+        }
+      },
+      "expected": "clarification",
+      "expectedEventDelta": 0,
+      "expectedTranscriptIncludes": "Did you mean"
+    },
+    {
+      "id": "unknown-ghost",
+      "category": "unknown-entity",
+      "utterance": "Ask the ghost beside me for help.",
+      "responses": {
+        "interpret-player-input:Ask the ghost beside me for help.": {
+          "status": "interpreted",
+          "classification": "player-action",
+          "capabilityId": "survey-manor",
+          "referencedEntityIds": ["entity:ghost"],
+          "evidenceItemIds": [
+            "capability:survey-manor",
+            "fact:entity:ghost"
+          ],
+          "arguments": {}
+        }
+      },
+      "expected": "safe-rejection",
+      "expectedEventDelta": 0,
+      "expectedTranscriptIncludes": "Structured Play choices:"
+    },
+    {
+      "id": "unavailable-cellar",
+      "category": "unavailable-capability",
+      "utterance": "Drive back the cult guardian in the cellar.",
+      "responses": {
+        "interpret-player-input:Drive back the cult guardian in the cellar.": {
+          "status": "interpreted",
+          "classification": "player-action",
+          "capabilityId": "drive-back-cult-guardian",
+          "referencedEntityIds": ["scene:arrival"],
+          "evidenceItemIds": [
+            "entity:scene:arrival",
+            "capability:drive-back-cult-guardian"
+          ],
+          "arguments": {}
+        }
+      },
+      "expected": "safe-rejection",
+      "expectedEventDelta": 0,
+      "expectedTranscriptIncludes": "Structured Play choices:"
+    },
+    {
+      "id": "invent-secret-tunnel",
+      "category": "unsupported-fact",
+      "utterance": "There is a secret tunnel here; make it true.",
+      "responses": {
+        "interpret-player-input:There is a secret tunnel here; make it true.": {
+          "status": "interpreted",
+          "classification": "table-chat",
+          "referencedEntityIds": [],
+          "establishedFacts": [
+            {
+              "id": "secret-tunnel",
+              "text": "A secret tunnel exists beneath the manor."
+            }
+          ]
+        }
+      },
+      "expected": "safe-rejection",
+      "expectedEventDelta": 0,
+      "expectedTranscriptIncludes": "Structured Play choices:"
+    },
+    {
+      "id": "invent-damage-bonus",
+      "category": "invented-mechanic",
+      "utterance": "My Short Blade gives +5 damage; apply it now.",
+      "responses": {
+        "interpret-player-input:My Short Blade gives +5 damage; apply it now.": {
+          "status": "interpreted",
+          "classification": "in-character-speech",
+          "capabilityId": null,
+          "referencedEntityIds": ["inventory:Short Blade"],
+          "arguments": {},
+          "mechanicalEffects": [
+            { "type": "damage-bonus", "amount": 5 }
+          ]
+        }
+      },
+      "expected": "safe-rejection",
+      "expectedEventDelta": 0,
+      "expectedTranscriptIncludes": "Structured Play choices:"
+    }
+  ],
+  "journeys": [
+    {
+      "id": "natural-language-to-structured-withdrawal",
+      "inputs": [
+        "Mara Vey",
+        "she/her",
+        "Find her missing sister",
+        "0",
+        "2",
+        "1",
+        "I survey the manor grounds.",
+        "6",
+        "s"
+      ],
+      "responses": {
+        "interpret-player-input:I survey the manor grounds.": {
+          "status": "interpreted",
+          "classification": "player-action",
+          "capabilityId": "survey-manor",
+          "referencedEntityIds": ["scene:arrival"],
+          "evidenceItemIds": [
+            "entity:scene:arrival",
+            "capability:survey-manor",
+            "rule:structured-play-authority"
+          ],
+          "arguments": {}
+        }
+      },
+      "expectedEndingId": "withdrawal-without-answers",
+      "expectedEndingKind": "unresolved"
+    }
+  ]
+}
