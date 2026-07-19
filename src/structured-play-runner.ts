@@ -68,6 +68,7 @@ type PresentationRuntime =
       readonly kind: "model-gateway";
       readonly gateway: ModelGateway;
       readonly modelCallStore: ModelCallRecordStore;
+      readonly readAcceptedEvents: () => readonly CanonicalEvent[];
       readonly evidenceBudget?: number;
       readonly timeoutMs: number;
     };
@@ -127,6 +128,7 @@ const presentCommittedOutcome = async (
           gateway: runtime.gateway,
           modelCallStore: runtime.modelCallStore,
           context,
+          acceptedEvents: runtime.readAcceptedEvents(),
           state: result.state,
           timeoutMs: runtime.timeoutMs,
           ...(runtime.evidenceBudget === undefined
@@ -565,6 +567,12 @@ export const runStructuredPlay = async ({
           gateway: modelGateway,
           modelCallStore:
             modelCallStore ?? createInMemoryModelCallRecordStore(),
+          readAcceptedEvents: () =>
+            timelineStore === undefined
+              ? selectedEventStore.readAll()
+              : timelineStore.readTimeline(
+                  timelineStore.view().activeTimelineId,
+                ),
           ...(evidenceBudget === undefined ? {} : { evidenceBudget }),
           timeoutMs: narrationTimeoutMs,
         }

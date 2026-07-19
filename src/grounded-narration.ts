@@ -210,6 +210,7 @@ export const narrateCommittedOutcomeThroughGateway = async ({
   gateway,
   modelCallStore,
   context,
+  acceptedEvents,
   state,
   timeoutMs,
   evidenceBudget,
@@ -217,6 +218,7 @@ export const narrateCommittedOutcomeThroughGateway = async ({
   readonly gateway: ModelGateway;
   readonly modelCallStore: ModelCallRecordStore;
   readonly context: PresentationContext;
+  readonly acceptedEvents: readonly CanonicalEvent[];
   readonly state: ApplicationView["state"];
   readonly timeoutMs: number;
   readonly evidenceBudget?: number;
@@ -228,7 +230,7 @@ export const narrateCommittedOutcomeThroughGateway = async ({
     };
   }
   const evidenceBundle = assembleNarrationEvidence({
-    visibleEvidence: context.visibleEvidence,
+    acceptedEvents,
     resolutionTrace: context.resolutionTrace,
     committedEvents: context.committedEvents,
     playerCharacter: state.playerCharacter,

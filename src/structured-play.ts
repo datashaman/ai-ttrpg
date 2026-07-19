@@ -14,6 +14,10 @@ import {
   createSeededRandomSource,
   type RandomSource,
 } from "./random-source.js";
+import {
+  validateWorldKnowledgeAppend,
+  WorldKnowledgeError,
+} from "./world-knowledge.js";
 
 export { createInMemoryEventStore } from "./in-memory-event-store.js";
 export { createInMemoryTimelineStore } from "./in-memory-timeline-store.js";
@@ -600,6 +604,7 @@ export interface RejectedResult {
     | "write-conflict"
     | "idempotency-conflict"
     | "invalid-write-batch"
+    | "invalid-world-knowledge"
     | "persistence-failed";
   readonly message: string;
   readonly state: GameState;
@@ -1589,6 +1594,17 @@ export const createStructuredPlayApplication = (
   ): AcceptedResult | RejectedResult => {
     let acceptedEvents = appendedEvents;
     if (pendingEvents.length > 0) {
+      try {
+        validateWorldKnowledgeAppend({
+          currentEvents: eventStore.readAll(),
+          proposedEvents: pendingEvents,
+        });
+      } catch (error) {
+        if (error instanceof WorldKnowledgeError) {
+          return reject("invalid-world-knowledge", error.message);
+        }
+        throw error;
+      }
       if (eventStore.appendBatch !== undefined) {
         const result = eventStore.appendBatch({
           expectedPosition: commandStartPosition,

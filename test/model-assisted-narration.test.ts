@@ -449,6 +449,12 @@ test("a committed Oracle answer is narrated from relevant Player-visible evidenc
     ),
   );
   assert.equal(
+    record.evidenceReferences.find(
+      (reference) => reference.itemId === "fact:fresh-footprints",
+    )?.sourceReference,
+    "world-knowledge:fresh-footprints",
+  );
+  assert.equal(
     record.evidenceReferences.some(
       (reference) => reference.itemId === "fact:side-door-open",
     ),
