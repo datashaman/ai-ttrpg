@@ -1,13 +1,18 @@
 import { randomUUID } from "node:crypto";
 
 import type { EvidenceBundle } from "./evidence-bundle.js";
-import { immutableSnapshot, invokeWithinTimeout } from "./model-boundary.js";
+import {
+  immutableSnapshot,
+  invokeWithinTimeout,
+  ModelTimeoutError,
+} from "./model-boundary.js";
 import type { CanonicalEvent, StructuredPlayInput } from "./structured-play.js";
 
 export interface InterpretationModelTask {
   readonly type: "interpret-player-input";
   readonly input: {
     readonly utterance: string;
+    readonly repairOf?: unknown;
   };
   readonly evidenceBundle: EvidenceBundle;
 }
@@ -31,6 +36,23 @@ export interface ModelProviderResult {
   readonly usage: ModelUsage | null;
 }
 
+export type ModelFailureCode =
+  | "unavailable"
+  | "timeout"
+  | "unauthenticated"
+  | "rate-limited"
+  | "over-budget";
+
+export class ModelProviderError extends Error {
+  constructor(
+    readonly code: Exclude<ModelFailureCode, "timeout">,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ModelProviderError";
+  }
+}
+
 export interface ModelGatewayExecution {
   readonly callId: string;
   readonly provider: string;
@@ -46,17 +68,22 @@ export interface ModelGatewayExecution {
         readonly output: unknown;
         readonly usage: ModelUsage | null;
       }
-    | {
+      | {
         readonly status: "failed";
+        readonly code: ModelFailureCode;
         readonly reason: string;
+        readonly usage: ModelUsage | null;
       };
-  readonly retryCount: 0;
+  readonly retryCount: 0 | 1;
 }
 
 export interface ModelGateway {
   execute(
     task: ModelTask,
-    options?: { readonly timeoutMs?: number },
+    options?: {
+      readonly timeoutMs?: number;
+      readonly isStructurallyValid?: (output: unknown) => boolean;
+    },
   ): Promise<ModelGatewayExecution>;
 }
 
@@ -71,20 +98,59 @@ export const createModelGateway = ({
     const started = Date.now();
     const taskSnapshot = immutableSnapshot(task);
     let outcome: ModelGatewayExecution["outcome"];
+    let retryCount: 0 | 1 = 0;
+    let usage: ModelUsage | null = null;
+    const addUsage = (next: ModelUsage | null): void => {
+      if (next === null) return;
+      usage =
+        usage === null
+          ? next
+          : {
+              inputTokens: usage.inputTokens + next.inputTokens,
+              outputTokens: usage.outputTokens + next.outputTokens,
+              totalTokens: usage.totalTokens + next.totalTokens,
+            };
+    };
     try {
-      const result = (await invokeWithinTimeout(
+      let result = (await invokeWithinTimeout(
         () => provider.invoke(taskSnapshot),
         options?.timeoutMs ?? 5_000,
       )) as ModelProviderResult;
+      addUsage(result.usage);
+      if (
+        options?.isStructurallyValid !== undefined &&
+        !options.isStructurallyValid(result.output)
+      ) {
+        retryCount = 1;
+        const repairTask = immutableSnapshot({
+          ...taskSnapshot,
+          input: {
+            ...taskSnapshot.input,
+            repairOf: result.output,
+          },
+        });
+        result = (await invokeWithinTimeout(
+          () => provider.invoke(repairTask),
+          options.timeoutMs ?? 5_000,
+        )) as ModelProviderResult;
+        addUsage(result.usage);
+      }
       outcome = {
         status: "succeeded",
         output: result.output,
-        usage: result.usage,
+        usage,
       };
     } catch (error) {
       outcome = {
         status: "failed",
+        code:
+          error instanceof ModelProviderError
+            ? error.code
+            : error instanceof ModelTimeoutError
+              ? "timeout"
+              : "unavailable",
         reason: error instanceof Error ? error.message : "Model invocation failed.",
+        usage,
       };
     }
     const completed = Date.now();
@@ -98,7 +164,7 @@ export const createModelGateway = ({
       durationMs: Math.max(0, completed - started),
       task: taskSnapshot,
       outcome,
-      retryCount: 0 as const,
+      retryCount,
     });
   },
 });
@@ -195,10 +261,7 @@ export const modelCallRecordFrom = ({
     startedAt: execution.startedAt,
     completedAt: execution.completedAt,
     durationMs: execution.durationMs,
-    usage:
-      execution.outcome.status === "succeeded"
-        ? execution.outcome.usage
-        : null,
+    usage: execution.outcome.usage,
     retryCount: execution.retryCount,
     fallbackOutcome,
     validation,

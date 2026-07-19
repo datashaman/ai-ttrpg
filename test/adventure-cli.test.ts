@@ -5,7 +5,14 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { runAdventureCli } from "../src/adventure-cli.js";
-import { createLocalAdventureRepository } from "../src/adventure-repository.js";
+import {
+  createInMemoryAdventureRepository,
+  createLocalAdventureRepository,
+} from "../src/adventure-repository.js";
+import {
+  createModelGateway,
+  createScriptedModelProvider,
+} from "../src/model-gateway.js";
 import { createStructuredPlayApplication } from "../src/structured-play.js";
 import { scriptedIO } from "./support/scripted-io.js";
 
@@ -52,6 +59,81 @@ test("CLI creates, lists, and opens a durable Adventure without a model or stora
   assert.match(transcript, /Opened Adventure "The Locked Manor"/);
   assert.match(transcript, /Adventure ended unresolved/);
   assert.doesNotMatch(transcript, /language model|storage path/i);
+  assert.doesNotMatch(transcript, /Input mode:/);
+});
+
+test("explicit Natural Language mode offers Structured Play when no provider is configured", async () => {
+  const repository = createInMemoryAdventureRepository();
+  const adventure = repository.create("The Locked Manor");
+  const app = createStructuredPlayApplication({ timelineStore: adventure.timelineStore });
+  app.submit({
+    type: "configure-player-character",
+    name: "Mara Vey",
+    pronouns: "she/her",
+    motivation: "Find her missing sister",
+    traits: { Might: 0, Wits: 2, Presence: 1 },
+  });
+  app.submit({ type: "begin-adventure" });
+  const adventureId = adventure.id;
+  adventure.close();
+  const script = scriptedIO(["1", "s", "x"]);
+
+  await runAdventureCli(
+    ["--mode", "natural-language", "open", adventureId],
+    script.io,
+    repository,
+    { runToAdventureEnd: false },
+  );
+
+  const transcript = script.output.join("");
+  assert.match(transcript, /Natural Language Play is unavailable because no model provider is configured/i);
+  assert.match(transcript, /Structured Play choices:/);
+  assert.match(transcript, /a Structured Play choice number/);
+  assert.match(transcript, /AI TTRPG — Structured Play/);
+  assert.equal(repository.list()[0]?.eventCount, 3);
+});
+
+test("Player switches from ambiguous Natural Language Play to Structured Play without a mode-change event", async () => {
+  const repository = createInMemoryAdventureRepository();
+  const adventure = repository.create("The Locked Manor");
+  const app = createStructuredPlayApplication({
+    timelineStore: adventure.timelineStore,
+  });
+  app.submit({
+    type: "configure-player-character",
+    name: "Mara Vey",
+    pronouns: "she/her",
+    motivation: "Find her missing sister",
+    traits: { Might: 0, Wits: 2, Presence: 1 },
+  });
+  app.submit({ type: "begin-adventure" });
+  const adventureId = adventure.id;
+  adventure.close();
+  const provider = createScriptedModelProvider({
+    model: "ambiguity-v1",
+    responses: {
+      "I deal with the door.": {
+        status: "ambiguous",
+        candidateCapabilityIds: ["inspect-dark-entryway", "force-side-door"],
+      },
+    },
+  });
+  const script = scriptedIO(["I deal with the door.", "1", "s", "x"]);
+
+  await runAdventureCli(
+    ["--mode", "natural-language", "open", adventureId],
+    script.io,
+    repository,
+    {
+      runToAdventureEnd: false,
+      modelGateway: createModelGateway({ provider }),
+    },
+  );
+
+  const transcript = script.output.join("");
+  assert.match(transcript, /Clarification needed:/);
+  assert.match(transcript, /Structured Play choices:/);
+  assert.equal(repository.list()[0]?.eventCount, 3);
 });
 
 test("CLI reports usage without creating an unnamed Adventure", async () => {

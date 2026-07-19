@@ -24,6 +24,13 @@ export const immutableSnapshot = <Value>(value: Value): Value => {
   return snapshot;
 };
 
+export class ModelTimeoutError extends Error {
+  constructor() {
+    super("Model timed out.");
+    this.name = "ModelTimeoutError";
+  }
+}
+
 export const invokeWithinTimeout = async (
   invocation: () => Promise<unknown>,
   timeoutMs: number,
@@ -34,7 +41,7 @@ export const invokeWithinTimeout = async (
       Promise.resolve().then(invocation),
       new Promise<never>((_, reject) => {
         timeout = setTimeout(
-          () => reject(new Error("Model timed out.")),
+          () => reject(new ModelTimeoutError()),
           timeoutMs,
         );
       }),

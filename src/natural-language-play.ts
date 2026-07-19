@@ -26,6 +26,7 @@ import {
   type ModelCallRecordStore,
   type ModelGateway,
   type ModelGatewayExecution,
+  type ModelFailureCode,
 } from "./model-gateway.js";
 import { completePlayerCharacterSetup } from "./player-character-setup.js";
 import {
@@ -136,30 +137,139 @@ const actionCommand = (
           ? { type: "select-timeline", timelineId: action.timelineId }
           : null;
 
+const hasStringArray = (
+  value: Record<string, unknown>,
+  key: string,
+): boolean =>
+  Array.isArray(value[key]) &&
+  (value[key] as unknown[]).every((item) => typeof item === "string");
+
+type CapabilityInterpretation = Record<string, unknown> & {
+  readonly status: "interpreted";
+  readonly classification: "player-action" | "in-character-speech";
+  readonly capabilityId: string;
+  readonly referencedEntityIds: readonly string[];
+  readonly evidenceItemIds?: readonly string[];
+  readonly arguments: Record<string, unknown>;
+};
+
+type ReferencedInterpretation = Record<string, unknown> & {
+  readonly referencedEntityIds: readonly string[];
+};
+
+const hasCapabilityShape = (
+  interpretation: unknown,
+  evidenced: boolean,
+): interpretation is CapabilityInterpretation =>
+  isRecord(interpretation) &&
+  hasExactKeys(interpretation, [
+    "status",
+    "classification",
+    "capabilityId",
+    "referencedEntityIds",
+    "arguments",
+    ...(evidenced ? ["evidenceItemIds"] : []),
+  ]) &&
+  interpretation.status === "interpreted" &&
+  (interpretation.classification === "player-action" ||
+    interpretation.classification === "in-character-speech") &&
+  typeof interpretation.capabilityId === "string" &&
+  hasStringArray(interpretation, "referencedEntityIds") &&
+  (!evidenced || hasStringArray(interpretation, "evidenceItemIds")) &&
+  isRecord(interpretation.arguments);
+
+const hasRulesQueryShape = (
+  interpretation: unknown,
+): interpretation is ReferencedInterpretation & {
+  readonly status: "interpreted";
+  readonly classification: "rules-query";
+} =>
+  isRecord(interpretation) &&
+  hasExactKeys(interpretation, [
+    "status",
+    "classification",
+    "referencedEntityIds",
+  ]) &&
+  interpretation.status === "interpreted" &&
+  interpretation.classification === "rules-query" &&
+  hasStringArray(interpretation, "referencedEntityIds");
+
+const hasSpeechShape = (
+  interpretation: unknown,
+): interpretation is ReferencedInterpretation & {
+  readonly status: "interpreted";
+  readonly classification: "in-character-speech";
+  readonly capabilityId: null;
+  readonly arguments: Record<string, unknown>;
+} =>
+  isRecord(interpretation) &&
+  hasExactKeys(interpretation, [
+    "status",
+    "classification",
+    "capabilityId",
+    "referencedEntityIds",
+    "arguments",
+  ]) &&
+  interpretation.status === "interpreted" &&
+  interpretation.classification === "in-character-speech" &&
+  interpretation.capabilityId === null &&
+  hasStringArray(interpretation, "referencedEntityIds") &&
+  isRecord(interpretation.arguments);
+
+const hasAcknowledgementShape = (
+  interpretation: unknown,
+): interpretation is ReferencedInterpretation & {
+  readonly status: "interpreted";
+  readonly classification: "out-of-character-request" | "table-chat";
+} =>
+  isRecord(interpretation) &&
+  hasExactKeys(interpretation, [
+    "status",
+    "classification",
+    "referencedEntityIds",
+  ]) &&
+  interpretation.status === "interpreted" &&
+  (interpretation.classification === "out-of-character-request" ||
+    interpretation.classification === "table-chat") &&
+  hasStringArray(interpretation, "referencedEntityIds");
+
+const hasSystemCommandShape = (
+  interpretation: unknown,
+): interpretation is ReferencedInterpretation & {
+  readonly status: "interpreted";
+  readonly classification: "system-command";
+  readonly command: unknown;
+} =>
+  isRecord(interpretation) &&
+  hasExactKeys(interpretation, [
+    "status",
+    "classification",
+    "command",
+    "referencedEntityIds",
+  ]) &&
+  interpretation.status === "interpreted" &&
+  interpretation.classification === "system-command" &&
+  hasStringArray(interpretation, "referencedEntityIds");
+
+const hasAmbiguityShape = (
+  interpretation: unknown,
+): interpretation is Record<string, unknown> & {
+  readonly status: "ambiguous";
+  readonly candidateCapabilityIds: readonly string[];
+} =>
+  isRecord(interpretation) &&
+  hasExactKeys(interpretation, ["status", "candidateCapabilityIds"]) &&
+  interpretation.status === "ambiguous" &&
+  hasStringArray(interpretation, "candidateCapabilityIds");
+
 const selectedCapability = (
   interpretation: unknown,
   request: InterpretationRequest,
   actions: readonly AvailableAction[],
   evidenceBundle?: EvidenceBundle,
 ): { readonly action: AvailableAction; readonly command: StructuredPlayInput } | null => {
-  const expectedKeys = [
-    "status",
-    "classification",
-    "capabilityId",
-    "referencedEntityIds",
-    "arguments",
-    ...(evidenceBundle === undefined ? [] : ["evidenceItemIds"]),
-  ];
   if (
-    !isRecord(interpretation) ||
-    !hasExactKeys(interpretation, expectedKeys) ||
-    interpretation.status !== "interpreted" ||
-    (interpretation.classification !== "player-action" &&
-      interpretation.classification !== "in-character-speech") ||
-    typeof interpretation.capabilityId !== "string" ||
-    !Array.isArray(interpretation.referencedEntityIds) ||
-    !interpretation.referencedEntityIds.every((id) => typeof id === "string") ||
-    !isRecord(interpretation.arguments) ||
+    !hasCapabilityShape(interpretation, evidenceBundle !== undefined) ||
     Object.keys(interpretation.arguments).length !== 0
   ) {
     return null;
@@ -219,14 +329,7 @@ const isRulesQuery = (
   request: InterpretationRequest,
 ): boolean => {
   if (
-    !isRecord(interpretation) ||
-    !hasExactKeys(interpretation, [
-      "status",
-      "classification",
-      "referencedEntityIds",
-    ]) ||
-    interpretation.status !== "interpreted" ||
-    interpretation.classification !== "rules-query" ||
+    !hasRulesQueryShape(interpretation) ||
     !referencesAreKnown(interpretation, request)
   ) {
     return false;
@@ -246,45 +349,21 @@ const nonGameplayClassification = (
   interpretation: unknown,
   request: InterpretationRequest,
 ): NonGameplayClassification | null => {
-  if (!isRecord(interpretation) || interpretation.status !== "interpreted") {
-    return null;
-  }
   if (
-    interpretation.classification === "in-character-speech" &&
-    hasExactKeys(interpretation, [
-      "status",
-      "classification",
-      "capabilityId",
-      "referencedEntityIds",
-      "arguments",
-    ]) &&
-    interpretation.capabilityId === null &&
-    isRecord(interpretation.arguments) &&
+    hasSpeechShape(interpretation) &&
     Object.keys(interpretation.arguments).length === 0 &&
     referencesAreKnown(interpretation, request)
   ) {
     return "in-character-speech";
   }
   if (
-    (interpretation.classification === "out-of-character-request" ||
-      interpretation.classification === "table-chat") &&
-    hasExactKeys(interpretation, [
-      "status",
-      "classification",
-      "referencedEntityIds",
-    ]) &&
+    hasAcknowledgementShape(interpretation) &&
     referencesAreKnown(interpretation, request)
   ) {
     return interpretation.classification;
   }
   if (
-    interpretation.classification === "system-command" &&
-    hasExactKeys(interpretation, [
-      "status",
-      "classification",
-      "command",
-      "referencedEntityIds",
-    ]) &&
+    hasSystemCommandShape(interpretation) &&
     (interpretation.command === "show-state" ||
       interpretation.command === "show-actions" ||
       interpretation.command === "stop") &&
@@ -300,14 +379,8 @@ const clarificationFrom = (
   request: InterpretationRequest,
 ): string | null => {
   if (
-    !isRecord(interpretation) ||
-    !hasExactKeys(interpretation, ["status", "candidateCapabilityIds"]) ||
-    interpretation.status !== "ambiguous" ||
-    !Array.isArray(interpretation.candidateCapabilityIds) ||
-    interpretation.candidateCapabilityIds.length < 2 ||
-    !interpretation.candidateCapabilityIds.every(
-      (id) => typeof id === "string",
-    )
+    !hasAmbiguityShape(interpretation) ||
+    interpretation.candidateCapabilityIds.length < 2
   ) {
     return null;
   }
@@ -329,6 +402,17 @@ const clarificationFrom = (
     return `Did you mean "${labels[0]}" or "${labels[1]}"?`;
   }
   return `Did you mean one of: ${labels.map((label) => `"${label}"`).join(", ")}?`;
+};
+
+const isStructurallyValidInterpretation = (interpretation: unknown): boolean => {
+  return (
+    hasAmbiguityShape(interpretation) ||
+    hasCapabilityShape(interpretation, true) ||
+    hasRulesQueryShape(interpretation) ||
+    hasSpeechShape(interpretation) ||
+    hasAcknowledgementShape(interpretation) ||
+    hasSystemCommandShape(interpretation)
+  );
 };
 
 const writeNonGameplayResponse = (
@@ -387,6 +471,37 @@ const writeRulesEvidence = (
   } else {
     view.state.establishedFacts.forEach((fact) => io.write(`- ${fact.text}\n`));
   }
+};
+
+export const writeStructuredPlayChoices = (
+  io: StructuredPlayIO,
+  view: ApplicationView,
+): void => {
+  io.write("Structured Play choices:\n");
+  view.availableActions.forEach((action, index) =>
+    io.write(`${index + 1}. ${action.label} [${action.kind}]\n`),
+  );
+};
+
+const modelFailureExplanation = (
+  code: ModelFailureCode,
+  reason: string,
+): string => {
+  if (code === "timeout") return "Model interpretation timed out.";
+  if (code === "unauthenticated") return "Model authentication failed.";
+  if (code === "rate-limited") return "The model provider rate limit was reached.";
+  if (code === "over-budget") return "The Model Task exceeded its budget.";
+  if (code === "unavailable") return "The model provider is unavailable.";
+  return reason;
+};
+
+const writeSafeFailure = (
+  io: StructuredPlayIO,
+  view: ApplicationView,
+  explanation: string,
+): void => {
+  io.write(`${explanation} No gameplay action was taken.\n`);
+  writeStructuredPlayChoices(io, view);
 };
 
 const createApplication = (
@@ -525,7 +640,10 @@ export const runNaturalLanguagePlay = async (
           input: { utterance },
           evidenceBundle,
         }),
-        { timeoutMs: options.interpretationTimeoutMs ?? 5_000 },
+        {
+          timeoutMs: options.interpretationTimeoutMs ?? 5_000,
+          isStructurallyValid: isStructurallyValidInterpretation,
+        },
       );
       if (gatewayExecution.outcome.status === "failed") {
         appendUncorrelatedModelCall(
@@ -538,8 +656,13 @@ export const runNaturalLanguagePlay = async (
           null,
           "safe-rejection",
         );
-        options.io.write(
-          "I could not safely map that input to an available capability. Please clarify.\n",
+        writeSafeFailure(
+          options.io,
+          view,
+          modelFailureExplanation(
+            gatewayExecution.outcome.code,
+            gatewayExecution.outcome.reason,
+          ),
         );
         return withoutInterpretedCommand(view, modelCallStore);
       }
@@ -553,8 +676,10 @@ export const runNaturalLanguagePlay = async (
       throw new Error("Natural Language Play requires a model gateway.");
     }
   } catch {
-    options.io.write(
-      "I could not safely map that input to an available capability. Please clarify.\n",
+    writeSafeFailure(
+      options.io,
+      view,
+      "I could not safely map that input to an available capability.",
     );
     return withoutInterpretedCommand(view, modelCallStore);
   }
@@ -570,6 +695,7 @@ export const runNaturalLanguagePlay = async (
       );
     }
     options.io.write(`Clarification needed: ${clarification}\n`);
+    writeStructuredPlayChoices(options.io, view);
     return withoutInterpretedCommand(view, modelCallStore);
   }
   if (isRulesQuery(interpretation, request)) {
@@ -618,8 +744,10 @@ export const runNaturalLanguagePlay = async (
         "safe-rejection",
       );
     }
-    options.io.write(
-      "I could not safely map that input to an available capability. Please clarify.\n",
+    writeSafeFailure(
+      options.io,
+      view,
+      "I could not safely map that input to an available capability.",
     );
     return withoutInterpretedCommand(view, modelCallStore);
   }
