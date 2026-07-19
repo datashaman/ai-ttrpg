@@ -37,6 +37,19 @@ interface RankedEvidenceItem {
   readonly order: number;
 }
 
+const selectRankedEvidence = (
+  candidates: readonly RankedEvidenceItem[],
+  maxItems: number,
+): readonly EvidenceItem[] =>
+  [...candidates]
+    .sort((left, right) =>
+      left.priority === right.priority
+        ? left.order - right.order
+        : left.priority - right.priority,
+    )
+    .slice(0, maxItems)
+    .map(({ item }) => item);
+
 export interface InterpretationEvidenceInput {
   readonly utterance: string;
   readonly view: ApplicationView;
@@ -210,14 +223,7 @@ export const assembleInterpretationEvidence = (
     );
 
   const maxItems = Math.max(1, input.maxItems ?? 64);
-  const items = candidates
-    .sort((left, right) =>
-      left.priority === right.priority
-        ? left.order - right.order
-        : left.priority - right.priority,
-    )
-    .slice(0, maxItems)
-    .map(({ item }) => item);
+  const items = selectRankedEvidence(candidates, maxItems);
   return immutableSnapshot({
     id: bundleId(items),
     taskType: "interpret-player-input" as const,
@@ -237,7 +243,7 @@ const AUTHORED_RULES: readonly AuthoredRule[] = [
       sourceKind: "authority-rule",
       sourceReference: "CONTEXT.md#Inventory Item",
       content:
-        "An Inventory Item may permit an approach but does not grant an automatic numeric bonus.",
+        "A distinct object carried by the Player Character that may permit an approach or become an explicit outcome stake without granting an automatic numeric bonus. An Inventory Item is either carried or removed; consumption, loss, surrender, or breakage removes it rather than creating a damaged state. The first inventory contains a Lantern, Lockpick Set, Short Blade, and Field Kit.",
       inclusionReason:
         "This exact authored rule governs Inventory Items and item-enabled approaches.",
     },
@@ -249,7 +255,7 @@ const AUTHORED_RULES: readonly AuthoredRule[] = [
       sourceKind: "authority-rule",
       sourceReference: "CONTEXT.md#Check",
       content:
-        "A confirmed Check rolls 2d6 plus the relevant Trait: 6 or less is a Setback, 7–9 is Success with Cost, and 10 or more is a Clean Success.",
+        "The resolution of a confirmed Check Proposal with 2d6 plus the relevant Trait, producing a Setback, Success with Cost, or Clean Success.",
       inclusionReason: "This exact authored rule governs Check resolution.",
     },
     terms: ["check", "roll", "trait", "setback", "success", "2d6"],
@@ -260,7 +266,7 @@ const AUTHORED_RULES: readonly AuthoredRule[] = [
       sourceKind: "authority-rule",
       sourceReference: "CONTEXT.md#Resolve",
       content:
-        "After seeing a Check roll and before its outcome is established, the Player may spend at most one Resolve to add +1; Shaken prevents spending Resolve.",
+        "The Player Character's three-point capacity to change a Check after seeing its roll but before its outcome is established. The Player may spend one Resolve per Check to add +1 to its final total; reaching zero does not itself cause Defeat.",
       inclusionReason: "This exact authored rule governs spending Resolve.",
     },
     terms: ["resolve", "spend", "shaken", "plus one", "+1"],
@@ -271,7 +277,7 @@ const AUTHORED_RULES: readonly AuthoredRule[] = [
       sourceKind: "authority-rule",
       sourceReference: "CONTEXT.md#Likelihood",
       content:
-        "The Player confirms Likelihood before the Oracle answers: Unlikely is 25% Yes, Even is 50% Yes, and Likely is 75% Yes.",
+        "The Player-visible odds confirmed by the Player before the Oracle answers an Unresolved Proposition: Unlikely means 25% Yes, Even means 50% Yes, and Likely means 75% Yes. The Narrator may recommend a Likelihood from Established Facts but cannot select it finally.",
       inclusionReason: "This exact authored rule governs Oracle Likelihood.",
     },
     terms: ["oracle", "likelihood", "unlikely", "even", "likely", "odds"],
@@ -282,7 +288,7 @@ const AUTHORED_RULES: readonly AuthoredRule[] = [
       sourceKind: "authority-rule",
       sourceReference: "CONTEXT.md#Free Action",
       content:
-        "A Free Action proceeds without a Check when its outcome is not meaningfully uncertain or failure would not materially change the situation.",
+        "An action whose outcome is not meaningfully uncertain or whose failure would not materially change the situation. A Free Action proceeds without a Check.",
       inclusionReason: "This exact authored rule governs Free Actions.",
     },
     terms: ["free action", "without a check", "automatic", "uncertain"],
@@ -306,6 +312,16 @@ const relevanceScore = (query: string, item: EvidenceItem): number => {
   return normalized(`${item.id} ${item.sourceReference} ${item.content}`)
     .split(" ")
     .filter((term) => term.length >= 3 && queryTerms.has(term)).length;
+};
+
+export const isRulesEvidenceApplicable = (
+  query: string,
+  item: EvidenceItem,
+): boolean => {
+  if (item.sourceKind === "authority-rule") return true;
+  if (item.sourceKind === "active-scene") return true;
+  if (item.sourceKind === "resolution") return true;
+  return relevanceScore(query, item) > 0;
 };
 
 const taskSpecificContext = (
@@ -351,7 +367,7 @@ export const assembleRulesExplanationEvidence = (
     }).items.filter((item) => item.id !== "rule:structured-play-authority"),
   );
   const rules = applicableRules(input.utterance);
-  const ranked = [
+  const ranked: RankedEvidenceItem[] = [
     ...rules.map((item, order) => ({ item, priority: 0, order })),
     ...contextual.map((item, order) => ({
       item,
@@ -370,14 +386,7 @@ export const assembleRulesExplanationEvidence = (
     })),
   ];
   const maxItems = Math.max(1, input.maxItems ?? 64);
-  const items = ranked
-    .sort((left, right) =>
-      left.priority === right.priority
-        ? left.order - right.order
-        : left.priority - right.priority,
-    )
-    .slice(0, maxItems)
-    .map(({ item }) => item);
+  const items = selectRankedEvidence(ranked, maxItems);
   return immutableSnapshot({
     id: bundleId(items),
     taskType: "explain-rules" as const,

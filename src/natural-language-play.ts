@@ -18,6 +18,7 @@ import {
 import {
   assembleInterpretationEvidence,
   assembleRulesExplanationEvidence,
+  isRulesEvidenceApplicable,
   type EvidenceBundle,
 } from "./evidence-bundle.js";
 import {
@@ -417,6 +418,7 @@ const isStructurallyValidInterpretation = (interpretation: unknown): boolean => 
 };
 
 interface RulesExplanationSegment {
+  readonly text: string;
   readonly evidenceItemIds: readonly string[];
 }
 
@@ -428,7 +430,9 @@ const isRulesExplanationSegment = (
   value: unknown,
 ): value is RulesExplanationSegment =>
   isRecord(value) &&
-  hasExactKeys(value, ["evidenceItemIds"]) &&
+  hasExactKeys(value, ["text", "evidenceItemIds"]) &&
+  typeof value.text === "string" &&
+  value.text.trim().length > 0 &&
   hasStringArray(value, "evidenceItemIds") &&
   (value.evidenceItemIds as readonly string[]).length > 0;
 
@@ -444,6 +448,7 @@ const hasRulesExplanationShape = (
 const validatedRulesExplanation = (
   value: unknown,
   evidenceBundle: EvidenceBundle,
+  query: string,
 ): RulesExplanation | null => {
   if (!hasRulesExplanationShape(value)) return null;
   const evidenceById = new Map(
@@ -452,10 +457,19 @@ const validatedRulesExplanation = (
   if (
     !value.segments.every((segment) => {
       const ids = segment.evidenceItemIds;
+      const citedItems = ids.flatMap((id) => {
+        const item = evidenceById.get(id);
+        return item === undefined ? [] : [item];
+      });
       return (
         new Set(ids).size === ids.length &&
         ids.every((id) => evidenceById.has(id)) &&
-        ids.some((id) => evidenceById.get(id)?.sourceKind === "authority-rule")
+        citedItems.every((item) => isRulesEvidenceApplicable(query, item)) &&
+        citedItems.some(
+          (item) =>
+            item.sourceKind === "authority-rule" &&
+            item.content === segment.text,
+        )
       );
     })
   ) {
@@ -531,15 +545,23 @@ const writeRulesExplanation = (
   io.write(
     `Rules explanation${fallback ? " (deterministic fallback)" : ""}\n`,
   );
-  const citedIds =
-    explanation === null
-      ? evidenceBundle.items
-          .filter((item) => item.sourceKind !== "accepted-event")
-          .map((item) => item.id)
-      : explanation.segments.flatMap((segment) => segment.evidenceItemIds);
-  const cited = new Set(citedIds);
+  if (explanation !== null) {
+    const evidenceById = new Map(
+      evidenceBundle.items.map((item) => [item.id, item]),
+    );
+    explanation.segments.forEach((segment) => {
+      io.write(`- ${segment.text}\n`);
+      segment.evidenceItemIds.forEach((id) => {
+        const item = evidenceById.get(id);
+        if (item !== undefined) {
+          io.write(`  Evidence [${item.id}]: ${item.content}\n`);
+        }
+      });
+    });
+    return;
+  }
   evidenceBundle.items
-    .filter((item) => cited.has(item.id))
+    .filter((item) => item.sourceKind !== "accepted-event")
     .forEach((item) =>
       io.write(
         `- ${item.sourceKind === "authority-rule" ? "Rule" : "Current situation"} [${item.id}]: ${item.content}\n`,
@@ -704,6 +726,7 @@ const explainRulesQuery = async ({
   const explanation = validatedRulesExplanation(
     execution.outcome.output,
     evidenceBundle,
+    utterance,
   );
   appendUncorrelatedModelCall(
     modelCallStore,

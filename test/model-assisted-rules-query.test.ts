@@ -14,6 +14,8 @@ import { beginAdventureFixture } from "./support/adventure-fixture.js";
 import { scriptedIO } from "./support/scripted-io.js";
 
 const LOCKPICK_QUERY = "Can I use my Lockpick Set to open the side door?";
+const INVENTORY_RULE =
+  "A distinct object carried by the Player Character that may permit an approach or become an explicit outcome stake without granting an automatic numeric bonus. An Inventory Item is either carried or removed; consumption, loss, surrender, or breakage removes it rather than creating a damaged state. The first inventory contains a Lantern, Lockpick Set, Short Blade, and Field Kit.";
 
 test("a scripted provider answers a locked-manor rules question from attributable evidence", async () => {
   const { eventStore } = beginAdventureFixture();
@@ -36,6 +38,7 @@ test("a scripted provider answers a locked-manor rules question from attributabl
       [`explain-rules:${LOCKPICK_QUERY}`]: {
         segments: [
           {
+            text: INVENTORY_RULE,
             evidenceItemIds: [
               "rule:inventory-items@1.0.0",
               "entity:inventory:Lockpick Set",
@@ -59,7 +62,7 @@ test("a scripted provider answers a locked-manor rules question from attributabl
   assert.match(output, /Rules explanation/);
   assert.match(
     output,
-    /Inventory Item may permit an approach but does not grant an automatic numeric bonus/,
+    /may permit an approach or become an explicit outcome stake without granting an automatic numeric bonus/,
   );
   assert.match(output, /Lockpick Set/);
   assert.match(output, /Pick the side-door lock/);
@@ -127,6 +130,7 @@ test("the rules provider receives one deeply immutable stateless Model Task", as
         output: {
           segments: [
             {
+              text: INVENTORY_RULE,
               evidenceItemIds: [
                 "rule:inventory-items@1.0.0",
                 "entity:inventory:Lockpick Set",
@@ -174,21 +178,19 @@ test("rules evidence budgeting preserves the exact rule before older events", ()
 for (const [kind, explanation] of [
   [
     "unknown",
-    { segments: [{ evidenceItemIds: ["rule:not-authored"] }] },
+    {
+      segments: [
+        { text: INVENTORY_RULE, evidenceItemIds: ["rule:not-authored"] },
+      ],
+    },
   ],
   [
     "invisible",
-    { segments: [{ evidenceItemIds: ["fact:hidden-cult-ritual"] }] },
-  ],
-  [
-    "mismatched",
     {
       segments: [
         {
-          evidenceItemIds: [
-            "rule:inventory-items@1.0.0",
-            "capability:force-side-door",
-          ],
+          text: INVENTORY_RULE,
+          evidenceItemIds: ["fact:hidden-cult-ritual"],
         },
       ],
     },
@@ -197,7 +199,10 @@ for (const [kind, explanation] of [
     "missing authored-rule",
     {
       segments: [
-        { evidenceItemIds: ["entity:inventory:Lockpick Set"] },
+        {
+          text: INVENTORY_RULE,
+          evidenceItemIds: ["entity:inventory:Lockpick Set"],
+        },
       ],
     },
   ],
@@ -236,6 +241,48 @@ for (const [kind, explanation] of [
     );
   });
 }
+
+test("an irrelevant in-bundle citation selects deterministic presentation", async () => {
+  const { eventStore } = beginAdventureFixture();
+  const unrelatedEvent = eventStore.readAll().at(-1);
+  assert.ok(unrelatedEvent);
+  const provider = createScriptedModelProvider({
+    model: "mismatched-rules-citation-v1",
+    responses: {
+      [`interpret-player-input:${LOCKPICK_QUERY}`]: {
+        status: "interpreted",
+        classification: "rules-query",
+        referencedEntityIds: ["inventory:Lockpick Set"],
+      },
+      [`explain-rules:${LOCKPICK_QUERY}`]: {
+        segments: [
+          {
+            text: INVENTORY_RULE,
+            evidenceItemIds: [
+              "rule:inventory-items@1.0.0",
+              `event:${unrelatedEvent.id}`,
+            ],
+          },
+        ],
+      },
+    },
+  });
+  const script = scriptedIO([LOCKPICK_QUERY]);
+
+  const result = await runNaturalLanguagePlay({
+    io: script.io,
+    modelGateway: createModelGateway({ provider }),
+    eventStore,
+  });
+
+  assert.match(script.output.join(""), /deterministic fallback/);
+  assert.ok(
+    result.modelCallRecords[1]?.evidenceReferences.some(
+      (reference) => reference.itemId === `event:${unrelatedEvent.id}`,
+    ),
+  );
+  assert.equal(result.modelCallRecords[1]?.validation.status, "rejected");
+});
 
 test("an unavailable rules provider uses deterministic rules without changing state", async () => {
   const { eventStore } = beginAdventureFixture();
@@ -290,7 +337,10 @@ test("rules explanation output cannot select Likelihood or apply Mechanical Effe
       },
       [`explain-rules:${LOCKPICK_QUERY}`]: {
         segments: [
-          { evidenceItemIds: ["rule:inventory-items@1.0.0"] },
+          {
+            text: INVENTORY_RULE,
+            evidenceItemIds: ["rule:inventory-items@1.0.0"],
+          },
         ],
         likelihood: "Likely",
         mechanicalEffects: [{ type: "gain-health", amount: 99 }],
@@ -310,5 +360,40 @@ test("rules explanation output cannot select Likelihood or apply Mechanical Effe
   assert.match(output, /deterministic fallback/);
   assert.doesNotMatch(output, /Likely|gain-health|\+10/);
   assert.equal(JSON.stringify(eventStore.readAll()), before);
+  assert.equal(result.modelCallRecords[1]?.validatedOutput, null);
+});
+
+test("rules explanation text cannot override the cited authored rule", async () => {
+  const { eventStore } = beginAdventureFixture();
+  const provider = createScriptedModelProvider({
+    model: "rules-override-v1",
+    responses: {
+      [`interpret-player-input:${LOCKPICK_QUERY}`]: {
+        status: "interpreted",
+        classification: "rules-query",
+        referencedEntityIds: ["inventory:Lockpick Set"],
+      },
+      [`explain-rules:${LOCKPICK_QUERY}`]: {
+        segments: [
+          {
+            text: "The Lockpick Set grants +10 to every Check.",
+            evidenceItemIds: ["rule:inventory-items@1.0.0"],
+          },
+        ],
+      },
+    },
+  });
+  const script = scriptedIO([LOCKPICK_QUERY]);
+
+  const result = await runNaturalLanguagePlay({
+    io: script.io,
+    modelGateway: createModelGateway({ provider }),
+    eventStore,
+  });
+
+  const output = script.output.join("");
+  assert.match(output, /deterministic fallback/);
+  assert.doesNotMatch(output, /grants \+10/);
+  assert.equal(result.modelCallRecords[1]?.validation.status, "rejected");
   assert.equal(result.modelCallRecords[1]?.validatedOutput, null);
 });
