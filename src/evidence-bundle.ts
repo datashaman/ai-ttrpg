@@ -27,7 +27,7 @@ export interface EvidenceItem {
 
 export interface EvidenceBundle {
   readonly id: string;
-  readonly taskType: "interpret-player-input";
+  readonly taskType: "interpret-player-input" | "explain-rules";
   readonly items: readonly EvidenceItem[];
 }
 
@@ -37,6 +37,19 @@ interface RankedEvidenceItem {
   readonly order: number;
 }
 
+const selectRankedEvidence = (
+  candidates: readonly RankedEvidenceItem[],
+  maxItems: number,
+): readonly EvidenceItem[] =>
+  [...candidates]
+    .sort((left, right) =>
+      left.priority === right.priority
+        ? left.order - right.order
+        : left.priority - right.priority,
+    )
+    .slice(0, maxItems)
+    .map(({ item }) => item);
+
 export interface InterpretationEvidenceInput {
   readonly utterance: string;
   readonly view: ApplicationView;
@@ -44,8 +57,14 @@ export interface InterpretationEvidenceInput {
   readonly maxItems?: number;
 }
 
+export type RulesExplanationEvidenceInput = InterpretationEvidenceInput;
+
 const normalized = (value: string): string =>
-  value.toLocaleLowerCase("en").replace(/[^a-z0-9]+/g, " ").trim();
+  value
+    .toLocaleLowerCase("en")
+    .replace(/lockpick/g, "lock pick")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 
 const isDirectlyRelevant = (
   utterance: string,
@@ -204,17 +223,213 @@ export const assembleInterpretationEvidence = (
     );
 
   const maxItems = Math.max(1, input.maxItems ?? 64);
-  const items = candidates
-    .sort((left, right) =>
-      left.priority === right.priority
-        ? left.order - right.order
-        : left.priority - right.priority,
-    )
-    .slice(0, maxItems)
-    .map(({ item }) => item);
+  const items = selectRankedEvidence(candidates, maxItems);
   return immutableSnapshot({
     id: bundleId(items),
     taskType: "interpret-player-input" as const,
+    items,
+  });
+};
+
+interface AuthoredRule {
+  readonly item: EvidenceItem;
+  readonly terms: readonly string[];
+}
+
+const AUTHORED_RULES: readonly AuthoredRule[] = [
+  {
+    item: {
+      id: "rule:inventory-items@1.0.0",
+      sourceKind: "authority-rule",
+      sourceReference: "CONTEXT.md#Inventory Item",
+      content:
+        "A distinct object carried by the Player Character that may permit an approach or become an explicit outcome stake without granting an automatic numeric bonus. An Inventory Item is either carried or removed; consumption, loss, surrender, or breakage removes it rather than creating a damaged state. The first inventory contains a Lantern, Lockpick Set, Short Blade, and Field Kit.",
+      inclusionReason:
+        "This exact authored rule governs Inventory Items and item-enabled approaches.",
+    },
+    terms: ["inventory", "item", "lockpick", "lantern", "blade", "field kit"],
+  },
+  {
+    item: {
+      id: "rule:checks@1.0.0",
+      sourceKind: "authority-rule",
+      sourceReference: "CONTEXT.md#Check",
+      content:
+        "The resolution of a confirmed Check Proposal with 2d6 plus the relevant Trait, producing a Setback, Success with Cost, or Clean Success.",
+      inclusionReason: "This exact authored rule governs Check resolution.",
+    },
+    terms: ["check", "roll", "trait", "setback", "success", "2d6"],
+  },
+  {
+    item: {
+      id: "rule:resolve@1.0.0",
+      sourceKind: "authority-rule",
+      sourceReference: "CONTEXT.md#Resolve",
+      content:
+        "The Player Character's three-point capacity to change a Check after seeing its roll but before its outcome is established. The Player may spend one Resolve per Check to add +1 to its final total; reaching zero does not itself cause Defeat.",
+      inclusionReason: "This exact authored rule governs spending Resolve.",
+    },
+    terms: ["resolve", "spend", "shaken", "plus one", "+1"],
+  },
+  {
+    item: {
+      id: "rule:oracle-likelihood@1.0.0",
+      sourceKind: "authority-rule",
+      sourceReference: "CONTEXT.md#Likelihood",
+      content:
+        "The Player-visible odds confirmed by the Player before the Oracle answers an Unresolved Proposition: Unlikely means 25% Yes, Even means 50% Yes, and Likely means 75% Yes. The Narrator may recommend a Likelihood from Established Facts but cannot select it finally.",
+      inclusionReason: "This exact authored rule governs Oracle Likelihood.",
+    },
+    terms: ["oracle", "likelihood", "unlikely", "even", "likely", "odds"],
+  },
+  {
+    item: {
+      id: "rule:free-actions@1.0.0",
+      sourceKind: "authority-rule",
+      sourceReference: "CONTEXT.md#Free Action",
+      content:
+        "An action whose outcome is not meaningfully uncertain or whose failure would not materially change the situation. A Free Action proceeds without a Check.",
+      inclusionReason: "This exact authored rule governs Free Actions.",
+    },
+    terms: ["free action", "without a check", "automatic", "uncertain"],
+  },
+];
+
+const applicableRules = (query: string): readonly EvidenceItem[] => {
+  const normalizedQuery = normalized(query);
+  const matching = AUTHORED_RULES.filter((rule) =>
+    rule.terms.some((term) => normalizedQuery.includes(normalized(term))),
+  ).map((rule) => rule.item);
+  return matching.length > 0 ? matching : [AUTHORED_RULES[1]!.item];
+};
+
+const RELEVANCE_STOP_WORDS = new Set([
+    "and",
+    "are",
+    "can",
+    "does",
+    "from",
+    "how",
+    "that",
+    "the",
+    "this",
+    "use",
+    "was",
+    "what",
+    "why",
+    "with",
+    "you",
+    "your",
+]);
+
+const RESOLUTION_QUERY_TERMS = [
+  "check",
+  "cost",
+  "happen",
+  "happened",
+  "outcome",
+  "resolve",
+  "result",
+  "roll",
+  "setback",
+  "spend",
+  "success",
+  "total",
+  "why",
+] as const;
+
+const relevanceScore = (query: string, item: EvidenceItem): number => {
+  const queryTerms = new Set(
+    normalized(query)
+      .split(" ")
+      .filter((term) => term.length >= 3 && !RELEVANCE_STOP_WORDS.has(term)),
+  );
+  return normalized(`${item.id} ${item.sourceReference} ${item.content}`)
+    .split(" ")
+    .filter((term) => term.length >= 3 && queryTerms.has(term)).length;
+};
+
+export const isRulesEvidenceApplicable = (
+  query: string,
+  item: EvidenceItem,
+): boolean => {
+  if (item.sourceKind === "authority-rule") return true;
+  if (item.sourceKind === "active-scene") return true;
+  if (item.sourceKind === "resolution") {
+    const normalizedQuery = normalized(query);
+    return RESOLUTION_QUERY_TERMS.some((term) =>
+      normalizedQuery.includes(term),
+    );
+  }
+  return relevanceScore(query, item) > 0;
+};
+
+const taskSpecificContext = (
+  query: string,
+  items: readonly EvidenceItem[],
+): readonly EvidenceItem[] => {
+  const scoredCapabilities = items
+    .filter((item) => item.sourceKind === "capability")
+    .map((item) => ({ item, score: relevanceScore(query, item) }));
+  const highestCapabilityScore = Math.max(
+    0,
+    ...scoredCapabilities.map(({ score }) => score),
+  );
+  return items.filter((item) => {
+    if (item.sourceKind === "capability") {
+      return (
+        highestCapabilityScore > 0 &&
+        relevanceScore(query, item) === highestCapabilityScore
+      );
+    }
+    if (
+      item.sourceKind === "inventory-item" ||
+      item.sourceKind === "condition" ||
+      item.sourceKind === "established-fact"
+    ) {
+      return relevanceScore(query, item) > 0;
+    }
+    if (item.sourceKind === "player-character") {
+      return relevanceScore(query, item) > 0;
+    }
+    return true;
+  });
+};
+
+export const assembleRulesExplanationEvidence = (
+  input: RulesExplanationEvidenceInput,
+): EvidenceBundle => {
+  const contextual = taskSpecificContext(
+    input.utterance,
+    assembleInterpretationEvidence({
+      ...input,
+      maxItems: 64,
+    }).items.filter((item) => item.id !== "rule:structured-play-authority"),
+  );
+  const rules = applicableRules(input.utterance);
+  const ranked: RankedEvidenceItem[] = [
+    ...rules.map((item, order) => ({ item, priority: 0, order })),
+    ...contextual.map((item, order) => ({
+      item,
+      priority:
+        item.sourceKind === "accepted-event"
+          ? 10
+          : isDirectlyRelevant(
+                input.utterance,
+                item.id,
+                item.sourceReference,
+                item.content,
+              )
+            ? 1
+            : 4,
+      order: rules.length + order,
+    })),
+  ];
+  const maxItems = Math.max(1, input.maxItems ?? 64);
+  const items = selectRankedEvidence(ranked, maxItems);
+  return immutableSnapshot({
+    id: bundleId(items),
+    taskType: "explain-rules" as const,
     items,
   });
 };
