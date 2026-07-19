@@ -14,6 +14,21 @@ import {
   type Trait,
   type TraitRatings,
 } from "./structured-play.js";
+import {
+  createPresentationContext,
+  explainCommittedRules,
+  narrateCommittedOutcome,
+  type NarrationRequest,
+  type PresentationContext,
+  type PresentationModel,
+} from "./presentation.js";
+
+export type {
+  GroundedPresentation,
+  NarrationRequest,
+  PresentationModel,
+  RulesQueryRequest,
+} from "./presentation.js";
 
 export interface StructuredPlayIO {
   read(prompt: string): Promise<string>;
@@ -30,7 +45,93 @@ export interface StructuredPlayRunnerOptions {
     "eventStore" | "randomSource" | "timelineStore"
   >;
   readonly runToAdventureEnd?: boolean;
+  readonly narrator?: PresentationModel;
+  readonly narrationTimeoutMs?: number;
 }
+
+interface PresentationRuntime {
+  readonly narrator: PresentationModel;
+  readonly timeoutMs: number;
+}
+
+const traceFrom = (
+  events: readonly CanonicalEvent[],
+): PresentationContext["resolutionTrace"] => {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type === "CheckResolved") return event.payload.trace;
+    if (event?.type === "OracleAnswered") return event.payload.trace;
+  }
+  return null;
+};
+
+const presentCommittedOutcome = async (
+  io: StructuredPlayIO,
+  runtime: PresentationRuntime | undefined,
+  result: {
+    readonly message: string;
+    readonly state: ApplicationView["state"];
+    readonly appendedEvents: readonly CanonicalEvent[];
+  },
+): Promise<void> => {
+  if (runtime === undefined || result.appendedEvents.length === 0) return;
+  const context = createPresentationContext({
+    visibleEvidence: result.state.establishedFacts,
+    resolutionTrace: traceFrom(result.appendedEvents),
+    committedEvents: result.appendedEvents,
+    deterministicSummary: result.message,
+  });
+
+  const writePresentation = (
+    heading: string,
+    presentation: Awaited<ReturnType<typeof narrateCommittedOutcome>>,
+  ): void => {
+    const fallbackLabel =
+      presentation.source === "deterministic-fallback"
+        ? " (deterministic fallback)"
+        : "";
+    io.write(`\n${heading}${fallbackLabel}\n`);
+    io.write(`${presentation.text}\n`);
+  };
+
+  writePresentation(
+    "Narration",
+    await narrateCommittedOutcome(runtime.narrator, context, runtime.timeoutMs),
+  );
+  while (true) {
+    const choice = (
+      await io.read(
+        "Continue (c), regenerate narration (r), or ask a rules question (q): ",
+      )
+    )
+      .trim()
+      .toLowerCase();
+    if (choice === "c") return;
+    if (choice === "r") {
+      writePresentation(
+        "Regenerated narration",
+        await narrateCommittedOutcome(
+          runtime.narrator,
+          context,
+          runtime.timeoutMs,
+        ),
+      );
+      continue;
+    }
+    if (choice === "q") {
+      const query = await io.read("Rules question: ");
+      const explanation = await explainCommittedRules(
+        runtime.narrator,
+        context,
+        query,
+        runtime.timeoutMs,
+      );
+      writePresentation("Rules explanation", explanation);
+      continue;
+    }
+    io.write("Choose c, r, or q.\n");
+  }
+};
 
 const readRating = async (
   io: StructuredPlayIO,
@@ -102,6 +203,7 @@ const finishNarratorLikelihoodRecommendation = async (
   app: StructuredPlayApplication,
   io: StructuredPlayIO,
   newlyAppendedEvents: readonly CanonicalEvent[] = [],
+  presentation?: PresentationRuntime,
 ): Promise<ApplicationView> => {
   const recommendation = app.view().state.pendingNarratorRecommendation;
   if (recommendation === null) return app.view();
@@ -135,6 +237,7 @@ const finishNarratorLikelihoodRecommendation = async (
     io.write(`${JSON.stringify(answered.appendedEvents, null, 2)}\n`);
     io.write("Resulting state:\n");
     io.write(`${JSON.stringify(answered.state, null, 2)}\n`);
+    await presentCommittedOutcome(io, presentation, answered);
   }
   return app.view();
 };
@@ -143,6 +246,7 @@ const finishPendingChoice = async (
   app: StructuredPlayApplication,
   io: StructuredPlayIO,
   newlyAppendedEvents: readonly CanonicalEvent[] = [],
+  presentation?: PresentationRuntime,
 ): Promise<ApplicationView> => {
   const pendingChoice = app.view().state.pendingChoice;
   if (pendingChoice === null) return app.view();
@@ -186,6 +290,7 @@ const finishPendingChoice = async (
       io.write(`${JSON.stringify(resolved.appendedEvents, null, 2)}\n`);
       io.write("Resulting state:\n");
       io.write(`${JSON.stringify(resolved.state, null, 2)}\n`);
+      await presentCommittedOutcome(io, presentation, resolved);
     }
     return app.view();
   }
@@ -194,6 +299,7 @@ const finishPendingChoice = async (
 const finishCheckProposal = async (
   app: StructuredPlayApplication,
   io: StructuredPlayIO,
+  presentation?: PresentationRuntime,
 ): Promise<ApplicationView> => {
   while (true) {
     const proposal = app.view().state.pendingCheckProposal;
@@ -214,7 +320,12 @@ const finishCheckProposal = async (
       });
       io.write(`\n${revealed.message}\n`);
       if (revealed.status === "accepted") {
-        return finishPendingChoice(app, io, revealed.appendedEvents);
+        return finishPendingChoice(
+          app,
+          io,
+          revealed.appendedEvents,
+          presentation,
+        );
       }
       return app.view();
     }
@@ -274,11 +385,12 @@ const continueAdventure = async (
   io: StructuredPlayIO,
   view: ApplicationView,
   enabled: boolean,
+  presentation?: PresentationRuntime,
 ): Promise<ApplicationView> =>
   enabled &&
   view.state.adventureEnding === null &&
   view.availableActions.length > 0
-    ? chooseAvailableAction(app, io, view, true)
+    ? chooseAvailableAction(app, io, view, true, presentation)
     : view;
 
 const chooseAvailableAction = async (
@@ -286,6 +398,7 @@ const chooseAvailableAction = async (
   io: StructuredPlayIO,
   view: ApplicationView,
   runToAdventureEnd = false,
+  presentation?: PresentationRuntime,
 ): Promise<ApplicationView> => {
   const confrontation = view.state.confrontation;
   if (confrontation?.status === "active") {
@@ -341,6 +454,7 @@ const chooseAvailableAction = async (
       io,
       app.view(),
       runToAdventureEnd && completed.status === "accepted",
+      presentation,
     );
   }
 
@@ -359,6 +473,7 @@ const chooseAvailableAction = async (
       io.write(`${JSON.stringify(completed.appendedEvents, null, 2)}\n`);
       io.write("Current state:\n");
       io.write(`${JSON.stringify(completed.state, null, 2)}\n`);
+      await presentCommittedOutcome(io, presentation, completed);
     }
     const nextView = app.view();
     return continueAdventure(
@@ -366,6 +481,7 @@ const chooseAvailableAction = async (
       io,
       nextView,
       runToAdventureEnd && completed.status === "accepted",
+      presentation,
     );
   }
 
@@ -375,19 +491,35 @@ const chooseAvailableAction = async (
   });
   io.write(`\n${completed.message}\n\n`);
   if (completed.state.pendingCheckProposal !== null) {
-    const finished = await finishCheckProposal(app, io);
-    return continueAdventure(app, io, finished, runToAdventureEnd);
+    const finished = await finishCheckProposal(app, io, presentation);
+    return continueAdventure(
+      app,
+      io,
+      finished,
+      runToAdventureEnd,
+      presentation,
+    );
   }
   if (completed.state.pendingNarratorRecommendation !== null) {
     const finished = await finishNarratorLikelihoodRecommendation(
       app,
       io,
       completed.appendedEvents,
+      presentation,
     );
-    return continueAdventure(app, io, finished, runToAdventureEnd);
+    return continueAdventure(
+      app,
+      io,
+      finished,
+      runToAdventureEnd,
+      presentation,
+    );
   }
   io.write("Current state:\n");
   io.write(`${JSON.stringify(completed.state, null, 2)}\n`);
+  if (completed.status === "accepted") {
+    await presentCommittedOutcome(io, presentation, completed);
+  }
   const nextView = app.view();
   if (
     runToAdventureEnd &&
@@ -395,9 +527,12 @@ const chooseAvailableAction = async (
     nextView.availableActions.length > 0
   ) {
     io.write("\n");
-    return continueAdventure(app, io, nextView, true);
+    return continueAdventure(app, io, nextView, true, presentation);
   }
-  if (selectedAction.kind === "Free Action" && nextView.availableActions.length > 0) {
+  if (
+    selectedAction.kind === "Free Action" &&
+    nextView.availableActions.length > 0
+  ) {
     const continueChoice = (
       await io.read("Continue in the current Scene (c) or stop (s): ")
     )
@@ -405,7 +540,7 @@ const chooseAvailableAction = async (
       .toLowerCase();
     if (continueChoice === "c") {
       io.write("\n");
-      return chooseAvailableAction(app, io, nextView);
+      return chooseAvailableAction(app, io, nextView, false, presentation);
     }
   }
   return app.view();
@@ -418,6 +553,8 @@ export const runStructuredPlay = async ({
   randomSource,
   applicationOptions = {},
   runToAdventureEnd = false,
+  narrator,
+  narrationTimeoutMs = 5_000,
 }: StructuredPlayRunnerOptions): Promise<ApplicationView> => {
   const selectedEventStore = eventStore ?? createInMemoryEventStore();
   const app = createStructuredPlayApplication(
@@ -431,6 +568,10 @@ export const runStructuredPlay = async ({
             randomSource,
           },
   );
+  const presentation =
+    narrator === undefined
+      ? undefined
+      : { narrator, timeoutMs: narrationTimeoutMs };
   io.write("AI TTRPG — Structured Play\n\n");
 
   const current = app.view();
@@ -443,30 +584,59 @@ export const runStructuredPlay = async ({
         action.kind === "Timeline Branch" ||
         action.kind === "Timeline Selection",
     )
-      ? chooseAvailableAction(app, io, current, runToAdventureEnd)
+      ? chooseAvailableAction(app, io, current, runToAdventureEnd, presentation)
       : current;
   }
   if (current.state.pendingChoice !== null) {
     io.write("Resuming Pending Choice.\n");
-    const finished = await finishPendingChoice(app, io);
-    return continueAdventure(app, io, finished, runToAdventureEnd);
+    const finished = await finishPendingChoice(app, io, [], presentation);
+    return continueAdventure(
+      app,
+      io,
+      finished,
+      runToAdventureEnd,
+      presentation,
+    );
   }
   if (current.state.pendingCheckProposal !== null) {
     io.write("Resuming Check Proposal.\n");
-    const finished = await finishCheckProposal(app, io);
-    return continueAdventure(app, io, finished, runToAdventureEnd);
+    const finished = await finishCheckProposal(app, io, presentation);
+    return continueAdventure(
+      app,
+      io,
+      finished,
+      runToAdventureEnd,
+      presentation,
+    );
   }
   if (current.state.pendingNarratorRecommendation !== null) {
     io.write("Resuming Narrator Likelihood recommendation.\n");
-    const finished = await finishNarratorLikelihoodRecommendation(app, io);
-    return continueAdventure(app, io, finished, runToAdventureEnd);
+    const finished = await finishNarratorLikelihoodRecommendation(
+      app,
+      io,
+      [],
+      presentation,
+    );
+    return continueAdventure(
+      app,
+      io,
+      finished,
+      runToAdventureEnd,
+      presentation,
+    );
   }
   if (
     current.state.playerCharacter !== null &&
     current.state.activeScene !== null
   ) {
     io.write("Resuming Adventure.\n\n");
-    return chooseAvailableAction(app, io, current, runToAdventureEnd);
+    return chooseAvailableAction(
+      app,
+      io,
+      current,
+      runToAdventureEnd,
+      presentation,
+    );
   }
 
   const name = await io.read("Player Character name: ");
@@ -492,5 +662,5 @@ export const runStructuredPlay = async ({
 
   const started = app.submit({ type: "begin-adventure" });
   io.write(`${started.message}\n\n`);
-  return chooseAvailableAction(app, io, started, runToAdventureEnd);
+  return chooseAvailableAction(app, io, started, runToAdventureEnd, presentation);
 };
