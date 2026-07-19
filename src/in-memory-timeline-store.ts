@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 
-import { createSeededRandomSource, type RandomSource } from "./random-source.js";
+import {
+  committedRandomPosition,
+  createSeededRandomSource,
+  createSeededRandomSourceAtPosition,
+  type RandomSource,
+} from "./random-source.js";
 import type {
   CanonicalEvent,
   TimelineCollectionView,
@@ -15,24 +20,6 @@ interface StoredTimeline {
   readonly events: CanonicalEvent[];
   readonly randomSource: RandomSource;
 }
-
-const randomPositionAt = (events: readonly CanonicalEvent[]): number =>
-  events.reduce(
-    (position, event) =>
-      position +
-      (event.type === "CheckRollRevealed"
-        ? event.payload.pendingChoice.roll.random.inputs.length
-        : event.type === "OracleAnswered"
-          ? event.payload.trace.random.inputs.length
-          : 0),
-    0,
-  );
-
-const sourceAt = (seed: number, position: number): RandomSource => {
-  const source = createSeededRandomSource(seed);
-  for (let index = 0; index < position; index += 1) source.rollDie(6);
-  return source;
-};
 
 export const createInMemoryTimelineStore = ({
   seed,
@@ -95,7 +82,10 @@ export const createInMemoryTimelineStore = ({
         parentTimelineId: parent.id,
         branchEventPosition: eventPosition,
         events: [...events],
-        randomSource: sourceAt(seed, randomPositionAt(events)),
+        randomSource: createSeededRandomSourceAtPosition(
+          seed,
+          committedRandomPosition(events),
+        ),
       };
       timelines.set(timeline.id, timeline);
       activeTimelineId = timeline.id;

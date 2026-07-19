@@ -9,7 +9,10 @@ import {
   createLocalAdventureRepository,
   type AdventureRepository,
 } from "../src/adventure-repository.js";
-import { createStructuredPlayApplication } from "../src/structured-play.js";
+import {
+  createSeededRandomSource,
+  createStructuredPlayApplication,
+} from "../src/structured-play.js";
 
 const repositoryFactories = [
   {
@@ -68,6 +71,44 @@ for (const factory of repositoryFactories) {
 
     resumed.submit({ type: "choose-action", actionId: "withdraw-from-manor" });
     assert.equal(reopened.eventStore.readAll().length, 5);
+    reopened.close();
+  });
+
+  test(`${factory.name} repository restores the committed random-stream position`, () => {
+    const repository = factory.create();
+    const created = repository.create("The Random Manor");
+    const app = createStructuredPlayApplication({
+      eventStore: created.eventStore,
+      randomSource: created.randomSource,
+    });
+    app.submit({
+      type: "configure-player-character",
+      name: "Mara Vey",
+      pronouns: "she/her",
+      motivation: "Find her missing sister",
+      traits: { Might: 0, Wits: 2, Presence: 1 },
+    });
+    app.submit({ type: "begin-adventure" });
+    const proposed = app.submit({
+      type: "choose-action",
+      actionId: "force-side-door",
+    });
+    assert.ok(proposed.state.pendingCheckProposal);
+    app.submit({
+      type: "confirm-check-proposal",
+      proposalId: proposed.state.pendingCheckProposal.id,
+    });
+
+    const seed = created.randomSource.metadata().seed;
+    assert.notEqual(seed, null);
+    const expected = createSeededRandomSource(seed!);
+    expected.rollDie(6);
+    expected.rollDie(6);
+    created.close();
+
+    const reopened = repository.open(created.id);
+    assert.equal(reopened.randomSource.position(), 2);
+    assert.equal(reopened.randomSource.rollDie(100), expected.rollDie(100));
     reopened.close();
   });
 }
