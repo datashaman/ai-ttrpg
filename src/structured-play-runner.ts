@@ -10,6 +10,7 @@ import {
   type RandomSource,
   type StructuredPlayApplication,
   type StructuredPlayOptions,
+  type TimelineStore,
   type Trait,
   type TraitRatings,
 } from "./structured-play.js";
@@ -22,10 +23,11 @@ export interface StructuredPlayIO {
 export interface StructuredPlayRunnerOptions {
   readonly io: StructuredPlayIO;
   readonly eventStore?: EventStore;
+  readonly timelineStore?: TimelineStore;
   readonly randomSource?: RandomSource;
   readonly applicationOptions?: Omit<
     StructuredPlayOptions,
-    "eventStore" | "randomSource"
+    "eventStore" | "randomSource" | "timelineStore"
   >;
   readonly runToAdventureEnd?: boolean;
 }
@@ -311,6 +313,38 @@ const chooseAvailableAction = async (
   }
 
   if (
+    selectedAction.kind === "Timeline Branch" ||
+    selectedAction.kind === "Timeline Selection"
+  ) {
+    if (selectedAction.kind === "Timeline Branch") {
+      io.write("\nAccepted events:\n");
+      app.view().timeline?.acceptedEvents.forEach((event) => {
+        io.write(`${event.position}. ${event.type}\n`);
+      });
+    }
+    const completed = app.submit(
+      selectedAction.kind === "Timeline Branch"
+        ? {
+            type: "branch-timeline",
+            eventPosition: Number(
+              await io.read("Accepted event position to branch from: "),
+            ),
+          }
+        : {
+            type: "select-timeline",
+            timelineId: selectedAction.timelineId,
+          },
+    );
+    io.write(`\n${completed.message}\n\n`);
+    return continueAdventure(
+      app,
+      io,
+      app.view(),
+      runToAdventureEnd && completed.status === "accepted",
+    );
+  }
+
+  if (
     selectedAction.kind === "Recovery" ||
     selectedAction.kind === "Scene Transition"
   ) {
@@ -379,15 +413,23 @@ const chooseAvailableAction = async (
 
 export const runStructuredPlay = async ({
   io,
-  eventStore = createInMemoryEventStore(),
+  eventStore,
+  timelineStore,
   randomSource,
   applicationOptions = {},
   runToAdventureEnd = false,
 }: StructuredPlayRunnerOptions): Promise<ApplicationView> => {
+  const selectedEventStore = eventStore ?? createInMemoryEventStore();
   const app = createStructuredPlayApplication(
-    randomSource === undefined
-      ? { ...applicationOptions, eventStore }
-      : { ...applicationOptions, eventStore, randomSource },
+    timelineStore !== undefined
+      ? { ...applicationOptions, timelineStore }
+      : randomSource === undefined
+        ? { ...applicationOptions, eventStore: selectedEventStore }
+        : {
+            ...applicationOptions,
+            eventStore: selectedEventStore,
+            randomSource,
+          },
   );
   io.write("AI TTRPG — Structured Play\n\n");
 
@@ -396,7 +438,13 @@ export const runStructuredPlay = async ({
     io.write(
       `Adventure ended ${current.state.adventureEnding.kind}: ${current.state.adventureEnding.text}\n`,
     );
-    return current;
+    return current.availableActions.some(
+      (action) =>
+        action.kind === "Timeline Branch" ||
+        action.kind === "Timeline Selection",
+    )
+      ? chooseAvailableAction(app, io, current, runToAdventureEnd)
+      : current;
   }
   if (current.state.pendingChoice !== null) {
     io.write("Resuming Pending Choice.\n");

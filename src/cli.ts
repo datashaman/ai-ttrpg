@@ -5,6 +5,7 @@ import {
   runStructuredPlay,
   type StructuredPlayIO,
 } from "./structured-play-runner.js";
+import { createInMemoryTimelineStore } from "./structured-play.js";
 
 const terminal = createInterface({ input: stdin, output: stdout });
 const answers = terminal[Symbol.asyncIterator]();
@@ -21,7 +22,11 @@ const io: StructuredPlayIO = {
 };
 
 try {
-  await runStructuredPlay({ io, runToAdventureEnd: true });
+  await runStructuredPlay({
+    io,
+    timelineStore: createInMemoryTimelineStore({ seed: Date.now() }),
+    runToAdventureEnd: true,
+  });
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   stderr.write(`${message}\n`);

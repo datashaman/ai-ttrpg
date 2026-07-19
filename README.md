@@ -5,7 +5,7 @@ An AI-assisted tabletop role-playing game engine designed around a deterministic
 The engine will interpret natural-language player input, retrieve relevant rules and world facts, resolve mechanics, persist campaign state, and narrate the result. Language models assist with interpretation and presentation; they do not own dice, rules, or canonical state.
 
 > [!IMPORTANT]
-> This repository is in early implementation. The current runnable slice is a complete, hand-authored locked-manor Adventure covering Player Character setup, Structured Play actions, event-driven Scene transitions, recoverable Check and Resolve decisions, grounded Oracle answers, Inventory Item permissions and removal, Field Kit recovery, temporary Conditions, and a clock-driven Confrontation.
+> This repository is in early implementation. The current runnable slice is a complete, hand-authored locked-manor Adventure covering Player Character setup, Structured Play actions, event-driven Scene transitions, recoverable Check and Resolve decisions, grounded Oracle answers, Inventory Item permissions and removal, Field Kit recovery, temporary Conditions, a clock-driven Confrontation, and rewind through branching Timelines.
 
 ## Try the current slice
 
@@ -25,6 +25,8 @@ Inventory Items are explicitly either `carried` or `removed`. The Lantern, Lockp
 Inside the cellar, active opposition is resolved through the same Player-facing Check flow as every other uncertain action. There is no initiative, round structure, Non-Player Character turn, or opposed roll. Each validated outcome advances the visible Resistance Clock, advances the visible Danger Clock, or applies another predeclared Mechanical Effect. Filling Resistance commits the authored successful ending; filling Danger or reaching zero Health commits a non-death Defeat, applies its consequences, and enters a consequence Scene. Both Clock totals and filling consequences remain visible and rebuild entirely from canonical events.
 
 The locked manor is a non-linear graph rather than a mandatory sequence. Visible Oracle answers and Established Facts can route the Player from arrival into social discovery or directly to the Confrontation. Social discovery can reveal the cellar route or resolve the mystery without a Confrontation. The Player may also withdraw with the mystery unresolved, while Confrontation victory and Defeat lead to favourable and adverse endings. Scene transitions and Adventure endings occur only when committed events satisfy pre-authored exit conditions; the Narrator cannot end either one. Every path runs through Structured Play with no language-model calls.
+
+Structured Play also exposes Timeline controls after the first accepted event. The Player can branch from any accepted event position to explore another choice without deleting or rewriting the source Timeline, and can select any existing Timeline to inspect or resume it. Each Timeline appends and projects independently. A child inherits the parent's random-stream position at its branch point, so repeating identical confirmed play reproduces the same Check and Oracle rolls rather than granting a reroll. The in-memory Timeline store preserves the graph, active selection, and random positions when the application is reconstructed around that store.
 
 For development:
 
