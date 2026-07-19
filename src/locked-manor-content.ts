@@ -1,6 +1,7 @@
 import type {
   CheckActionDefinition,
   CheckStakes,
+  ConfrontationDefinition,
   EstablishedFact,
   FictionalConsequence,
   MechanicalEffect,
@@ -66,6 +67,7 @@ export const DEFAULT_CHECK_ACTIONS: readonly CheckActionDefinition[] = [
     goal: "Force open the manor's side door",
     trait: "Might",
     requiresFreeMovement: true,
+    availableInScenes: ["arrival"],
     stakes: FORCE_SIDE_DOOR_STAKES,
   },
   {
@@ -76,6 +78,7 @@ export const DEFAULT_CHECK_ACTIONS: readonly CheckActionDefinition[] = [
     trait: "Wits",
     requiredItem: "Lockpick Set",
     requiresFreeMovement: true,
+    availableInScenes: ["arrival"],
     stakes: {
       Setback: {
         summary: "The lock stays shut and the attempt alerts the manor.",
@@ -99,6 +102,7 @@ export const DEFAULT_CHECK_ACTIONS: readonly CheckActionDefinition[] = [
     trait: "Wits",
     requiredItem: "Lantern",
     requiresFreeMovement: true,
+    availableInScenes: ["arrival"],
     stakes: {
       Setback: {
         summary: "The shadows conceal anything useful.",
@@ -122,6 +126,7 @@ export const DEFAULT_CHECK_ACTIONS: readonly CheckActionDefinition[] = [
     trait: "Might",
     requiredItem: "Short Blade",
     requiresFreeMovement: true,
+    availableInScenes: ["arrival"],
     stakes: {
       Setback: {
         summary: "The tangled vines hold and the effort alerts the manor.",
@@ -137,7 +142,63 @@ export const DEFAULT_CHECK_ACTIONS: readonly CheckActionDefinition[] = [
       },
     },
   },
+  {
+    id: "drive-back-cult-guardian",
+    label: "Drive back the cult guardian",
+    kind: "Check",
+    goal: "Overcome the cult guardian and secure the cellar",
+    trait: "Might",
+    requiredItem: "Short Blade",
+    requiresFreeMovement: true,
+    availableInScenes: ["confrontation"],
+    repeatable: true,
+    stakes: {
+      Setback: {
+        summary: "The guardian presses the attack and you lose 1 Health.",
+        consequences: [
+          { type: "advance-clock", clock: "Danger", amount: 1 },
+          { type: "lose-health", amount: 1 },
+        ],
+      },
+      "Success with Cost": {
+        summary: "You drive the guardian back, but the danger escalates.",
+        consequences: [
+          { type: "advance-clock", clock: "Resistance", amount: 1 },
+          { type: "advance-clock", clock: "Danger", amount: 1 },
+        ],
+      },
+      "Clean Success": {
+        summary: "You drive the guardian back without yielding ground.",
+        consequences: [
+          { type: "advance-clock", clock: "Resistance", amount: 1 },
+        ],
+      },
+    },
+  },
 ];
+
+export const DEFAULT_CONFRONTATION: ConfrontationDefinition = {
+  id: "cellar-guardian",
+  resistanceClock: {
+    capacity: 2,
+    fillingConsequence: {
+      id: "cellar-guardian-overcome",
+      text: "The cult guardian is overcome and the cellar is secured.",
+    },
+  },
+  dangerClock: {
+    capacity: 2,
+    fillingConsequence: {
+      id: "mara-captured-by-guardian",
+      text: "The cult guardian captures Mara and drags her into the cells.",
+    },
+  },
+  healthZeroConsequence: {
+    id: "mara-overwhelmed-and-imprisoned",
+    text: "Overwhelmed by her injuries, Mara wakes imprisoned in the manor cells.",
+  },
+  defeatEffects: [{ type: "add-condition", condition: "Restrained" }],
+};
 
 export const DEFAULT_ORACLE_ACTIONS: readonly OracleActionDefinition[] = [
   {
@@ -183,6 +244,11 @@ export const DEFAULT_SCENE_TRANSITIONS: readonly SceneTransitionDefinition[] = [
   {
     from: "arrival",
     to: "discovery",
+    requiredFactIds: [SIDE_DOOR_OPEN.fact.id],
+  },
+  {
+    from: "discovery",
+    to: "confrontation",
     requiredFactIds: [SIDE_DOOR_OPEN.fact.id],
   },
 ];

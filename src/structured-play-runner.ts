@@ -271,6 +271,19 @@ const chooseAvailableAction = async (
   io: StructuredPlayIO,
   view: ApplicationView,
 ): Promise<ApplicationView> => {
+  const confrontation = view.state.confrontation;
+  if (confrontation?.status === "active") {
+    io.write("Confrontation\n");
+    io.write(
+      `Resistance Clock: ${confrontation.resistanceClock.current}/${confrontation.resistanceClock.capacity} — filling it: ${confrontation.resistanceClock.fillingConsequence.text}\n`,
+    );
+    io.write(
+      `Danger Clock: ${confrontation.dangerClock.current}/${confrontation.dangerClock.capacity} — filling it: ${confrontation.dangerClock.fillingConsequence.text}\n`,
+    );
+    io.write(
+      `Zero Health: ${confrontation.healthZeroConsequence.text}\n`,
+    );
+  }
   view.availableActions.forEach((action, index) => {
     io.write(`${index + 1}. ${action.label} [${action.kind}]\n`);
   });
