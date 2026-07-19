@@ -40,8 +40,7 @@ const referencedInterpretationProperties = {
   referencedEntityIds: stringArraySchema,
 } as const;
 
-const interpretationSchema: JsonSchema = {
-  type: "object",
+const interpretationResultSchema: JsonSchema = {
   anyOf: [
     exactObject({
       ...referencedInterpretationProperties,
@@ -85,6 +84,10 @@ const interpretationSchema: JsonSchema = {
   ],
 };
 
+const interpretationSchema: JsonSchema = exactObject({
+  result: interpretationResultSchema,
+});
+
 const attributedSegmentsSchema: JsonSchema = exactObject({
   segments: {
     type: "array",
@@ -99,30 +102,44 @@ const attributedSegmentsSchema: JsonSchema = exactObject({
   },
 });
 
-const taskFormat = (task: ModelTask): {
+interface ModelTaskDefinition {
   readonly name: string;
   readonly schema: JsonSchema;
-} => {
-  if (task.type === "interpret-player-input") {
-    return { name: "interpret_player_input", schema: interpretationSchema };
-  }
-  if (task.type === "explain-rules") {
-    return { name: "explain_rules", schema: attributedSegmentsSchema };
-  }
-  return {
+  readonly instructions: string;
+  normalizeOutput(output: unknown): unknown;
+}
+
+const unchangedOutput = (output: unknown): unknown => output;
+
+const modelTaskDefinitions: Readonly<
+  Record<ModelTask["type"], ModelTaskDefinition>
+> = {
+  "interpret-player-input": {
+    name: "interpret_player_input",
+    schema: interpretationSchema,
+    instructions:
+      "Classify the Player's utterance using only the supplied Model Task and Evidence Bundle. Select only an available capability, cite supplied evidence item IDs, and never invent game truth or Mechanical Effects. Return the interpretation in the result field using JSON matching the supplied schema.",
+    normalizeOutput: (output) =>
+      isRecord(output) &&
+      Object.keys(output).length === 1 &&
+      "result" in output
+        ? output.result
+        : output,
+  },
+  "explain-rules": {
+    name: "explain_rules",
+    schema: attributedSegmentsSchema,
+    instructions:
+      "Explain only authored rules that directly answer the Player's query. Every segment must reproduce an applicable authority-rule Evidence Bundle item exactly and cite its item ID. Return JSON matching the supplied schema.",
+    normalizeOutput: unchangedOutput,
+  },
+  "narrate-committed-outcome": {
     name: "narrate_committed_outcome",
     schema: attributedSegmentsSchema,
-  };
-};
-
-const instructionsFor = (task: ModelTask): string => {
-  if (task.type === "interpret-player-input") {
-    return "Classify the Player's utterance using only the supplied Model Task and Evidence Bundle. Select only an available capability, cite supplied evidence item IDs, and never invent game truth or Mechanical Effects. Return JSON matching the supplied schema.";
-  }
-  if (task.type === "explain-rules") {
-    return "Explain only authored rules that directly answer the Player's query. Every segment must reproduce an applicable authority-rule Evidence Bundle item exactly and cite its item ID. Return JSON matching the supplied schema.";
-  }
-  return "Narrate only claims established by the committed outcome. Every segment must cite the Evidence Bundle items that support it. Do not invent characters, motives, locations, mechanics, outcomes, or actionable facts. Return JSON matching the supplied schema.";
+    instructions:
+      "Narrate only claims established by the committed outcome. Every segment must cite the Evidence Bundle items that support it. Do not invent characters, motives, locations, mechanics, outcomes, or actionable facts. Return JSON matching the supplied schema.",
+    normalizeOutput: unchangedOutput,
+  },
 };
 
 const outputTextFrom = (response: unknown): string | null => {
@@ -203,7 +220,7 @@ export const createOpenAIModelProvider = ({
   provider: "openai",
   model,
   invoke: async (task): Promise<ModelProviderResult> => {
-    const format = taskFormat(task);
+    const definition = modelTaskDefinitions[task.type];
     const response = await fetcher(`${normalizedBaseUrl(baseUrl)}/responses`, {
       method: "POST",
       headers: {
@@ -212,15 +229,15 @@ export const createOpenAIModelProvider = ({
       },
       body: JSON.stringify({
         model,
-        instructions: instructionsFor(task),
+        instructions: definition.instructions,
         input: JSON.stringify(task),
         store: false,
         text: {
           format: {
             type: "json_schema",
-            name: format.name,
+            name: definition.name,
             strict: true,
-            schema: format.schema,
+            schema: definition.schema,
           },
         },
       }),
@@ -241,6 +258,9 @@ export const createOpenAIModelProvider = ({
     try {
       output = JSON.parse(outputText);
     } catch {}
-    return { output, usage: usageFrom(payload) };
+    return {
+      output: definition.normalizeOutput(output),
+      usage: usageFrom(payload),
+    };
   },
 });

@@ -61,16 +61,18 @@ test("OpenAI interpretation completes through Structured Play authority", async 
       const task = taskFrom(init);
       assert.equal(task.type, "interpret-player-input");
       return responseWith({
-        status: "interpreted",
-        classification: "player-action",
-        capabilityId: "survey-manor",
-        referencedEntityIds: ["scene:arrival"],
-        evidenceItemIds: [
-          "entity:scene:arrival",
-          "capability:survey-manor",
-          "rule:structured-play-authority",
-        ],
-        arguments: {},
+        result: {
+          status: "interpreted",
+          classification: "player-action",
+          capabilityId: "survey-manor",
+          referencedEntityIds: ["scene:arrival"],
+          evidenceItemIds: [
+            "entity:scene:arrival",
+            "capability:survey-manor",
+            "rule:structured-play-authority",
+          ],
+          arguments: {},
+        },
       });
     }),
   });
@@ -96,9 +98,11 @@ test("OpenAI rules explanation completes without changing game truth", async () 
       const task = taskFrom(init);
       if (task.type === "interpret-player-input") {
         return responseWith({
-          status: "interpreted",
-          classification: "rules-query",
-          referencedEntityIds: [],
+          result: {
+            status: "interpreted",
+            classification: "rules-query",
+            referencedEntityIds: [],
+          },
         });
       }
       assert.equal(task.type, "explain-rules");

@@ -43,8 +43,13 @@ test("complete runtime configuration selects OpenAI without exposing credentials
                   {
                     type: "output_text",
                     text: JSON.stringify({
-                      status: "ambiguous",
-                      candidateCapabilityIds: ["inspect-door", "force-door"],
+                      result: {
+                        status: "ambiguous",
+                        candidateCapabilityIds: [
+                          "inspect-door",
+                          "force-door",
+                        ],
+                      },
                     }),
                   },
                 ],
@@ -94,8 +99,13 @@ test("diagnostic capture is disabled by default", async () => {
                   {
                     type: "output_text",
                     text: JSON.stringify({
-                      status: "ambiguous",
-                      candidateCapabilityIds: ["inspect-door", "force-door"],
+                      result: {
+                        status: "ambiguous",
+                        candidateCapabilityIds: [
+                          "inspect-door",
+                          "force-door",
+                        ],
+                      },
                     }),
                   },
                 ],

@@ -57,7 +57,10 @@ test("OpenAI adapter invokes a stateless structured Model Task", async () => {
             {
               type: "message",
               content: [
-                { type: "output_text", text: JSON.stringify(expectedOutput) },
+                {
+                  type: "output_text",
+                  text: JSON.stringify({ result: expectedOutput }),
+                },
               ],
             },
           ],
@@ -101,6 +104,11 @@ test("OpenAI adapter invokes a stateless structured Model Task", async () => {
   assert.equal(text.format.name, "interpret_player_input");
   assert.equal(text.format.strict, true);
   assert.equal(text.format.schema.type, "object");
+  assert.equal("anyOf" in text.format.schema, false);
+  assert.equal(text.format.schema.additionalProperties, false);
+  assert.deepEqual(Object.keys(text.format.schema.properties as object), [
+    "result",
+  ]);
   assert.deepEqual(result, {
     output: expectedOutput,
     usage: { inputTokens: 21, outputTokens: 13, totalTokens: 34 },
@@ -158,7 +166,11 @@ test("OpenAI adapter satisfies every shared Model Task provider contract", async
               content: [
                 {
                   type: "output_text",
-                  text: JSON.stringify(contractCase.expectedOutput),
+                  text: JSON.stringify(
+                    task.type === "interpret-player-input"
+                      ? { result: contractCase.expectedOutput }
+                      : contractCase.expectedOutput,
+                  ),
                 },
               ],
             },
@@ -272,7 +284,7 @@ test("invalid OpenAI output uses the gateway repair contract and accumulates usa
                   text:
                     invocationCount === 1
                       ? "not json"
-                      : JSON.stringify(repairedOutput),
+                      : JSON.stringify({ result: repairedOutput }),
                 },
               ],
             },

@@ -140,7 +140,12 @@ test("reopening displays retained validated Narration without calling the curren
     ["open", adventureId],
     script.io,
     createLocalAdventureRepository(directory),
-    { modelGateway: createModelGateway({ provider }) },
+    {
+      modelRuntime: {
+        modelGateway: createModelGateway({ provider }),
+        timeoutMs: 5_000,
+      },
+    },
   );
 
   assert.match(

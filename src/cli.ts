@@ -42,12 +42,7 @@ try {
     argv.slice(2),
     io,
     createLocalAdventureRepository(dataDirectory),
-    modelRuntime === undefined
-      ? {}
-      : {
-          modelGateway: modelRuntime.modelGateway,
-          modelTimeoutMs: modelRuntime.timeoutMs,
-        },
+    modelRuntime === undefined ? {} : { modelRuntime },
   );
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);

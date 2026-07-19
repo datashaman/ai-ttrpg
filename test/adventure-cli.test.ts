@@ -126,8 +126,10 @@ test("configured model deadline reaches Natural Language Play through the CLI", 
     repository,
     {
       runToAdventureEnd: false,
-      modelGateway: createModelGateway({ provider }),
-      modelTimeoutMs: 1,
+      modelRuntime: {
+        modelGateway: createModelGateway({ provider }),
+        timeoutMs: 1,
+      },
     },
   );
 
@@ -167,7 +169,10 @@ test("Player switches from ambiguous Natural Language Play to Structured Play wi
     repository,
     {
       runToAdventureEnd: false,
-      modelGateway: createModelGateway({ provider }),
+      modelRuntime: {
+        modelGateway: createModelGateway({ provider }),
+        timeoutMs: 5_000,
+      },
     },
   );
 
