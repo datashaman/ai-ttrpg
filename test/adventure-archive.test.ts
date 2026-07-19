@@ -142,7 +142,7 @@ test("import validates integrity and canonical history before visibility", () =>
   const historyTarget = temporaryRepository();
   assert.throws(
     () => historyTarget.importArchive(reseal(invalidHistory)),
-    /invalid canonical events/i,
+    /event sequence contains a gap/i,
   );
   assert.deepEqual(historyTarget.list(), []);
 
@@ -151,7 +151,7 @@ test("import validates integrity and canonical history before visibility", () =>
   const payloadTarget = temporaryRepository();
   assert.throws(
     () => payloadTarget.importArchive(reseal(invalidPayload)),
-    /invalid canonical events/i,
+    /event envelope or payload is malformed/i,
   );
   assert.deepEqual(payloadTarget.list(), []);
 
@@ -167,7 +167,7 @@ test("import validates integrity and canonical history before visibility", () =>
   const traceTarget = temporaryRepository();
   assert.throws(
     () => traceTarget.importArchive(reseal(contradictoryTrace)),
-    /invalid canonical events/i,
+    /event envelope or payload is malformed/i,
   );
   assert.deepEqual(traceTarget.list(), []);
 
