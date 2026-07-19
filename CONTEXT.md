@@ -9,7 +9,7 @@ A play mode with one human **Player** and no human **Game Master**. The system f
 _Avoid_: AI GM, single-player mode
 
 **Structured Play**:
-A Solo Play input mode in which the Player chooses authored actions, Oracle questions, targets, and other available options without language-model interpretation. When interpretation is unavailable, invalid, over budget, or ambiguous, the Player may continue by making an explicit Structured Play choice; the system never guesses a choice from the failed utterance.
+A Solo Play input mode in which the Player chooses authored actions, Oracle questions, targets, and other available options without language-model interpretation. It resolves through the same game rules and may present outcomes as mechanical summaries.
 _Avoid_: fallback parser, debug mode, menu mode
 
 **Player**:
@@ -128,10 +128,6 @@ _Avoid_: critical success, critical failure
 The presenter of established game facts and outcomes. A Narrator does not determine whether an uncertain proposition is true.
 _Avoid_: Game Master, Oracle
 
-**Narration**:
-Player-facing prose that presents Established Facts and accepted outcomes with attributable evidence. Narration may vary in wording and tone, but displaying it does not establish new game truth.
-_Avoid_: event, canon, ruling
-
 **Unresolved Proposition**:
 A question about the game world that has no answer yet. It becomes an Established Fact only when play makes the answer relevant and the Oracle resolves it.
 _Avoid_: secret, hidden fact, unknown fact
@@ -145,7 +141,7 @@ An immutable, task-specific collection of Player-visible source items supplied t
 _Avoid_: prompt context, model memory, truth
 
 **Model Call Record**:
-An operational audit record of one model task, including its provider, model, prompt version, Evidence Bundle references and hashes, timing, usage, validation, retries, fallback result, and validated output. A Model Call Record may retain Narration for stable display and correlate with accepted commands and events, but raw provider payloads are diagnostic data rather than default record content; the record is not part of a Timeline and cannot rebuild game state.
+An operational audit record of one model task, including its provider, model, prompt version, Evidence Bundle references and hashes, timing, usage, validation, retries, fallback result, and validated output. A Model Call Record may correlate with accepted commands and events, but raw provider payloads are diagnostic data rather than default record content; the record is not part of a Timeline and cannot rebuild game state.
 _Avoid_: canonical event, Adventure history, model memory
 
 **Model Task**:
@@ -205,14 +201,6 @@ _Avoid_: critical success, full success
 > **Developer:** Can the provider remember earlier turns so the Narrator stays consistent?
 >
 > **Domain expert:** No. Each Model Task receives the relevant Evidence Bundle explicitly. Continuity comes from accepted events and projected game state, not hidden provider memory.
->
-> **Developer:** The Narration says the witness fears the cult, but no cited evidence establishes that. Is the witness now afraid?
->
-> **Domain expert:** No. Narration cannot establish a fact. Reject unsupported narration and use the deterministic presentation instead.
->
-> **Developer:** When an Adventure is reopened after changing providers, should earlier Narration be generated again?
->
-> **Domain expert:** No. Reuse the validated Narration retained in its Model Call Record. Replaying the Timeline remains independent of that presentation record.
 >
 > **Developer:** Does auditing require every raw provider prompt and response to be saved?
 >

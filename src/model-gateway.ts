@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { EvidenceBundle } from "./evidence-bundle.js";
-import { immutableSnapshot } from "./model-boundary.js";
+import { immutableSnapshot, invokeWithinTimeout } from "./model-boundary.js";
 import type { CanonicalEvent, StructuredPlayInput } from "./structured-play.js";
 
 export interface InterpretationModelTask {
@@ -17,7 +17,18 @@ export type ModelTask = InterpretationModelTask;
 export interface ModelProvider {
   readonly provider: string;
   readonly model: string;
-  invoke(task: ModelTask): Promise<unknown>;
+  invoke(task: ModelTask): Promise<ModelProviderResult>;
+}
+
+export interface ModelUsage {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly totalTokens: number;
+}
+
+export interface ModelProviderResult {
+  readonly output: unknown;
+  readonly usage: ModelUsage | null;
 }
 
 export interface ModelGatewayExecution {
@@ -29,11 +40,24 @@ export interface ModelGatewayExecution {
   readonly completedAt: string;
   readonly durationMs: number;
   readonly task: ModelTask;
-  readonly output: unknown;
+  readonly outcome:
+    | {
+        readonly status: "succeeded";
+        readonly output: unknown;
+        readonly usage: ModelUsage | null;
+      }
+    | {
+        readonly status: "failed";
+        readonly reason: string;
+      };
+  readonly retryCount: 0;
 }
 
 export interface ModelGateway {
-  execute(task: ModelTask): Promise<ModelGatewayExecution>;
+  execute(
+    task: ModelTask,
+    options?: { readonly timeoutMs?: number },
+  ): Promise<ModelGatewayExecution>;
 }
 
 export const createModelGateway = ({
@@ -43,10 +67,26 @@ export const createModelGateway = ({
   readonly provider: ModelProvider;
   readonly promptVersion?: string;
 }): ModelGateway => ({
-  execute: async (task) => {
+  execute: async (task, options) => {
     const started = Date.now();
     const taskSnapshot = immutableSnapshot(task);
-    const output = await provider.invoke(taskSnapshot);
+    let outcome: ModelGatewayExecution["outcome"];
+    try {
+      const result = (await invokeWithinTimeout(
+        () => provider.invoke(taskSnapshot),
+        options?.timeoutMs ?? 5_000,
+      )) as ModelProviderResult;
+      outcome = {
+        status: "succeeded",
+        output: result.output,
+        usage: result.usage,
+      };
+    } catch (error) {
+      outcome = {
+        status: "failed",
+        reason: error instanceof Error ? error.message : "Model invocation failed.",
+      };
+    }
     const completed = Date.now();
     return immutableSnapshot({
       callId: randomUUID(),
@@ -57,7 +97,8 @@ export const createModelGateway = ({
       completedAt: new Date(completed).toISOString(),
       durationMs: Math.max(0, completed - started),
       task: taskSnapshot,
-      output,
+      outcome,
+      retryCount: 0 as const,
     });
   },
 });
@@ -78,7 +119,7 @@ export const createScriptedModelProvider = ({
       if (response === undefined) {
         throw new Error("No scripted model response exists for that task input.");
       }
-      return immutableSnapshot(response);
+      return immutableSnapshot({ output: response, usage: null });
     },
   };
 };
@@ -90,10 +131,18 @@ export interface ModelCallRecord {
   readonly model: string;
   readonly promptVersion: string;
   readonly evidenceBundleId: string;
-  readonly evidenceItemIds: readonly string[];
+  readonly evidenceBundleHash: string;
+  readonly evidenceReferences: readonly {
+    readonly itemId: string;
+    readonly sourceKind: EvidenceBundle["items"][number]["sourceKind"];
+    readonly sourceReference: string;
+  }[];
   readonly startedAt: string;
   readonly completedAt: string;
   readonly durationMs: number;
+  readonly usage: ModelUsage | null;
+  readonly retryCount: number;
+  readonly fallbackOutcome: "none" | "safe-rejection";
   readonly validation:
     | { readonly status: "accepted" }
     | { readonly status: "rejected"; readonly reason: string };
@@ -121,12 +170,14 @@ export const modelCallRecordFrom = ({
   validatedOutput,
   command,
   acceptedEvents,
+  fallbackOutcome,
 }: {
   readonly execution: ModelGatewayExecution;
   readonly validation: ModelCallRecord["validation"];
   readonly validatedOutput: unknown | null;
   readonly command: StructuredPlayInput | null;
   readonly acceptedEvents: readonly CanonicalEvent[];
+  readonly fallbackOutcome: ModelCallRecord["fallbackOutcome"];
 }): ModelCallRecord =>
   immutableSnapshot({
     id: execution.callId,
@@ -135,10 +186,21 @@ export const modelCallRecordFrom = ({
     model: execution.model,
     promptVersion: execution.promptVersion,
     evidenceBundleId: execution.task.evidenceBundle.id,
-    evidenceItemIds: execution.task.evidenceBundle.items.map((item) => item.id),
+    evidenceBundleHash: execution.task.evidenceBundle.id.replace(/^evidence:/, ""),
+    evidenceReferences: execution.task.evidenceBundle.items.map((item) => ({
+      itemId: item.id,
+      sourceKind: item.sourceKind,
+      sourceReference: item.sourceReference,
+    })),
     startedAt: execution.startedAt,
     completedAt: execution.completedAt,
     durationMs: execution.durationMs,
+    usage:
+      execution.outcome.status === "succeeded"
+        ? execution.outcome.usage
+        : null,
+    retryCount: execution.retryCount,
+    fallbackOutcome,
     validation,
     validatedOutput,
     command,

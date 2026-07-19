@@ -193,9 +193,9 @@ export const assembleInterpretationEvidence = (
     .forEach((event, newestFirstIndex) =>
       add(
         {
-          id: `event:${event.sequence}`,
+          id: `event:${event.id}`,
           sourceKind: "accepted-event",
-          sourceReference: `adventure:${event.sequence}`,
+          sourceReference: `adventure-event:${event.id}`,
           content: JSON.stringify({ type: event.type, payload: event.payload }),
           inclusionReason: "This is recent accepted Adventure context visible through projection.",
         },

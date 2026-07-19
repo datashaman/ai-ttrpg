@@ -9,7 +9,11 @@ import {
   type ModelProvider,
 } from "../src/model-gateway.js";
 import { runNaturalLanguagePlay } from "../src/natural-language-play.js";
-import { createInMemoryEventStore } from "../src/structured-play.js";
+import {
+  createInMemoryEventStore,
+  createInMemoryTimelineStore,
+  createStructuredPlayApplication,
+} from "../src/structured-play.js";
 import { beginAdventureFixture } from "./support/adventure-fixture.js";
 import { scriptedIO } from "./support/scripted-io.js";
 
@@ -119,15 +123,18 @@ test("the provider receives one deeply immutable stateless Model Task", async ()
         (task.input as { utterance: string }).utterance = "Commit a different action";
       }, TypeError);
       return {
-        status: "interpreted",
-        classification: "player-action",
-        capabilityId: "survey-manor",
-        referencedEntityIds: ["scene:arrival"],
-        evidenceItemIds: [
-          "entity:scene:arrival",
-          "capability:survey-manor",
-        ],
-        arguments: {},
+        output: {
+          status: "interpreted",
+          classification: "player-action",
+          capabilityId: "survey-manor",
+          referencedEntityIds: ["scene:arrival"],
+          evidenceItemIds: [
+            "entity:scene:arrival",
+            "capability:survey-manor",
+          ],
+          arguments: {},
+        },
+        usage: null,
       };
     },
   };
@@ -213,4 +220,113 @@ test("provider output cannot append an event or apply a Mechanical Effect", asyn
   assert.deepEqual(eventStore.readAll(), before);
   assert.deepEqual(result.interpretedCommands, []);
   assert.equal(result.modelCallRecords[0]?.validation.status, "rejected");
+});
+
+test("a capability without an exact entity reference cannot become a command", async () => {
+  const { eventStore } = beginAdventureFixture();
+  const before = eventStore.readAll();
+  const provider = createScriptedModelProvider({
+    model: "locked-manor-script-v1",
+    responses: {
+      "Survey somewhere.": {
+        status: "interpreted",
+        classification: "player-action",
+        capabilityId: "survey-manor",
+        referencedEntityIds: [],
+        evidenceItemIds: ["capability:survey-manor"],
+        arguments: {},
+      },
+    },
+  });
+
+  const result = await runNaturalLanguagePlay({
+    io: scriptedIO(["Survey somewhere."]).io,
+    modelGateway: createModelGateway({ provider }),
+    eventStore,
+  });
+
+  assert.deepEqual(eventStore.readAll(), before);
+  assert.deepEqual(result.interpretedCommands, []);
+  assert.equal(result.modelCallRecords[0]?.validation.status, "rejected");
+});
+
+test("Timeline-backed play attributes evidence and the accepted event to the active Timeline", async () => {
+  const timelineStore = createInMemoryTimelineStore({ seed: 5 });
+  const app = createStructuredPlayApplication({ timelineStore });
+  app.submit({
+    type: "configure-player-character",
+    name: "Mara Vey",
+    pronouns: "she/her",
+    motivation: "Find her missing sister",
+    traits: { Might: 0, Wits: 2, Presence: 1 },
+  });
+  app.submit({ type: "begin-adventure" });
+  const initialEvents = timelineStore.readAll();
+  const unrelatedStore = createInMemoryEventStore();
+  const provider = createScriptedModelProvider({
+    model: "locked-manor-script-v1",
+    responses: {
+      "I survey the manor grounds.": {
+        status: "interpreted",
+        classification: "player-action",
+        capabilityId: "survey-manor",
+        referencedEntityIds: ["scene:arrival"],
+        evidenceItemIds: [
+          "entity:scene:arrival",
+          "capability:survey-manor",
+        ],
+        arguments: {},
+      },
+    },
+  });
+
+  const result = await runNaturalLanguagePlay({
+    io: scriptedIO(["I survey the manor grounds."]).io,
+    modelGateway: createModelGateway({ provider }),
+    timelineStore,
+    eventStore: unrelatedStore,
+  });
+
+  const acceptedEvent = timelineStore.readAll().at(-1);
+  assert.ok(acceptedEvent);
+  assert.equal(acceptedEvent.type, "FreeActionCompleted");
+  const [record] = result.modelCallRecords;
+  assert.ok(record);
+  assert.deepEqual(record.acceptedEventIds, [acceptedEvent.id]);
+  assert.ok(
+    initialEvents.every((event) =>
+      record.evidenceReferences.some(
+        (reference) =>
+          reference.sourceReference === `adventure-event:${event.id}`,
+      ),
+    ),
+  );
+  assert.deepEqual(unrelatedStore.readAll(), []);
+});
+
+test("provider failure creates a normalized Model Call Record without changing truth", async () => {
+  const { eventStore } = beginAdventureFixture();
+  const before = eventStore.readAll();
+  const provider = createScriptedModelProvider({
+    model: "locked-manor-script-v1",
+    responses: {},
+  });
+
+  const result = await runNaturalLanguagePlay({
+    io: scriptedIO(["No scripted answer exists."]).io,
+    modelGateway: createModelGateway({ provider }),
+    eventStore,
+  });
+
+  assert.deepEqual(eventStore.readAll(), before);
+  const [record] = result.modelCallRecords;
+  assert.ok(record);
+  assert.equal(record.validation.status, "rejected");
+  assert.equal(record.fallbackOutcome, "safe-rejection");
+  assert.equal(record.retryCount, 0);
+  assert.equal(record.usage, null);
+  assert.match(record.evidenceBundleHash, /^[0-9a-f]{64}$/);
+  assert.ok(record.evidenceReferences.length > 0);
+  assert.equal(record.command, null);
+  assert.deepEqual(record.acceptedEventIds, []);
 });

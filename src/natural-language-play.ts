@@ -170,6 +170,7 @@ const selectedCapability = (
   }
   if (evidenceBundle !== undefined) {
     if (
+      interpretation.referencedEntityIds.length === 0 ||
       !Array.isArray(interpretation.evidenceItemIds) ||
       !interpretation.evidenceItemIds.every((id) => typeof id === "string")
     ) {
@@ -427,6 +428,43 @@ const runThroughStructuredPlay = (
       : { narrationTimeoutMs: options.narrationTimeoutMs }),
   });
 
+const acceptedEventsFor = (
+  options: NaturalLanguagePlayOptions,
+  eventStore: EventStore,
+) =>
+  options.timelineStore === undefined
+    ? eventStore.readAll()
+    : options.timelineStore.readTimeline(
+        options.timelineStore.view().activeTimelineId,
+      );
+
+const withoutInterpretedCommand = (
+  view: ApplicationView,
+  modelCallStore: ModelCallRecordStore,
+): NaturalLanguagePlayResult => ({
+  ...view,
+  interpretedCommands: [],
+  modelCallRecords: modelCallStore.readAll(),
+});
+
+const appendUncorrelatedModelCall = (
+  modelCallStore: ModelCallRecordStore,
+  execution: ModelGatewayExecution,
+  validation: ModelCallRecord["validation"],
+  validatedOutput: unknown | null,
+  fallbackOutcome: ModelCallRecord["fallbackOutcome"],
+): void =>
+  modelCallStore.append(
+    modelCallRecordFrom({
+      execution,
+      validation,
+      validatedOutput,
+      command: null,
+      acceptedEvents: [],
+      fallbackOutcome,
+    }),
+  );
+
 export const runNaturalLanguagePlay = async (
   options: NaturalLanguagePlayOptions,
 ): Promise<NaturalLanguagePlayResult> => {
@@ -452,18 +490,10 @@ export const runNaturalLanguagePlay = async (
       eventStore,
       options.io,
     );
-    return {
-      ...completed,
-      interpretedCommands: [],
-      modelCallRecords: modelCallStore.readAll(),
-    };
+    return withoutInterpretedCommand(completed, modelCallStore);
   }
   if (view.state.adventureEnding !== null) {
-    return {
-      ...view,
-      interpretedCommands: [],
-      modelCallRecords: modelCallStore.readAll(),
-    };
+    return withoutInterpretedCommand(view, modelCallStore);
   }
 
   const utterance = await options.io.read("What do you do? ");
@@ -480,7 +510,7 @@ export const runNaturalLanguagePlay = async (
   const evidenceBundle = assembleInterpretationEvidence({
     utterance,
     view,
-    acceptedEvents: eventStore.readAll(),
+    acceptedEvents: acceptedEventsFor(options, eventStore),
     ...(options.evidenceBudget === undefined
       ? {}
       : { maxItems: options.evidenceBudget }),
@@ -489,18 +519,31 @@ export const runNaturalLanguagePlay = async (
   let gatewayExecution: ModelGatewayExecution | null = null;
   try {
     if (options.modelGateway !== undefined) {
-      gatewayExecution = (await invokeWithinTimeout(
-        () =>
-          options.modelGateway!.execute(
-            immutableSnapshot({
-              type: "interpret-player-input" as const,
-              input: { utterance },
-              evidenceBundle,
-            }),
-          ),
-        options.interpretationTimeoutMs ?? 5_000,
-      )) as ModelGatewayExecution;
-      interpretation = gatewayExecution.output;
+      gatewayExecution = await options.modelGateway.execute(
+        immutableSnapshot({
+          type: "interpret-player-input" as const,
+          input: { utterance },
+          evidenceBundle,
+        }),
+        { timeoutMs: options.interpretationTimeoutMs ?? 5_000 },
+      );
+      if (gatewayExecution.outcome.status === "failed") {
+        appendUncorrelatedModelCall(
+          modelCallStore,
+          gatewayExecution,
+          {
+            status: "rejected",
+            reason: gatewayExecution.outcome.reason,
+          },
+          null,
+          "safe-rejection",
+        );
+        options.io.write(
+          "I could not safely map that input to an available capability. Please clarify.\n",
+        );
+        return withoutInterpretedCommand(view, modelCallStore);
+      }
+      interpretation = gatewayExecution.outcome.output;
     } else if (options.interpreter !== undefined) {
       interpretation = await invokeWithinTimeout(
         () => options.interpreter!.interpret(request),
@@ -513,37 +556,48 @@ export const runNaturalLanguagePlay = async (
     options.io.write(
       "I could not safely map that input to an available capability. Please clarify.\n",
     );
-    return {
-      ...view,
-      interpretedCommands: [],
-      modelCallRecords: modelCallStore.readAll(),
-    };
+    return withoutInterpretedCommand(view, modelCallStore);
   }
   const clarification = clarificationFrom(interpretation, request);
   if (clarification !== null) {
+    if (gatewayExecution !== null) {
+      appendUncorrelatedModelCall(
+        modelCallStore,
+        gatewayExecution,
+        { status: "accepted" },
+        interpretation,
+        "none",
+      );
+    }
     options.io.write(`Clarification needed: ${clarification}\n`);
-    return {
-      ...view,
-      interpretedCommands: [],
-      modelCallRecords: modelCallStore.readAll(),
-    };
+    return withoutInterpretedCommand(view, modelCallStore);
   }
   if (isRulesQuery(interpretation, request)) {
+    if (gatewayExecution !== null) {
+      appendUncorrelatedModelCall(
+        modelCallStore,
+        gatewayExecution,
+        { status: "accepted" },
+        interpretation,
+        "none",
+      );
+    }
     writeRulesEvidence(options.io, view);
-    return {
-      ...view,
-      interpretedCommands: [],
-      modelCallRecords: modelCallStore.readAll(),
-    };
+    return withoutInterpretedCommand(view, modelCallStore);
   }
   const nonGameplay = nonGameplayClassification(interpretation, request);
   if (nonGameplay !== null) {
+    if (gatewayExecution !== null) {
+      appendUncorrelatedModelCall(
+        modelCallStore,
+        gatewayExecution,
+        { status: "accepted" },
+        interpretation,
+        "none",
+      );
+    }
     writeNonGameplayResponse(options.io, nonGameplay, view);
-    return {
-      ...view,
-      interpretedCommands: [],
-      modelCallRecords: modelCallStore.readAll(),
-    };
+    return withoutInterpretedCommand(view, modelCallStore);
   }
   const selected = selectedCapability(
     interpretation,
@@ -553,27 +607,21 @@ export const runNaturalLanguagePlay = async (
   );
   if (selected === null) {
     if (gatewayExecution !== null) {
-      modelCallStore.append(
-        modelCallRecordFrom({
-          execution: gatewayExecution,
-          validation: {
-            status: "rejected",
-            reason: "The output did not select exact, evidenced entity and capability references.",
-          },
-          validatedOutput: null,
-          command: null,
-          acceptedEvents: [],
-        }),
+      appendUncorrelatedModelCall(
+        modelCallStore,
+        gatewayExecution,
+        {
+          status: "rejected",
+          reason: "The output did not select exact, evidenced entity and capability references.",
+        },
+        null,
+        "safe-rejection",
       );
     }
     options.io.write(
       "I could not safely map that input to an available capability. Please clarify.\n",
     );
-    return {
-      ...view,
-      interpretedCommands: [],
-      modelCallRecords: modelCallStore.readAll(),
-    };
+    return withoutInterpretedCommand(view, modelCallStore);
   }
 
   const actionIndex = view.availableActions.findIndex(
@@ -593,16 +641,20 @@ export const runNaturalLanguagePlay = async (
     },
     write: (text) => options.io.write(text),
   };
-  const eventPositionBeforeCommand = eventStore.readAll().length;
+  const eventPositionBeforeCommand = acceptedEventsFor(options, eventStore).length;
   const completed = await runThroughStructuredPlay(options, eventStore, proxyIO);
   if (gatewayExecution !== null) {
+    const acceptedEvents = acceptedEventsFor(options, eventStore).slice(
+      eventPositionBeforeCommand,
+    );
     modelCallStore.append(
       modelCallRecordFrom({
         execution: gatewayExecution,
         validation: { status: "accepted" },
         validatedOutput: interpretation,
         command: selected.command,
-        acceptedEvents: eventStore.readAll().slice(eventPositionBeforeCommand),
+        acceptedEvents,
+        fallbackOutcome: "none",
       }),
     );
   }
