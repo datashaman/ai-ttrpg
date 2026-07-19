@@ -136,7 +136,7 @@ test("the provider receives one deeply immutable stateless Model Task", async ()
           ],
           arguments: {},
         },
-        usage: null,
+        usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
       };
     },
   };
@@ -361,7 +361,7 @@ test("malformed structured output receives one repair attempt", async () => {
                 ],
                 arguments: {},
               },
-        usage: null,
+        usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
       };
     },
   };
@@ -377,6 +377,42 @@ test("malformed structured output receives one repair attempt", async () => {
     { type: "choose-action", actionId: "survey-manor" },
   ]);
   assert.equal(result.modelCallRecords[0]?.retryCount, 1);
+  assert.deepEqual(result.modelCallRecords[0]?.usage, {
+    inputTokens: 6,
+    outputTokens: 4,
+    totalTokens: 10,
+  });
+});
+
+test("a failed repair retains usage from the malformed attempt", async () => {
+  const { eventStore } = beginAdventureFixture();
+  let attempts = 0;
+  const provider: ModelProvider = {
+    provider: "repair-failure-script",
+    model: "repair-failure-v1",
+    invoke: async () => {
+      attempts += 1;
+      if (attempts === 2) throw new Error("repair unavailable");
+      return {
+        output: { unexpected: "shape" },
+        usage: { inputTokens: 4, outputTokens: 1, totalTokens: 5 },
+      };
+    },
+  };
+
+  const result = await runNaturalLanguagePlay({
+    io: scriptedIO(["I open the door."]).io,
+    modelGateway: createModelGateway({ provider }),
+    eventStore,
+  });
+
+  assert.equal(attempts, 2);
+  assert.equal(result.modelCallRecords[0]?.retryCount, 1);
+  assert.deepEqual(result.modelCallRecords[0]?.usage, {
+    inputTokens: 4,
+    outputTokens: 1,
+    totalTokens: 5,
+  });
 });
 
 test("a failed repair stops after one attempt and leaves gameplay unchanged", async () => {
@@ -436,6 +472,40 @@ test("ambiguous valid output asks once and does not retry", async () => {
   assert.deepEqual(eventStore.readAll(), before);
   assert.match(script.output.join(""), /Clarification needed:/);
   assert.match(script.output.join(""), /Structured Play choices:/);
+});
+
+test("valid non-gameplay speech is acknowledged without a repair retry", async () => {
+  const { eventStore } = beginAdventureFixture();
+  const before = eventStore.readAll();
+  let attempts = 0;
+  const provider: ModelProvider = {
+    provider: "speech-script",
+    model: "speech-v1",
+    invoke: async () => {
+      attempts += 1;
+      return {
+        output: {
+          status: "interpreted",
+          classification: "in-character-speech",
+          capabilityId: null,
+          referencedEntityIds: ["scene:arrival"],
+          arguments: {},
+        },
+        usage: null,
+      };
+    },
+  };
+  const script = scriptedIO(["Hello? Is anyone there?"]);
+
+  await runNaturalLanguagePlay({
+    io: script.io,
+    modelGateway: createModelGateway({ provider }),
+    eventStore,
+  });
+
+  assert.equal(attempts, 1);
+  assert.deepEqual(eventStore.readAll(), before);
+  assert.match(script.output.join(""), /In-character speech acknowledged/);
 });
 
 for (const failure of [

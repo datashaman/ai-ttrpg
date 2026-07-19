@@ -64,21 +64,22 @@ test("CLI creates, lists, and opens a durable Adventure without a model or stora
 
 test("explicit Natural Language mode offers Structured Play when no provider is configured", async () => {
   const repository = createInMemoryAdventureRepository();
-  const script = scriptedIO([
-    "s",
-    "Mara Vey",
-    "she/her",
-    "Find her missing sister",
-    "0",
-    "2",
-    "1",
-    "1",
-    "s",
-    "x",
-  ]);
+  const adventure = repository.create("The Locked Manor");
+  const app = createStructuredPlayApplication({ timelineStore: adventure.timelineStore });
+  app.submit({
+    type: "configure-player-character",
+    name: "Mara Vey",
+    pronouns: "she/her",
+    motivation: "Find her missing sister",
+    traits: { Might: 0, Wits: 2, Presence: 1 },
+  });
+  app.submit({ type: "begin-adventure" });
+  const adventureId = adventure.id;
+  adventure.close();
+  const script = scriptedIO(["1", "s", "x"]);
 
   await runAdventureCli(
-    ["--mode", "natural-language", "create", "The Locked Manor"],
+    ["--mode", "natural-language", "open", adventureId],
     script.io,
     repository,
     { runToAdventureEnd: false },
@@ -86,7 +87,8 @@ test("explicit Natural Language mode offers Structured Play when no provider is 
 
   const transcript = script.output.join("");
   assert.match(transcript, /Natural Language Play is unavailable because no model provider is configured/i);
-  assert.match(transcript, /Input mode: Structured Play \(s\), Natural Language Play \(n\), or stop \(x\)/);
+  assert.match(transcript, /Structured Play choices:/);
+  assert.match(transcript, /a Structured Play choice number/);
   assert.match(transcript, /AI TTRPG — Structured Play/);
   assert.equal(repository.list()[0]?.eventCount, 3);
 });
@@ -116,7 +118,7 @@ test("Player switches from ambiguous Natural Language Play to Structured Play wi
       },
     },
   });
-  const script = scriptedIO(["I deal with the door.", "s", "1", "s", "x"]);
+  const script = scriptedIO(["I deal with the door.", "1", "s", "x"]);
 
   await runAdventureCli(
     ["--mode", "natural-language", "open", adventureId],

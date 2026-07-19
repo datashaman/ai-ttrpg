@@ -8,7 +8,10 @@ import {
   createInMemoryModelCallRecordStore,
   type ModelGateway,
 } from "./model-gateway.js";
-import { runNaturalLanguagePlay } from "./natural-language-play.js";
+import {
+  runNaturalLanguagePlay,
+  writeStructuredPlayChoices,
+} from "./natural-language-play.js";
 import { createStructuredPlayApplication } from "./structured-play.js";
 import {
   runStructuredPlay,
@@ -25,19 +28,37 @@ const usage =
 
 type InputMode = "structured" | "natural-language";
 
-const readInputMode = async (io: StructuredPlayIO): Promise<InputMode | null> => {
+interface InputModeSelection {
+  readonly mode: InputMode;
+  readonly structuredChoice?: string;
+}
+
+const readInputMode = async (
+  io: StructuredPlayIO,
+  availableActionCount: number,
+): Promise<InputModeSelection | null> => {
   while (true) {
     const choice = (
       await io.read(
-        "Input mode: Structured Play (s), Natural Language Play (n), or stop (x): ",
+        "Input mode: Structured Play (s), Natural Language Play (n), a Structured Play choice number, or stop (x): ",
       )
     )
       .trim()
       .toLowerCase();
-    if (choice === "s") return "structured";
-    if (choice === "n") return "natural-language";
+    if (choice === "s") return { mode: "structured" };
+    if (choice === "n") return { mode: "natural-language" };
     if (choice === "x") return null;
-    io.write("Choose Structured Play (s), Natural Language Play (n), or stop (x).\n");
+    const actionNumber = Number(choice);
+    if (
+      Number.isInteger(actionNumber) &&
+      actionNumber >= 1 &&
+      actionNumber <= availableActionCount
+    ) {
+      return { mode: "structured", structuredChoice: choice };
+    }
+    io.write(
+      "Choose Structured Play (s), Natural Language Play (n), an available action number, or stop (x).\n",
+    );
   }
 };
 
@@ -48,12 +69,19 @@ const runModeSession = async (
   modelGateway: ModelGateway | undefined,
 ): Promise<void> => {
   let mode = initialMode;
+  let structuredChoice: string | undefined;
   const modelCallStore = createInMemoryModelCallRecordStore();
   while (true) {
     if (mode === "natural-language") {
       if (modelGateway === undefined) {
         io.write(
           "Natural Language Play is unavailable because no model provider is configured. Structured Play remains available.\n",
+        );
+        writeStructuredPlayChoices(
+          io,
+          createStructuredPlayApplication({
+            timelineStore: adventure.timelineStore,
+          }).view(),
         );
       } else {
         await runNaturalLanguagePlay({
@@ -64,19 +92,32 @@ const runModeSession = async (
         });
       }
     } else {
+      let choicePending = structuredChoice !== undefined;
+      const structuredIO: StructuredPlayIO = {
+        read: (prompt) => {
+          if (choicePending && prompt === "\nChoose an action: ") {
+            choicePending = false;
+            return Promise.resolve(structuredChoice!);
+          }
+          return io.read(prompt);
+        },
+        write: (text) => io.write(text),
+      };
       await runStructuredPlay({
-        io,
+        io: structuredIO,
         timelineStore: adventure.timelineStore,
       });
+      structuredChoice = undefined;
     }
 
     const view = createStructuredPlayApplication({
       timelineStore: adventure.timelineStore,
     }).view();
     if (view.state.adventureEnding !== null) return;
-    const selectedMode = await readInputMode(io);
+    const selectedMode = await readInputMode(io, view.availableActions.length);
     if (selectedMode === null) return;
-    mode = selectedMode;
+    mode = selectedMode.mode;
+    structuredChoice = selectedMode.structuredChoice;
     io.write("\n");
   }
 };

@@ -72,6 +72,7 @@ export interface ModelGatewayExecution {
         readonly status: "failed";
         readonly code: ModelFailureCode;
         readonly reason: string;
+        readonly usage: ModelUsage | null;
       };
   readonly retryCount: 0 | 1;
 }
@@ -98,11 +99,24 @@ export const createModelGateway = ({
     const taskSnapshot = immutableSnapshot(task);
     let outcome: ModelGatewayExecution["outcome"];
     let retryCount: 0 | 1 = 0;
+    let usage: ModelUsage | null = null;
+    const addUsage = (next: ModelUsage | null): void => {
+      if (next === null) return;
+      usage =
+        usage === null
+          ? next
+          : {
+              inputTokens: usage.inputTokens + next.inputTokens,
+              outputTokens: usage.outputTokens + next.outputTokens,
+              totalTokens: usage.totalTokens + next.totalTokens,
+            };
+    };
     try {
       let result = (await invokeWithinTimeout(
         () => provider.invoke(taskSnapshot),
         options?.timeoutMs ?? 5_000,
       )) as ModelProviderResult;
+      addUsage(result.usage);
       if (
         options?.isStructurallyValid !== undefined &&
         !options.isStructurallyValid(result.output)
@@ -119,11 +133,12 @@ export const createModelGateway = ({
           () => provider.invoke(repairTask),
           options.timeoutMs ?? 5_000,
         )) as ModelProviderResult;
+        addUsage(result.usage);
       }
       outcome = {
         status: "succeeded",
         output: result.output,
-        usage: result.usage,
+        usage,
       };
     } catch (error) {
       outcome = {
@@ -135,6 +150,7 @@ export const createModelGateway = ({
               ? "timeout"
               : "unavailable",
         reason: error instanceof Error ? error.message : "Model invocation failed.",
+        usage,
       };
     }
     const completed = Date.now();
@@ -245,10 +261,7 @@ export const modelCallRecordFrom = ({
     startedAt: execution.startedAt,
     completedAt: execution.completedAt,
     durationMs: execution.durationMs,
-    usage:
-      execution.outcome.status === "succeeded"
-        ? execution.outcome.usage
-        : null,
+    usage: execution.outcome.usage,
     retryCount: execution.retryCount,
     fallbackOutcome,
     validation,
