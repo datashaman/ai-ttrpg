@@ -9,29 +9,12 @@ import {
   type EventStore,
   type StructuredPlayOptions,
 } from "../src/structured-play.js";
-import {
-  runStructuredPlay,
-  type StructuredPlayIO,
-} from "../src/structured-play-runner.js";
+import { runStructuredPlay } from "../src/structured-play-runner.js";
 import {
   COLLAPSING_GATE_ACTION,
   enterConfrontation,
 } from "./support/confrontation-fixture.js";
-
-const scriptedIO = (answers: readonly string[]) => {
-  const remainingAnswers = [...answers];
-  const output: string[] = [];
-  const io: StructuredPlayIO = {
-    read: async (prompt) => {
-      output.push(prompt);
-      const answer = remainingAnswers.shift();
-      if (answer === undefined) throw new Error("Scripted input exhausted.");
-      return answer;
-    },
-    write: (text) => output.push(text),
-  };
-  return { io, output };
-};
+import { scriptedIO } from "./support/scripted-io.js";
 
 type ConfrontationApplicationOptions = Omit<
   StructuredPlayOptions,

@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import { createInMemoryEventStore } from "./in-memory-event-store.js";
 import {
+  DEFAULT_ADVENTURE_ENDINGS,
   DEFAULT_CHECK_ACTIONS,
   DEFAULT_CONFRONTATION,
+  DEFAULT_FREE_ACTIONS,
   DEFAULT_ORACLE_ACTIONS,
   DEFAULT_SCENE_TRANSITIONS,
   FRESH_FOOTPRINTS,
@@ -282,7 +284,22 @@ export interface GameState {
   readonly lastOracleResolution: OracleResolution | null;
   readonly resolvedPropositionIds: readonly string[];
   readonly resolvedCheckActionIds: readonly string[];
+  readonly resolvedFreeActionIds: readonly string[];
+  readonly adventureEnding: AdventureEnding | null;
 }
+
+export interface AdventureEnding {
+  readonly id: string;
+  readonly kind: "favourable" | "adverse" | "unresolved";
+  readonly text: string;
+}
+
+const endingAdverb = (kind: AdventureEnding["kind"]): string =>
+  kind === "favourable"
+    ? "favourably"
+    : kind === "adverse"
+      ? "adversely"
+      : "unresolved";
 
 interface EventEnvelope<EventType extends string, Payload> {
   readonly id: string;
@@ -308,8 +325,12 @@ interface EventPayloads {
     readonly definition: ConfrontationDefinition;
   };
   readonly FreeActionCompleted: {
-    readonly actionId: "survey-manor";
+    readonly actionId: string;
     readonly establishedFact: EstablishedFact;
+  };
+  readonly AdventureEnded: {
+    readonly from: Scene;
+    readonly ending: AdventureEnding;
   };
   readonly CheckProposalCreated: { readonly proposal: CheckProposal };
   readonly CheckProposalReplaced: {
@@ -425,6 +446,7 @@ export interface SceneTransitionDefinition {
   readonly from: Scene;
   readonly to: Scene;
   readonly requiredFactIds: readonly string[];
+  readonly automatic?: boolean;
 }
 
 export type StructuredPlayInput =
@@ -443,10 +465,31 @@ export type StructuredPlayInput =
   | TransitionScene;
 
 export interface FreeAction {
-  readonly id: "survey-manor";
-  readonly label: "Survey the manor grounds";
+  readonly id: string;
+  readonly label: string;
   readonly kind: "Free Action";
 }
+
+export interface FreeActionDefinition extends FreeAction {
+  readonly establishedFact: EstablishedFact;
+  readonly availableInScenes: readonly Scene[];
+  readonly requiredFactIds: readonly string[];
+}
+
+export interface AdventureEndingDefinition {
+  readonly from: Scene;
+  readonly requiredFactIds: readonly string[];
+  readonly ending: AdventureEnding;
+}
+
+const SURVEY_MANOR_ACTION: FreeActionDefinition = {
+  id: "survey-manor",
+  label: "Survey the manor grounds",
+  kind: "Free Action",
+  establishedFact: FRESH_FOOTPRINTS,
+  availableInScenes: ["arrival"],
+  requiredFactIds: [],
+};
 
 export interface CheckAction {
   readonly id: string;
@@ -551,6 +594,8 @@ export interface StructuredPlayOptions {
   readonly oracleActions?: readonly OracleActionDefinition[];
   readonly sceneTransitions?: readonly SceneTransitionDefinition[];
   readonly confrontation?: ConfrontationDefinition;
+  readonly freeActions?: readonly FreeActionDefinition[];
+  readonly adventureEndings?: readonly AdventureEndingDefinition[];
 }
 
 const STARTING_INVENTORY: readonly InventoryItem[] = [
@@ -573,6 +618,8 @@ const initialState = (): GameState => ({
   lastOracleResolution: null,
   resolvedPropositionIds: [],
   resolvedCheckActionIds: [],
+  resolvedFreeActionIds: [],
+  adventureEnding: null,
 });
 
 const isTrait = (value: unknown): value is Trait =>
@@ -801,6 +848,41 @@ const validateOracleAction = (action: OracleActionDefinition): void => {
   }
 };
 
+const validateFreeAction = (action: FreeActionDefinition): void => {
+  if (
+    action.id.trim() === "" ||
+    action.label.trim() === "" ||
+    action.kind !== "Free Action" ||
+    !validateEstablishedFact(action.establishedFact) ||
+    action.availableInScenes.length === 0 ||
+    new Set(action.availableInScenes).size !== action.availableInScenes.length ||
+    new Set(action.requiredFactIds).size !== action.requiredFactIds.length ||
+    action.requiredFactIds.some((factId) => factId.trim() === "")
+  ) {
+    throw new Error(`Invalid Free Action definition: ${action.id || "<unknown>"}.`);
+  }
+};
+
+const validateAdventureEnding = (
+  definition: AdventureEndingDefinition,
+): void => {
+  if (
+    definition.requiredFactIds.length === 0 ||
+    new Set(definition.requiredFactIds).size !==
+      definition.requiredFactIds.length ||
+    definition.requiredFactIds.some((factId) => factId.trim() === "") ||
+    definition.ending.id.trim() === "" ||
+    definition.ending.text.trim() === "" ||
+    !["favourable", "adverse", "unresolved"].includes(
+      definition.ending.kind,
+    )
+  ) {
+    throw new Error(
+      `Invalid Adventure ending definition: ${definition.ending.id || "<unknown>"}.`,
+    );
+  }
+};
+
 const validateSceneTransition = (
   transition: SceneTransitionDefinition,
 ): void => {
@@ -810,7 +892,9 @@ const validateSceneTransition = (
     transition.requiredFactIds.length === 0 ||
     new Set(transition.requiredFactIds).size !==
       transition.requiredFactIds.length ||
-    transition.requiredFactIds.some((factId) => factId.trim() === "")
+    transition.requiredFactIds.some((factId) => factId.trim() === "") ||
+    (transition.automatic !== undefined &&
+      typeof transition.automatic !== "boolean")
   ) {
     throw new Error(
       `Invalid Scene transition definition: ${transition.from} -> ${transition.to}.`,
@@ -818,14 +902,20 @@ const validateSceneTransition = (
   }
 };
 
+const requiredFactsAreEstablished = (
+  requiredFactIds: readonly string[],
+  state: GameState,
+): boolean =>
+  requiredFactIds.every((factId) =>
+    state.establishedFacts.some((fact) => fact.id === factId),
+  );
+
 const transitionIsSatisfied = (
   transition: SceneTransitionDefinition,
   state: GameState,
 ): boolean =>
   transition.from === state.activeScene &&
-  transition.requiredFactIds.every((factId) =>
-    state.establishedFacts.some((fact) => fact.id === factId),
-  );
+  requiredFactsAreEstablished(transition.requiredFactIds, state);
 
 const checkActionRejectionCode = (
   action: CheckActionDefinition,
@@ -858,6 +948,7 @@ const availableActionsFor = (
   checkActions: readonly CheckActionDefinition[],
   oracleActions: readonly OracleActionDefinition[],
   sceneTransitions: readonly SceneTransitionDefinition[],
+  freeActions: readonly FreeActionDefinition[],
 ): readonly AvailableAction[] => {
   if (
     state.activeScene === null ||
@@ -874,9 +965,9 @@ const availableActionsFor = (
     !state.establishedFacts.some((fact) => fact.id === FRESH_FOOTPRINTS.id)
   ) {
     actions.push({
-      id: "survey-manor",
-      label: "Survey the manor grounds",
-      kind: "Free Action",
+      id: SURVEY_MANOR_ACTION.id,
+      label: SURVEY_MANOR_ACTION.label,
+      kind: SURVEY_MANOR_ACTION.kind,
     });
   }
   actions.push(
@@ -894,13 +985,22 @@ const availableActionsFor = (
             !state.resolvedPropositionIds.includes(action.proposition.id),
         )
         .filter((action) =>
-          action.supportingFactIds.every((factId) =>
-            state.establishedFacts.some((fact) => fact.id === factId),
-          ),
+          requiredFactsAreEstablished(action.supportingFactIds, state),
         )
         .map(({ id, label, kind }) => ({ id, label, kind })),
     );
   }
+  actions.push(
+    ...freeActions
+      .filter(
+        (action) =>
+          !state.resolvedFreeActionIds.includes(action.id) &&
+          state.activeScene !== null &&
+          action.availableInScenes.includes(state.activeScene) &&
+          requiredFactsAreEstablished(action.requiredFactIds, state),
+      )
+      .map(({ id, label, kind }) => ({ id, label, kind })),
+  );
   const playerCharacter = state.playerCharacter;
   if (
     playerCharacter !== null &&
@@ -1052,9 +1152,25 @@ const project = (events: readonly CanonicalEvent[]): GameState =>
           },
         };
       case "FreeActionCompleted":
-        return applyConsequences(state, [
-          { type: "establish-fact", fact: event.payload.establishedFact },
-        ]);
+        return {
+          ...applyConsequences(state, [
+            { type: "establish-fact", fact: event.payload.establishedFact },
+          ]),
+          resolvedFreeActionIds: state.resolvedFreeActionIds.includes(
+            event.payload.actionId,
+          )
+            ? state.resolvedFreeActionIds
+            : [...state.resolvedFreeActionIds, event.payload.actionId],
+        };
+      case "AdventureEnded":
+        return {
+          ...state,
+          activeScene: null,
+          adventureEnding: event.payload.ending,
+          conditions: state.conditions.filter(
+            (condition) => condition !== "Shaken",
+          ),
+        };
       case "CheckProposalCreated":
         return { ...state, pendingCheckProposal: event.payload.proposal };
       case "CheckProposalReplaced":
@@ -1250,9 +1366,14 @@ export const createStructuredPlayApplication = (
   const sceneTransitions =
     options.sceneTransitions ?? DEFAULT_SCENE_TRANSITIONS;
   const confrontation = options.confrontation ?? DEFAULT_CONFRONTATION;
+  const freeActions = options.freeActions ?? DEFAULT_FREE_ACTIONS;
+  const adventureEndings =
+    options.adventureEndings ?? DEFAULT_ADVENTURE_ENDINGS;
   checkActions.forEach(validateCheckAction);
   oracleActions.forEach(validateOracleAction);
   sceneTransitions.forEach(validateSceneTransition);
+  freeActions.forEach(validateFreeAction);
+  adventureEndings.forEach(validateAdventureEnding);
   validateConfrontation(confrontation);
   const checkEstablishedFactIds = new Set(
     checkActions.flatMap((action) =>
@@ -1285,6 +1406,7 @@ export const createStructuredPlayApplication = (
         checkActions,
         oracleActions,
         sceneTransitions,
+        freeActions,
       ),
     };
   };
@@ -1303,6 +1425,7 @@ export const createStructuredPlayApplication = (
       checkActions,
       oracleActions,
       sceneTransitions,
+      freeActions,
     ),
     appendedEvents: [],
   });
@@ -1336,6 +1459,7 @@ export const createStructuredPlayApplication = (
         checkActions,
         oracleActions,
         sceneTransitions,
+        freeActions,
       ),
       appendedEvents,
     };
@@ -1360,6 +1484,103 @@ export const createStructuredPlayApplication = (
     return accept(
       `The Narrator recommends ${recommendation.likelihood}; the Player must confirm or change it before rolling.`,
       [event],
+    );
+  };
+
+  const commitSatisfiedAdventureEnding = (
+    from: Scene,
+    commandId: string,
+    appendedEvents: CanonicalEvent[],
+  ): AdventureEnding | null => {
+    const state = project(eventStore.readAll());
+    const definition = adventureEndings.find(
+      (candidate) =>
+        candidate.from === from &&
+        requiredFactsAreEstablished(candidate.requiredFactIds, state),
+    );
+    if (definition === undefined) return null;
+    appendedEvents.push(
+      append(
+        "AdventureEnded",
+        { from, ending: definition.ending },
+        commandId,
+      ),
+    );
+    return definition.ending;
+  };
+
+  const commitSatisfiedAutomaticTransition = (
+    from: Scene,
+    commandId: string,
+    appendedEvents: CanonicalEvent[],
+  ): Scene | null => {
+    const state = project(eventStore.readAll());
+    const transition = sceneTransitions.find(
+      (candidate) =>
+        candidate.automatic === true &&
+        candidate.from === from &&
+        requiredFactsAreEstablished(candidate.requiredFactIds, state),
+    );
+    if (transition === undefined) return null;
+    appendedEvents.push(
+      append(
+        "SceneTransitioned",
+        { from, to: transition.to },
+        commandId,
+      ),
+    );
+    if (transition.to === "confrontation") {
+      appendedEvents.push(
+        append("ConfrontationStarted", { definition: confrontation }, commandId),
+      );
+    }
+    return transition.to;
+  };
+
+  const commitSatisfiedSceneExit = (
+    from: Scene,
+    commandId: string,
+    appendedEvents: CanonicalEvent[],
+  ): {
+    readonly ending: AdventureEnding | null;
+    readonly nextScene: Scene | null;
+  } => {
+    const ending = commitSatisfiedAdventureEnding(
+      from,
+      commandId,
+      appendedEvents,
+    );
+    return {
+      ending,
+      nextScene:
+        ending === null
+          ? commitSatisfiedAutomaticTransition(from, commandId, appendedEvents)
+          : null,
+    };
+  };
+
+  const commitFreeAction = (
+    definition: FreeActionDefinition,
+    from: Scene,
+    commandId: string,
+  ): AcceptedResult => {
+    const event = append(
+      "FreeActionCompleted",
+      {
+        actionId: definition.id,
+        establishedFact: definition.establishedFact,
+      },
+      commandId,
+    );
+    const appendedEvents: CanonicalEvent[] = [event];
+    const sceneExit = commitSatisfiedSceneExit(
+      from,
+      commandId,
+      appendedEvents,
+    );
+    return accept(
+      `${definition.establishedFact.text}${sceneExit.ending === null ? "" : ` The Adventure ends ${endingAdverb(sceneExit.ending.kind)}: ${sceneExit.ending.text}`}${sceneExit.nextScene === null ? "" : ` The ${from} Scene ends and ${sceneExit.nextScene} begins.`}`,
+      appendedEvents,
     );
   };
 
@@ -1494,9 +1715,15 @@ export const createStructuredPlayApplication = (
           },
         };
         const event = append("OracleAnswered", resolution, commandId);
+        const appendedEvents: CanonicalEvent[] = [event];
+        const sceneExit = commitSatisfiedSceneExit(
+          state.activeScene!,
+          commandId,
+          appendedEvents,
+        );
         return accept(
-          `${answer} (${roll} <= ${yesThreshold}): ${establishedFact.text}`,
-          [event],
+          `${answer} (${roll} <= ${yesThreshold}): ${establishedFact.text}${sceneExit.ending === null ? "" : ` The Adventure ends ${endingAdverb(sceneExit.ending.kind)}: ${sceneExit.ending.text}`}${sceneExit.nextScene === null ? "" : ` The ${state.activeScene} Scene ends and ${sceneExit.nextScene} begins.`}`,
+          appendedEvents,
         );
       }
 
@@ -1612,6 +1839,7 @@ export const createStructuredPlayApplication = (
         const resolvedState = project(eventStore.readAll());
         const activeConfrontation = resolvedState.confrontation;
         let confrontationEnding: ConfrontationEnding | null = null;
+        let adventureEnding: AdventureEnding | null = null;
         if (
           activeConfrontation?.status === "active" &&
           resolvedState.playerCharacter?.health === 0
@@ -1661,9 +1889,25 @@ export const createStructuredPlayApplication = (
               commandId,
             ),
           );
+          if (confrontationEnding.kind === "victory") {
+            adventureEnding = commitSatisfiedAdventureEnding(
+              "confrontation",
+              commandId,
+              appendedEvents,
+            );
+          }
         }
+        const sceneExit =
+          confrontationEnding === null && state.activeScene !== null
+            ? commitSatisfiedSceneExit(
+                state.activeScene,
+                commandId,
+                appendedEvents,
+              )
+            : { ending: null, nextScene: null };
+        adventureEnding ??= sceneExit.ending;
         return accept(
-          `${outcome} (${adjustedTotal}): ${resolution.committedStake.summary}${confrontationEnding === null ? "" : ` ${confrontationEnding.establishedFact.text}`}`,
+          `${outcome} (${adjustedTotal}): ${resolution.committedStake.summary}${confrontationEnding === null ? "" : ` ${confrontationEnding.establishedFact.text}`}${adventureEnding === null ? "" : ` The Adventure ends ${endingAdverb(adventureEnding.kind)}: ${adventureEnding.text}`}${sceneExit.nextScene === null ? "" : ` The ${state.activeScene} Scene ends and ${sceneExit.nextScene} begins.`}`,
           appendedEvents,
         );
       }
@@ -1840,6 +2084,7 @@ export const createStructuredPlayApplication = (
           checkActions,
           oracleActions,
           sceneTransitions,
+          freeActions,
         ).some((action) => action.id === input.actionId);
         if (!actionIsAvailable) {
           return reject(
@@ -1849,13 +2094,16 @@ export const createStructuredPlayApplication = (
           );
         }
 
-        if (input.actionId === "survey-manor") {
-          const event = append(
-            "FreeActionCompleted",
-            { actionId: "survey-manor", establishedFact: FRESH_FOOTPRINTS },
+        const freeActionDefinition =
+          input.actionId === SURVEY_MANOR_ACTION.id
+            ? SURVEY_MANOR_ACTION
+            : freeActions.find((action) => action.id === input.actionId);
+        if (freeActionDefinition !== undefined) {
+          return commitFreeAction(
+            freeActionDefinition,
+            state.activeScene!,
             commandId,
           );
-          return accept(FRESH_FOOTPRINTS.text, [event]);
         }
 
         const oracleDefinition = oracleActions.find(
