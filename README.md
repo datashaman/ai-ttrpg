@@ -13,10 +13,19 @@ Requirements: Node.js 20 or newer.
 
 ```sh
 npm install
-npm start
+npm start -- create "The Locked Manor"
 ```
 
-Choose a name, pronouns, Motivation, and assign `0`, `1`, and `2` exactly once among Might, Wits, and Presence. The CLI then starts the arrival Scene and offers authored Free Actions and uncertain actions. An uncertain action presents its complete Check Proposal before you confirm, correct, revise, or withdraw it. A confirmed Check records and reveals `2d6 + Trait`; before the outcome commits, you may spend one Resolve for `+1` or decline. The selected predeclared stakes commit only after that Pending Choice is resolved, and the event stream can restore the exact roll and choice after interruption.
+Adventures created by the CLI are durable. They are stored in the Player's
+default application-data directory, so no storage path or language model is
+required. List them and reopen one by its displayed id:
+
+```sh
+npm start -- list
+npm start -- open <adventure-id>
+```
+
+Choose a name, pronouns, Motivation, and assign `0`, `1`, and `2` exactly once among Might, Wits, and Presence. The CLI then starts the arrival Scene and offers authored Free Actions and uncertain actions. An uncertain action presents its complete Check Proposal before you confirm, correct, revise, or withdraw it. A confirmed Check records and reveals `2d6 + Trait`; before the outcome commits, you may spend one Resolve for `+1` or decline. The selected predeclared stakes commit only after that Pending Choice is resolved. Closing and reopening the Adventure replays its durable event history to restore the same Player-visible state, after which accepted actions append to that same history.
 
 Surveying the manor establishes visible evidence for an authored Unresolved Proposition. Continue in the Scene to ask the Oracle question: the Narrator recommends a grounded Likelihood, the Player confirms or changes it, and a recorded percentile roll establishes a visible Yes or No fact. Extreme rolls attach an Exceptional Consequence without changing the answer. The recommendation, evidence, confirmation, roll, committed events, and projected fact remain inspectable in the trace. This path does not call a language model.
 
@@ -96,7 +105,7 @@ The central authority boundary is simple: the model may classify, extract, propo
 | --- | --- |
 | [Domain glossary](CONTEXT.md) | Canonical gameplay language and the boundaries between closely related concepts. |
 | [Implementation plan](docs/engine-implementation-plan.md) | Domain model, quality requirements, phased roadmap, acceptance criteria, risks, and success criteria. |
-| [v1 release report](docs/v1-release-report.md) | Automated release-gate evidence, accessibility baseline, and the remaining moderated new-Player exercise. |
+| [v1 release report](docs/v1-release-report.md) | Completed automated and moderated release-gate evidence and the terminal-accessibility baseline. |
 | [Architecture decisions](docs/adr/) | Durable decisions whose trade-offs would otherwise be difficult to reconstruct. |
 | [System architecture](docs/system-architecture.html) | Interactive component and authority-boundary diagram. |
 | [Player turn](docs/player-turn.html) | Interactive sequence showing interpretation, resolution, commit, projection, and narration. |
