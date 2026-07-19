@@ -12,6 +12,7 @@ import {
 import {
   createModelGateway,
   createScriptedModelProvider,
+  type ModelProvider,
 } from "../src/model-gateway.js";
 import { createStructuredPlayApplication } from "../src/structured-play.js";
 import { scriptedIO } from "./support/scripted-io.js";
@@ -93,6 +94,48 @@ test("explicit Natural Language mode offers Structured Play when no provider is 
   assert.equal(repository.list()[0]?.eventCount, 3);
 });
 
+test("configured model deadline reaches Natural Language Play through the CLI", async () => {
+  const repository = createInMemoryAdventureRepository();
+  const adventure = repository.create("The Locked Manor");
+  const app = createStructuredPlayApplication({
+    timelineStore: adventure.timelineStore,
+  });
+  app.submit({
+    type: "configure-player-character",
+    name: "Mara Vey",
+    pronouns: "she/her",
+    motivation: "Find her missing sister",
+    traits: { Might: 0, Wits: 2, Presence: 1 },
+  });
+  app.submit({ type: "begin-adventure" });
+  const adventureId = adventure.id;
+  adventure.close();
+  const provider: ModelProvider = {
+    provider: "delayed-scripted",
+    model: "deadline-v1",
+    invoke: () =>
+      new Promise((_resolve, reject) =>
+        setTimeout(() => reject(new Error("late provider failure")), 50),
+      ),
+  };
+  const script = scriptedIO(["Inspect the entryway.", "x"]);
+
+  await runAdventureCli(
+    ["--mode", "natural-language", "open", adventureId],
+    script.io,
+    repository,
+    {
+      runToAdventureEnd: false,
+      modelRuntime: {
+        modelGateway: createModelGateway({ provider }),
+        timeoutMs: 1,
+      },
+    },
+  );
+
+  assert.match(script.output.join(""), /Model interpretation timed out/);
+});
+
 test("Player switches from ambiguous Natural Language Play to Structured Play without a mode-change event", async () => {
   const repository = createInMemoryAdventureRepository();
   const adventure = repository.create("The Locked Manor");
@@ -126,7 +169,10 @@ test("Player switches from ambiguous Natural Language Play to Structured Play wi
     repository,
     {
       runToAdventureEnd: false,
-      modelGateway: createModelGateway({ provider }),
+      modelRuntime: {
+        modelGateway: createModelGateway({ provider }),
+        timeoutMs: 5_000,
+      },
     },
   );
 

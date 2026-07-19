@@ -5,7 +5,7 @@ import type {
   OpenAdventure,
 } from "./adventure-repository.js";
 import { retainedNarrationText } from "./grounded-narration.js";
-import type { ModelGateway } from "./model-gateway.js";
+import type { ModelRuntime } from "./model-runtime.js";
 import {
   runNaturalLanguagePlay,
   writeStructuredPlayChoices,
@@ -18,7 +18,7 @@ import {
 
 export interface AdventureCliOptions {
   readonly runToAdventureEnd?: boolean;
-  readonly modelGateway?: ModelGateway;
+  readonly modelRuntime?: ModelRuntime;
 }
 
 const usage =
@@ -64,14 +64,14 @@ const runModeSession = async (
   adventure: OpenAdventure,
   io: StructuredPlayIO,
   initialMode: InputMode,
-  modelGateway: ModelGateway | undefined,
+  modelRuntime: ModelRuntime | undefined,
 ): Promise<void> => {
   let mode = initialMode;
   let structuredChoice: string | undefined;
   const modelCallStore = adventure.modelCallStore;
   while (true) {
     if (mode === "natural-language") {
-      if (modelGateway === undefined) {
+      if (modelRuntime === undefined) {
         io.write(
           "Natural Language Play is unavailable because no model provider is configured. Structured Play remains available.\n",
         );
@@ -84,9 +84,11 @@ const runModeSession = async (
       } else {
         await runNaturalLanguagePlay({
           io,
-          modelGateway,
+          modelGateway: modelRuntime.modelGateway,
           modelCallStore,
           timelineStore: adventure.timelineStore,
+          interpretationTimeoutMs: modelRuntime.timeoutMs,
+          narrationTimeoutMs: modelRuntime.timeoutMs,
         });
       }
     } else {
@@ -125,7 +127,7 @@ const playAdventure = async (
   io: StructuredPlayIO,
   runToAdventureEnd: boolean,
   explicitMode: InputMode | null,
-  modelGateway: ModelGateway | undefined,
+  modelRuntime: ModelRuntime | undefined,
 ): Promise<void> => {
   try {
     const retainedNarration = retainedNarrationText(
@@ -140,7 +142,12 @@ const playAdventure = async (
       io.write("\n");
     }
     if (explicitMode !== null) {
-      await runModeSession(adventure, io, explicitMode, modelGateway);
+      await runModeSession(
+        adventure,
+        io,
+        explicitMode,
+        modelRuntime,
+      );
       return;
     }
     await runStructuredPlay({
@@ -148,6 +155,12 @@ const playAdventure = async (
       timelineStore: adventure.timelineStore,
       modelCallStore: adventure.modelCallStore,
       runToAdventureEnd,
+      ...(modelRuntime === undefined
+        ? {}
+        : {
+            modelGateway: modelRuntime.modelGateway,
+            narrationTimeoutMs: modelRuntime.timeoutMs,
+          }),
     });
   } finally {
     adventure.close();
@@ -160,7 +173,7 @@ export const runAdventureCli = async (
   repository: AdventureRepository,
   {
     runToAdventureEnd = true,
-    modelGateway,
+    modelRuntime,
   }: AdventureCliOptions = {},
 ): Promise<void> => {
   const explicitMode: InputMode | null =
@@ -203,7 +216,7 @@ export const runAdventureCli = async (
       io,
       runToAdventureEnd,
       explicitMode,
-      modelGateway,
+      modelRuntime,
     );
     return;
   }
@@ -216,7 +229,7 @@ export const runAdventureCli = async (
       io,
       runToAdventureEnd,
       explicitMode,
-      modelGateway,
+      modelRuntime,
     );
     return;
   }

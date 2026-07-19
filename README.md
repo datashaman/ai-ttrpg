@@ -60,6 +60,47 @@ npm test
 npm run typecheck
 ```
 
+## OpenAI-backed Natural Language Play
+
+Structured Play remains the default and works offline. To enable the explicit
+Natural Language Play mode with the OpenAI adapter, create an ignored
+`.env.local` file at the repository root:
+
+```dotenv
+AI_TTRPG_MODEL_PROVIDER=openai
+OPENAI_MODEL=gpt-5.6
+OPENAI_API_KEY=your-project-api-key
+AI_TTRPG_MODEL_TIMEOUT_MS=5000
+```
+
+Then start or reopen an Adventure in Natural Language Play:
+
+```sh
+npm start -- --mode natural-language create "The Locked Manor"
+npm start -- --mode natural-language open <adventure-id>
+```
+
+Provider, model, credentials, and deadline are runtime configuration; they are
+not Adventure state. If any required setting is missing or the deadline is not
+a positive integer, Natural Language Play is unavailable and the CLI offers
+Structured Play. Raw diagnostic capture is disabled by default. To explicitly
+capture redacted local Model Task diagnostics, set
+`AI_TTRPG_MODEL_DIAGNOSTIC_PATH` to a writable local JSONL path. Never commit
+that file.
+
+The adapter uses the stateless [Responses API](https://platform.openai.com/docs/api-reference/responses/create)
+with `store: false` and task-specific [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
+It sends no `previous_response_id`; each request contains only explicit Model
+Task input and one Evidence Bundle.
+
+Required tests use scripted or local HTTP adapters and make no paid calls. After
+setting the runtime variables above, the separately opt-in real-provider smoke
+test is:
+
+```sh
+npm run test:openai-smoke
+```
+
 ## Goals
 
 - Support multiple game systems through replaceable, versioned rulesets.
