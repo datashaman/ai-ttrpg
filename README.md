@@ -96,6 +96,7 @@ The central authority boundary is simple: the model may classify, extract, propo
 | --- | --- |
 | [Domain glossary](CONTEXT.md) | Canonical gameplay language and the boundaries between closely related concepts. |
 | [Implementation plan](docs/engine-implementation-plan.md) | Domain model, quality requirements, phased roadmap, acceptance criteria, risks, and success criteria. |
+| [v1 release report](docs/v1-release-report.md) | Automated release-gate evidence, accessibility baseline, and the remaining moderated new-Player exercise. |
 | [Architecture decisions](docs/adr/) | Durable decisions whose trade-offs would otherwise be difficult to reconstruct. |
 | [System architecture](docs/system-architecture.html) | Interactive component and authority-boundary diagram. |
 | [Player turn](docs/player-turn.html) | Interactive sequence showing interpretation, resolution, commit, projection, and narration. |

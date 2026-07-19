@@ -66,6 +66,68 @@ test("invalid rating is explained and reprompted without an invalid setup event"
   );
 });
 
+test("a new Player can recover from invalid setup and complete without external documentation", async () => {
+  const eventStore = createInMemoryEventStore();
+  const script = scriptedIO([
+    "Mara Vey",
+    "she/her",
+    "Find her missing sister",
+    "0",
+    "0",
+    "0",
+    "Mara Vey",
+    "she/her",
+    "Find her missing sister",
+    "0",
+    "2",
+    "1",
+    "1",
+    "6",
+  ]);
+
+  const ended = await runStructuredPlay({
+    io: script.io,
+    eventStore,
+    runToAdventureEnd: true,
+  });
+
+  const output = script.output.join("");
+  assert.match(output, /Create your Player Character/);
+  assert.match(output, /Assign 0, 1, and 2 exactly once/);
+  assert.match(output, /Assign \+0, \+1, and \+2 exactly once/);
+  assert.equal(
+    output.match(/Player Character name:/g)?.length,
+    2,
+  );
+  assert.equal(ended.state.adventureEnding?.kind, "unresolved");
+});
+
+test("core text play exposes a linear keyboard and screen-reader-friendly contract", async () => {
+  const script = scriptedIO([
+    "Mara Vey",
+    "she/her",
+    "Find her missing sister",
+    "0",
+    "2",
+    "1",
+    "1",
+    "6",
+  ]);
+
+  await runStructuredPlay({ io: script.io, runToAdventureEnd: true });
+
+  const output = script.output.join("");
+  assert.match(output, /Player Character name:/);
+  assert.match(output, /Might rating \(0, 1, or 2\):/);
+  assert.match(output, /1\. Survey the manor grounds \[Free Action\]/);
+  assert.match(output, /Choose an action:/);
+  assert.match(output, /Adventure ends unresolved/);
+  assert.doesNotMatch(output, /Committed events:|Current state:|Resulting state:/);
+  assert.doesNotMatch(output, /"streamId"|"correlationId"|"pendingChoice"/);
+  assert.doesNotMatch(output, /\u001b\[[0-?]*[ -/]*[@-~]/);
+  assert.doesNotMatch(output, /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/);
+});
+
 for (const example of [
   { seed: 1, outcome: "Setback" },
   { seed: 5, outcome: "Success with Cost" },
@@ -100,10 +162,12 @@ for (const example of [
     assert.match(transcript, /micro-ruleset\.check@1\.0\.0/);
     assert.match(transcript, /Random inputs:/);
     assert.match(transcript, /Spend 1 Resolve \(s\) or decline \(d\)/);
-    assert.match(transcript, /Committed events:\n\[/);
-    assert.match(transcript, /"type": "CheckRollRevealed"/);
-    assert.match(transcript, /"type": "CheckResolved"/);
-    assert.match(transcript, /"sequence": 5/);
+    assert.doesNotMatch(transcript, /Committed events:|Resulting state:/);
+    assert.deepEqual(
+      eventStore.readAll().slice(-2).map((event) => event.type),
+      ["CheckRollRevealed", "CheckResolved"],
+    );
+    assert.equal(eventStore.readAll().at(-1)?.sequence, 5);
     assert.equal(view.state.lastCheckResolution?.outcome, example.outcome);
   });
 }
@@ -366,8 +430,11 @@ test("scripted Structured Play visibly establishes a seeded Oracle answer after 
   assert.match(transcript, /micro-ruleset\.oracle@1\.0\.0/);
   assert.match(transcript, /Percentile roll: 30/);
   assert.match(transcript, /No one is currently inside the manor\./);
-  assert.match(transcript, /"type": "NarratorLikelihoodRecommended"/);
-  assert.match(transcript, /"type": "OracleAnswered"/);
+  assert.doesNotMatch(transcript, /Committed events:|Resulting state:/);
+  assert.deepEqual(
+    eventStore.readAll().slice(-2).map((event) => event.type),
+    ["NarratorLikelihoodRecommended", "OracleAnswered"],
+  );
   assert.equal(view.state.lastOracleResolution?.trace.result.answer, "No");
   assert.equal(
     view.state.lastOracleResolution?.trace.confirmedLikelihood,
