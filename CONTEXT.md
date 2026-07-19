@@ -9,7 +9,7 @@ A play mode with one human **Player** and no human **Game Master**. The system f
 _Avoid_: AI GM, single-player mode
 
 **Structured Play**:
-A Solo Play input mode in which the Player chooses authored actions, Oracle questions, targets, and other available options without language-model interpretation. It resolves through the same game rules and may present outcomes as mechanical summaries.
+A Solo Play input mode in which the Player chooses authored actions, Oracle questions, targets, and other available options without language-model interpretation. When interpretation is unavailable, invalid, over budget, or ambiguous, the Player may continue by making an explicit Structured Play choice; the system never guesses a choice from the failed utterance.
 _Avoid_: fallback parser, debug mode, menu mode
 
 **Player**:
@@ -128,6 +128,10 @@ _Avoid_: critical success, critical failure
 The presenter of established game facts and outcomes. A Narrator does not determine whether an uncertain proposition is true.
 _Avoid_: Game Master, Oracle
 
+**Narration**:
+Player-facing prose that presents Established Facts and accepted outcomes with attributable evidence. Narration may vary in wording and tone, but displaying it does not establish new game truth.
+_Avoid_: event, canon, ruling
+
 **Unresolved Proposition**:
 A question about the game world that has no answer yet. It becomes an Established Fact only when play makes the answer relevant and the Oracle resolves it.
 _Avoid_: secret, hidden fact, unknown fact
@@ -135,6 +139,18 @@ _Avoid_: secret, hidden fact, unknown fact
 **Established Fact**:
 A proposition about the game world whose truth has been determined. In the first Adventure, Established Facts are visible to the Player rather than held as privileged Game Master knowledge.
 _Avoid_: lore, canon, hidden fact
+
+**Evidence Bundle**:
+An immutable, task-specific collection of Player-visible source items supplied to a model, each identified by its source and inclusion reason. An Evidence Bundle may include Established Facts, rules, entities, and accepted events, but is not itself game truth and cannot authorize a state change.
+_Avoid_: prompt context, model memory, truth
+
+**Model Call Record**:
+An operational audit record of one model task, including its provider, model, prompt version, Evidence Bundle references and hashes, timing, usage, validation, retries, fallback result, and validated output. A Model Call Record may retain Narration for stable display and correlate with accepted commands and events, but raw provider payloads are diagnostic data rather than default record content; the record is not part of a Timeline and cannot rebuild game state.
+_Avoid_: canonical event, Adventure history, model memory
+
+**Model Task**:
+One stateless request for interpretation, rules explanation, or narration, containing explicit task input and one Evidence Bundle. A Model Task has no provider-managed conversational memory and cannot directly establish game truth.
+_Avoid_: chat session, agent turn, conversation memory
 
 **Micro-ruleset**:
 The original, intentionally small ruleset used to prove the first playable experience. It resolves uncertain actions with 2d6 plus a relevant trait and distinguishes a Setback, Success with Cost, and Clean Success.
@@ -177,6 +193,30 @@ _Avoid_: critical success, full success
 > **Developer:** Is the witness secretly a cult member before the Player investigates?
 >
 > **Domain expert:** No—the witness's allegiance is an Unresolved Proposition. It becomes an Established Fact when play requires the Oracle to answer it.
+>
+> **Developer:** The Evidence Bundle includes a rule and an Established Fact. Can the model commit the rule's effect or treat the bundle as new game truth?
+>
+> **Domain expert:** No. The Evidence Bundle only attributes the sources available for one model task. Established Facts and accepted events remain authoritative, and application code still validates and commits any resulting command.
+>
+> **Developer:** Should the model's full request and response be appended to the Timeline for auditing?
+>
+> **Domain expert:** No. Store them in a Model Call Record correlated with any resulting command and events. The Timeline remains the replayable history of accepted game truth.
+>
+> **Developer:** Can the provider remember earlier turns so the Narrator stays consistent?
+>
+> **Domain expert:** No. Each Model Task receives the relevant Evidence Bundle explicitly. Continuity comes from accepted events and projected game state, not hidden provider memory.
+>
+> **Developer:** The Narration says the witness fears the cult, but no cited evidence establishes that. Is the witness now afraid?
+>
+> **Domain expert:** No. Narration cannot establish a fact. Reject unsupported narration and use the deterministic presentation instead.
+>
+> **Developer:** When an Adventure is reopened after changing providers, should earlier Narration be generated again?
+>
+> **Domain expert:** No. Reuse the validated Narration retained in its Model Call Record. Replaying the Timeline remains independent of that presentation record.
+>
+> **Developer:** Does auditing require every raw provider prompt and response to be saved?
+>
+> **Domain expert:** No. A Model Call Record keeps attributable metadata and validated output. Raw payload capture is an explicit, local diagnostic choice and is never part of an Adventure export.
 >
 > **Developer:** The Player is highly persuasive, so is the witness being a cult member Likely?
 >
