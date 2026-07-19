@@ -4,6 +4,7 @@ import { createInMemoryEventStore } from "./in-memory-event-store.js";
 import {
   DEFAULT_CHECK_ACTIONS,
   DEFAULT_ORACLE_ACTIONS,
+  DEFAULT_SCENE_TRANSITIONS,
   FRESH_FOOTPRINTS,
 } from "./locked-manor-content.js";
 import {
@@ -21,6 +22,20 @@ export type Likelihood = "Unlikely" | "Even" | "Likely";
 export type OracleAnswer = "Yes" | "No";
 export type Health = 0 | 1 | 2 | 3;
 export type Resolve = 0 | 1 | 2 | 3;
+export type Resource = "Health" | "Resolve";
+export type Scene = "arrival" | "discovery" | "confrontation";
+export type Condition = "Shaken" | "Restrained";
+export type InventoryItemName =
+  | "Lantern"
+  | "Lockpick Set"
+  | "Short Blade"
+  | "Field Kit";
+export type InventoryItemState = "carried" | "removed";
+
+export interface InventoryItem {
+  readonly name: InventoryItemName;
+  readonly state: InventoryItemState;
+}
 
 export type TraitRatings = Readonly<Record<Trait, 0 | 1 | 2>>;
 
@@ -87,18 +102,35 @@ export interface PlayerCharacter {
   readonly traits: TraitRatings;
   readonly health: Health;
   readonly resolve: Resolve;
-  readonly inventory: readonly [
-    "Lantern",
-    "Lockpick Set",
-    "Short Blade",
-    "Field Kit",
-  ];
+  readonly inventory: readonly InventoryItem[];
 }
 
-export interface MechanicalEffect {
+export interface LoseHealthEffect {
   readonly type: "lose-health";
   readonly amount: 1;
 }
+
+export interface RemoveInventoryItemEffect {
+  readonly type: "remove-inventory-item";
+  readonly item: InventoryItemName;
+  readonly reason: "loss" | "breakage" | "surrender" | "consumption";
+}
+
+export interface AddConditionEffect {
+  readonly type: "add-condition";
+  readonly condition: Condition;
+}
+
+export interface RemoveConditionEffect {
+  readonly type: "remove-condition";
+  readonly condition: "Restrained";
+}
+
+export type MechanicalEffect =
+  | LoseHealthEffect
+  | RemoveInventoryItemEffect
+  | AddConditionEffect
+  | RemoveConditionEffect;
 
 export interface FictionalConsequence {
   readonly type: "establish-fact";
@@ -170,6 +202,7 @@ export interface CheckTrace extends CheckRollEvidence {
 
 export interface CheckResolution {
   readonly proposalId: string;
+  readonly actionId: string;
   readonly pendingChoiceId: string;
   readonly goal: string;
   readonly trait: Trait;
@@ -193,7 +226,8 @@ export interface PendingChoice {
 
 export interface GameState {
   readonly playerCharacter: PlayerCharacter | null;
-  readonly activeScene: "arrival" | null;
+  readonly activeScene: Scene | null;
+  readonly conditions: readonly Condition[];
   readonly establishedFacts: readonly EstablishedFact[];
   readonly pendingCheckProposal: CheckProposal | null;
   readonly pendingChoice: PendingChoice | null;
@@ -201,6 +235,7 @@ export interface GameState {
   readonly pendingNarratorRecommendation: NarratorLikelihoodRecommendation | null;
   readonly lastOracleResolution: OracleResolution | null;
   readonly resolvedPropositionIds: readonly string[];
+  readonly resolvedCheckActionIds: readonly string[];
 }
 
 interface EventEnvelope<EventType extends string, Payload> {
@@ -218,7 +253,11 @@ interface EventEnvelope<EventType extends string, Payload> {
 
 interface EventPayloads {
   readonly PlayerCharacterConfigured: PlayerCharacter;
-  readonly SceneStarted: { readonly scene: "arrival" };
+  readonly SceneStarted: { readonly scene: Scene };
+  readonly SceneTransitioned: {
+    readonly from: Scene;
+    readonly to: Scene;
+  };
   readonly FreeActionCompleted: {
     readonly actionId: "survey-manor";
     readonly establishedFact: EstablishedFact;
@@ -232,6 +271,13 @@ interface EventPayloads {
   readonly CheckProposalWithdrawn: { readonly proposalId: string };
   readonly CheckRollRevealed: { readonly pendingChoice: PendingChoice };
   readonly CheckResolved: CheckResolution;
+  readonly FieldKitUsed: {
+    readonly item: "Field Kit";
+    readonly removalReason: "consumption";
+    readonly resource: Resource;
+    readonly restored: 1;
+    readonly resultingValue: Health | Resolve;
+  };
   readonly NarratorLikelihoodRecommended: {
     readonly recommendation: NarratorLikelihoodRecommendation;
   };
@@ -310,6 +356,22 @@ export interface ConfirmOracleLikelihood {
   readonly likelihood: Likelihood;
 }
 
+export interface UseFieldKit {
+  readonly type: "use-field-kit";
+  readonly resource: Resource;
+}
+
+export interface TransitionScene {
+  readonly type: "transition-scene";
+  readonly scene: Exclude<Scene, "arrival">;
+}
+
+export interface SceneTransitionDefinition {
+  readonly from: Scene;
+  readonly to: Scene;
+  readonly requiredFactIds: readonly string[];
+}
+
 export type StructuredPlayInput =
   | ConfigurePlayerCharacter
   | BeginAdventure
@@ -321,7 +383,9 @@ export type StructuredPlayInput =
   | WithdrawCheckProposal
   | AmendCheckStakes
   | RecommendLikelihood
-  | ConfirmOracleLikelihood;
+  | ConfirmOracleLikelihood
+  | UseFieldKit
+  | TransitionScene;
 
 export interface FreeAction {
   readonly id: "survey-manor";
@@ -341,12 +405,33 @@ export interface OracleAction {
   readonly kind: "Oracle";
 }
 
-export type AvailableAction = FreeAction | CheckAction | OracleAction;
+export interface RecoveryAction {
+  readonly id: "use-field-kit-health" | "use-field-kit-resolve";
+  readonly label: string;
+  readonly kind: "Recovery";
+  readonly resource: Resource;
+}
+
+export interface SceneTransitionAction {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: "Scene Transition";
+  readonly scene: Exclude<Scene, "arrival">;
+}
+
+export type AvailableAction =
+  | FreeAction
+  | CheckAction
+  | OracleAction
+  | RecoveryAction
+  | SceneTransitionAction;
 
 export interface CheckActionDefinition extends CheckAction {
   readonly goal: string;
   readonly trait: Trait;
   readonly stakes: CheckStakes;
+  readonly requiredItem?: InventoryItemName;
+  readonly requiresFreeMovement?: boolean;
 }
 
 export interface OracleActionDefinition extends OracleAction {
@@ -377,7 +462,10 @@ export interface RejectedResult {
     | "invalid-check-correction"
     | "check-stakes-immutable"
     | "invalid-likelihood-recommendation"
-    | "likelihood-recommendation-unavailable";
+    | "likelihood-recommendation-unavailable"
+    | "field-kit-unavailable"
+    | "scene-transition-unavailable"
+    | "action-requires-free-movement";
   readonly message: string;
   readonly state: GameState;
   readonly availableActions: readonly AvailableAction[];
@@ -404,18 +492,20 @@ export interface StructuredPlayOptions {
   readonly randomSource?: RandomSource;
   readonly checkActions?: readonly CheckActionDefinition[];
   readonly oracleActions?: readonly OracleActionDefinition[];
+  readonly sceneTransitions?: readonly SceneTransitionDefinition[];
 }
 
-const STARTING_INVENTORY = [
-  "Lantern",
-  "Lockpick Set",
-  "Short Blade",
-  "Field Kit",
-] as const;
+const STARTING_INVENTORY: readonly InventoryItem[] = [
+  { name: "Lantern", state: "carried" },
+  { name: "Lockpick Set", state: "carried" },
+  { name: "Short Blade", state: "carried" },
+  { name: "Field Kit", state: "carried" },
+];
 
 const initialState = (): GameState => ({
   playerCharacter: null,
   activeScene: null,
+  conditions: [],
   establishedFacts: [],
   pendingCheckProposal: null,
   pendingChoice: null,
@@ -423,6 +513,7 @@ const initialState = (): GameState => ({
   pendingNarratorRecommendation: null,
   lastOracleResolution: null,
   resolvedPropositionIds: [],
+  resolvedCheckActionIds: [],
 });
 
 const isTrait = (value: unknown): value is Trait =>
@@ -430,6 +521,23 @@ const isTrait = (value: unknown): value is Trait =>
 
 const isLikelihood = (value: unknown): value is Likelihood =>
   value === "Unlikely" || value === "Even" || value === "Likely";
+
+const isInventoryItemName = (value: unknown): value is InventoryItemName =>
+  value === "Lantern" ||
+  value === "Lockpick Set" ||
+  value === "Short Blade" ||
+  value === "Field Kit";
+
+const isCondition = (value: unknown): value is Condition =>
+  value === "Shaken" || value === "Restrained";
+
+const isCarrying = (
+  playerCharacter: PlayerCharacter | null,
+  itemName: InventoryItemName,
+): boolean =>
+  playerCharacter?.inventory.some(
+    (item) => item.name === itemName && item.state === "carried",
+  ) ?? false;
 
 const validateEstablishedFact = (fact: unknown): fact is EstablishedFact => {
   if (typeof fact !== "object" || fact === null) return false;
@@ -488,7 +596,25 @@ const validateOutcomeConsequence = (
   if (typeof consequence !== "object" || consequence === null) return false;
   const candidate = consequence as Partial<OutcomeConsequence>;
   if (candidate.type === "lose-health") {
-    return (candidate as Partial<MechanicalEffect>).amount === 1;
+    return (candidate as Partial<LoseHealthEffect>).amount === 1;
+  }
+  if (candidate.type === "remove-inventory-item") {
+    const effect = candidate as Partial<RemoveInventoryItemEffect>;
+    return (
+      isInventoryItemName(effect.item) &&
+      (effect.reason === "loss" ||
+        effect.reason === "breakage" ||
+        effect.reason === "surrender" ||
+        effect.reason === "consumption")
+    );
+  }
+  if (candidate.type === "add-condition") {
+    return isCondition((candidate as Partial<AddConditionEffect>).condition);
+  }
+  if (candidate.type === "remove-condition") {
+    return (
+      (candidate as Partial<RemoveConditionEffect>).condition === "Restrained"
+    );
   }
   if (candidate.type === "establish-fact") {
     const fact = (candidate as Partial<FictionalConsequence>).fact;
@@ -514,6 +640,14 @@ const validateCheckAction = (action: CheckActionDefinition): void => {
   ) {
     throw new Error(`Invalid Check action definition: ${action.id || "<unknown>"}.`);
   }
+  if (
+    (action.requiredItem !== undefined &&
+      !isInventoryItemName(action.requiredItem)) ||
+    (action.requiresFreeMovement !== undefined &&
+      typeof action.requiresFreeMovement !== "boolean")
+  ) {
+    throw new Error(`Invalid Check action permission: ${action.id}.`);
+  }
 
   const outcomes: readonly CheckOutcome[] = [
     "Setback",
@@ -527,7 +661,13 @@ const validateCheckAction = (action: CheckActionDefinition): void => {
       typeof stake.summary !== "string" ||
       stake.summary.trim() === "" ||
       !Array.isArray(stake.consequences) ||
-      !stake.consequences.every(validateOutcomeConsequence)
+      !stake.consequences.every(validateOutcomeConsequence) ||
+      (outcome === "Setback" &&
+        stake.consequences.some(
+          (consequence) =>
+            consequence.type === "remove-condition" &&
+            consequence.condition === "Restrained",
+        ))
     ) {
       throw new Error(
         `Invalid Outcome Consequence or stake for ${action.id} (${outcome}).`,
@@ -551,13 +691,60 @@ const validateOracleAction = (action: OracleActionDefinition): void => {
   }
 };
 
+const validateSceneTransition = (
+  transition: SceneTransitionDefinition,
+): void => {
+  if (
+    transition.from === transition.to ||
+    transition.to === "arrival" ||
+    transition.requiredFactIds.length === 0 ||
+    new Set(transition.requiredFactIds).size !==
+      transition.requiredFactIds.length ||
+    transition.requiredFactIds.some((factId) => factId.trim() === "")
+  ) {
+    throw new Error(
+      `Invalid Scene transition definition: ${transition.from} -> ${transition.to}.`,
+    );
+  }
+};
+
+const transitionIsSatisfied = (
+  transition: SceneTransitionDefinition,
+  state: GameState,
+): boolean =>
+  transition.from === state.activeScene &&
+  transition.requiredFactIds.every((factId) =>
+    state.establishedFacts.some((fact) => fact.id === factId),
+  );
+
+const checkActionRejectionCode = (
+  action: CheckActionDefinition,
+  state: GameState,
+): "action-unavailable" | "action-requires-free-movement" | null => {
+  if (
+    state.resolvedCheckActionIds.includes(action.id) ||
+    (action.requiredItem !== undefined &&
+      !isCarrying(state.playerCharacter, action.requiredItem))
+  ) {
+    return "action-unavailable";
+  }
+  if (
+    action.requiresFreeMovement === true &&
+    state.conditions.includes("Restrained")
+  ) {
+    return "action-requires-free-movement";
+  }
+  return null;
+};
+
 const availableActionsFor = (
   state: GameState,
   checkActions: readonly CheckActionDefinition[],
   oracleActions: readonly OracleActionDefinition[],
+  sceneTransitions: readonly SceneTransitionDefinition[],
 ): readonly AvailableAction[] => {
   if (
-    state.activeScene !== "arrival" ||
+    state.activeScene === null ||
     state.pendingCheckProposal !== null ||
     state.pendingChoice !== null ||
     state.pendingNarratorRecommendation !== null
@@ -566,18 +753,21 @@ const availableActionsFor = (
   }
 
   const actions: AvailableAction[] = [];
-  if (!state.establishedFacts.some((fact) => fact.id === FRESH_FOOTPRINTS.id)) {
+  if (
+    state.activeScene === "arrival" &&
+    !state.establishedFacts.some((fact) => fact.id === FRESH_FOOTPRINTS.id)
+  ) {
     actions.push({
       id: "survey-manor",
       label: "Survey the manor grounds",
       kind: "Free Action",
     });
   }
-  if (state.lastCheckResolution === null) {
-    actions.push(
-      ...checkActions.map(({ id, label, kind }) => ({ id, label, kind })),
-    );
-  }
+  actions.push(
+    ...checkActions
+      .filter((action) => checkActionRejectionCode(action, state) === null)
+      .map(({ id, label, kind }) => ({ id, label, kind })),
+  );
   if (oracleActions.some(
     (action) => !state.resolvedPropositionIds.includes(action.proposition.id),
   )) {
@@ -595,6 +785,39 @@ const availableActionsFor = (
         .map(({ id, label, kind }) => ({ id, label, kind })),
     );
   }
+  const playerCharacter = state.playerCharacter;
+  if (
+    playerCharacter !== null &&
+    state.activeScene !== "confrontation" &&
+    isCarrying(playerCharacter, "Field Kit")
+  ) {
+    if (playerCharacter.health < 3) {
+      actions.push({
+        id: "use-field-kit-health",
+        label: "Use the Field Kit to restore 1 Health",
+        kind: "Recovery",
+        resource: "Health",
+      });
+    }
+    if (playerCharacter.resolve < 3) {
+      actions.push({
+        id: "use-field-kit-resolve",
+        label: "Use the Field Kit to restore 1 Resolve",
+        kind: "Recovery",
+        resource: "Resolve",
+      });
+    }
+  }
+  actions.push(
+    ...sceneTransitions
+      .filter((transition) => transitionIsSatisfied(transition, state))
+      .map((transition) => ({
+        id: `transition-${transition.from}-to-${transition.to}`,
+        label: `Continue to the ${transition.to} Scene`,
+        kind: "Scene Transition" as const,
+        scene: transition.to as Exclude<Scene, "arrival">,
+      })),
+  );
   return actions;
 };
 
@@ -616,8 +839,35 @@ const applyConsequences = (
             ],
           };
     }
+    if (consequence.type === "add-condition") {
+      return nextState.conditions.includes(consequence.condition)
+        ? nextState
+        : {
+            ...nextState,
+            conditions: [...nextState.conditions, consequence.condition],
+          };
+    }
+    if (consequence.type === "remove-condition") {
+      return {
+        ...nextState,
+        conditions: nextState.conditions.filter(
+          (condition) => condition !== consequence.condition,
+        ),
+      };
+    }
     const playerCharacter = nextState.playerCharacter;
     if (playerCharacter === null) return nextState;
+    if (consequence.type === "remove-inventory-item") {
+      return {
+        ...nextState,
+        playerCharacter: {
+          ...playerCharacter,
+          inventory: playerCharacter.inventory.map((item) =>
+            item.name === consequence.item ? { ...item, state: "removed" } : item,
+          ),
+        },
+      };
+    }
     const health = Math.max(0, playerCharacter.health - consequence.amount) as Health;
     return {
       ...nextState,
@@ -632,6 +882,14 @@ const project = (events: readonly CanonicalEvent[]): GameState =>
         return { ...state, playerCharacter: event.payload };
       case "SceneStarted":
         return { ...state, activeScene: event.payload.scene };
+      case "SceneTransitioned":
+        return {
+          ...state,
+          activeScene: event.payload.to,
+          conditions: state.conditions.filter(
+            (condition) => condition !== "Shaken",
+          ),
+        };
       case "FreeActionCompleted":
         return applyConsequences(state, [
           { type: "establish-fact", fact: event.payload.establishedFact },
@@ -668,6 +926,30 @@ const project = (events: readonly CanonicalEvent[]): GameState =>
           pendingCheckProposal: null,
           pendingChoice: null,
           lastCheckResolution: event.payload,
+          resolvedCheckActionIds: state.resolvedCheckActionIds.includes(
+            event.payload.actionId,
+          )
+            ? state.resolvedCheckActionIds
+            : [...state.resolvedCheckActionIds, event.payload.actionId],
+        };
+      case "FieldKitUsed":
+        if (state.playerCharacter === null) return state;
+        return {
+          ...state,
+          playerCharacter: {
+            ...state.playerCharacter,
+            health:
+              event.payload.resource === "Health"
+                ? (event.payload.resultingValue as Health)
+                : state.playerCharacter.health,
+            resolve:
+              event.payload.resource === "Resolve"
+                ? (event.payload.resultingValue as Resolve)
+                : state.playerCharacter.resolve,
+            inventory: state.playerCharacter.inventory.map((item) =>
+              item.name === "Field Kit" ? { ...item, state: "removed" } : item,
+            ),
+          },
         };
       case "NarratorLikelihoodRecommended":
         return {
@@ -776,8 +1058,11 @@ export const createStructuredPlayApplication = (
   const randomSource = options.randomSource ?? createSeededRandomSource(Date.now());
   const checkActions = options.checkActions ?? DEFAULT_CHECK_ACTIONS;
   const oracleActions = options.oracleActions ?? DEFAULT_ORACLE_ACTIONS;
+  const sceneTransitions =
+    options.sceneTransitions ?? DEFAULT_SCENE_TRANSITIONS;
   checkActions.forEach(validateCheckAction);
   oracleActions.forEach(validateOracleAction);
+  sceneTransitions.forEach(validateSceneTransition);
   const checkEstablishedFactIds = new Set(
     checkActions.flatMap((action) =>
       Object.values(action.stakes).flatMap((stake) =>
@@ -804,7 +1089,12 @@ export const createStructuredPlayApplication = (
     const state = project(eventStore.readAll());
     return {
       state,
-      availableActions: availableActionsFor(state, checkActions, oracleActions),
+      availableActions: availableActionsFor(
+        state,
+        checkActions,
+        oracleActions,
+        sceneTransitions,
+      ),
     };
   };
 
@@ -817,7 +1107,12 @@ export const createStructuredPlayApplication = (
     code,
     message,
     state,
-    availableActions: availableActionsFor(state, checkActions, oracleActions),
+    availableActions: availableActionsFor(
+      state,
+      checkActions,
+      oracleActions,
+      sceneTransitions,
+    ),
     appendedEvents: [],
   });
 
@@ -845,7 +1140,12 @@ export const createStructuredPlayApplication = (
       status: "accepted",
       message,
       state,
-      availableActions: availableActionsFor(state, checkActions, oracleActions),
+      availableActions: availableActionsFor(
+        state,
+        checkActions,
+        oracleActions,
+        sceneTransitions,
+      ),
       appendedEvents,
     };
   };
@@ -878,6 +1178,75 @@ export const createStructuredPlayApplication = (
       const events = eventStore.readAll();
       const state = project(events);
       const commandId = randomUUID();
+
+      if (input.type === "use-field-kit") {
+        const playerCharacter = state.playerCharacter;
+        const currentValue =
+          input.resource === "Health"
+            ? playerCharacter?.health
+            : playerCharacter?.resolve;
+        if (
+          playerCharacter === null ||
+          state.activeScene === null ||
+          state.activeScene === "confrontation" ||
+          state.pendingCheckProposal !== null ||
+          state.pendingChoice !== null ||
+          state.pendingNarratorRecommendation !== null ||
+          !isCarrying(playerCharacter, "Field Kit") ||
+          currentValue === undefined ||
+          currentValue >= 3
+        ) {
+          return reject(
+            "field-kit-unavailable",
+            "The Field Kit can restore one Health or Resolve outside a Confrontation when that resource is below 3.",
+            state,
+          );
+        }
+        const resultingValue = (currentValue + 1) as Health | Resolve;
+        const event = append(
+          "FieldKitUsed",
+          {
+            item: "Field Kit",
+            removalReason: "consumption",
+            resource: input.resource,
+            restored: 1,
+            resultingValue,
+          },
+          commandId,
+        );
+        return accept(
+          `The Field Kit restores 1 ${input.resource} and is removed from Inventory.`,
+          [event],
+        );
+      }
+
+      if (input.type === "transition-scene") {
+        const transition = sceneTransitions.find(
+          (candidate) =>
+            candidate.from === state.activeScene &&
+            candidate.to === input.scene &&
+            transitionIsSatisfied(candidate, state),
+        );
+        if (
+          transition === undefined ||
+          state.pendingCheckProposal !== null ||
+          state.pendingChoice !== null ||
+          state.pendingNarratorRecommendation !== null
+        ) {
+          return reject(
+            "scene-transition-unavailable",
+            "That Scene transition is not available while resolution is pending or from the current Scene.",
+            state,
+          );
+        }
+        const from = transition.from;
+        const event = append(
+          "SceneTransitioned",
+          { from, to: input.scene },
+          commandId,
+        );
+        return accept(`The ${from} Scene ends and ${input.scene} begins.`, [event]);
+      }
 
       if (input.type === "confirm-oracle-likelihood") {
         const recommendation = state.pendingNarratorRecommendation;
@@ -1011,6 +1380,7 @@ export const createStructuredPlayApplication = (
         ) as Resolve;
         const resolution: CheckResolution = {
           proposalId: pendingChoice.proposal.id,
+          actionId: pendingChoice.proposal.actionId,
           pendingChoiceId: pendingChoice.id,
           goal: pendingChoice.proposal.goal,
           trait: pendingChoice.proposal.trait,
@@ -1077,7 +1447,8 @@ export const createStructuredPlayApplication = (
             result: { diceTotal, total },
           },
           availableChoices:
-            state.playerCharacter.resolve === 0
+            state.playerCharacter.resolve === 0 ||
+            state.conditions.includes("Shaken")
               ? ["decline"]
               : ["decline", "spend-resolve"],
         };
@@ -1141,6 +1512,16 @@ export const createStructuredPlayApplication = (
             state,
           );
         }
+        const permissionRejection = checkActionRejectionCode(definition, state);
+        if (permissionRejection !== null) {
+          return reject(
+            permissionRejection,
+            permissionRejection === "action-requires-free-movement"
+              ? "Restrained prevents actions that require free movement."
+              : "That revised action is not available in the current Scene.",
+            state,
+          );
+        }
         const replacement = createProposal(definition);
         const event = append(
           "CheckProposalReplaced",
@@ -1186,10 +1567,25 @@ export const createStructuredPlayApplication = (
       }
 
       if (input.type === "choose-action") {
+        const requestedCheckAction = checkActions.find(
+          (action) => action.id === input.actionId,
+        );
+        const permissionRejection =
+          requestedCheckAction === undefined
+            ? null
+            : checkActionRejectionCode(requestedCheckAction, state);
+        if (permissionRejection === "action-requires-free-movement") {
+          return reject(
+            "action-requires-free-movement",
+            "Restrained prevents actions that require free movement.",
+            state,
+          );
+        }
         const actionIsAvailable = availableActionsFor(
           state,
           checkActions,
           oracleActions,
+          sceneTransitions,
         ).some((action) => action.id === input.actionId);
         if (!actionIsAvailable) {
           return reject(

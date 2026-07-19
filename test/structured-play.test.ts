@@ -46,7 +46,12 @@ test("Player can configure the pregenerated Player Character", () => {
     },
     health: 3,
     resolve: 3,
-    inventory: ["Lantern", "Lockpick Set", "Short Blade", "Field Kit"],
+    inventory: [
+      { name: "Lantern", state: "carried" },
+      { name: "Lockpick Set", state: "carried" },
+      { name: "Short Blade", state: "carried" },
+      { name: "Field Kit", state: "carried" },
+    ],
   });
   assert.deepEqual(
     result.appendedEvents.map((event) => event.type),

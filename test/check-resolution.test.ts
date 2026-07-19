@@ -131,6 +131,7 @@ test("Player may spend one Resolve after a revealed roll to change the committed
   );
   assert.deepEqual(resolved.state.lastCheckResolution, {
     proposalId: proposal.id,
+    actionId: proposal.actionId,
     pendingChoiceId: pendingChoice.id,
     goal: proposal.goal,
     trait: "Might",

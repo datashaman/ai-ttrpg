@@ -5,6 +5,7 @@ import type {
   FictionalConsequence,
   MechanicalEffect,
   OracleActionDefinition,
+  SceneTransitionDefinition,
 } from "./structured-play.js";
 
 export const FRESH_FOOTPRINTS: EstablishedFact = {
@@ -64,6 +65,7 @@ export const DEFAULT_CHECK_ACTIONS: readonly CheckActionDefinition[] = [
     kind: "Check",
     goal: "Force open the manor's side door",
     trait: "Might",
+    requiresFreeMovement: true,
     stakes: FORCE_SIDE_DOOR_STAKES,
   },
   {
@@ -72,6 +74,8 @@ export const DEFAULT_CHECK_ACTIONS: readonly CheckActionDefinition[] = [
     kind: "Check",
     goal: "Open the manor's side door with the Lockpick Set",
     trait: "Wits",
+    requiredItem: "Lockpick Set",
+    requiresFreeMovement: true,
     stakes: {
       Setback: {
         summary: "The lock stays shut and the attempt alerts the manor.",
@@ -84,6 +88,52 @@ export const DEFAULT_CHECK_ACTIONS: readonly CheckActionDefinition[] = [
       "Clean Success": {
         summary: "The lock opens quietly.",
         consequences: [SIDE_DOOR_OPEN],
+      },
+    },
+  },
+  {
+    id: "inspect-dark-entryway",
+    label: "Inspect the dark entryway by Lantern light",
+    kind: "Check",
+    goal: "Inspect the dark entryway by Lantern light",
+    trait: "Wits",
+    requiredItem: "Lantern",
+    requiresFreeMovement: true,
+    stakes: {
+      Setback: {
+        summary: "The shadows conceal anything useful.",
+        consequences: [],
+      },
+      "Success with Cost": {
+        summary: "You spot signs of passage, but someone hears you moving.",
+        consequences: [MANOR_ALERTED],
+      },
+      "Clean Success": {
+        summary: "The Lantern reveals signs of recent passage.",
+        consequences: [],
+      },
+    },
+  },
+  {
+    id: "cut-away-door-vines",
+    label: "Cut away the side-door vines with the Short Blade",
+    kind: "Check",
+    goal: "Clear the tangled vines from the side door",
+    trait: "Might",
+    requiredItem: "Short Blade",
+    requiresFreeMovement: true,
+    stakes: {
+      Setback: {
+        summary: "The tangled vines hold and the effort alerts the manor.",
+        consequences: [MANOR_ALERTED],
+      },
+      "Success with Cost": {
+        summary: "The vines part, but the effort alerts the manor.",
+        consequences: [MANOR_ALERTED],
+      },
+      "Clean Success": {
+        summary: "The Short Blade quietly clears the vines.",
+        consequences: [],
       },
     },
   },
@@ -126,5 +176,13 @@ export const DEFAULT_ORACLE_ACTIONS: readonly OracleActionDefinition[] = [
     },
     recommendedLikelihood: "Likely",
     supportingFactIds: [FRESH_FOOTPRINTS.id],
+  },
+];
+
+export const DEFAULT_SCENE_TRANSITIONS: readonly SceneTransitionDefinition[] = [
+  {
+    from: "arrival",
+    to: "discovery",
+    requiredFactIds: [SIDE_DOOR_OPEN.fact.id],
   },
 ];
