@@ -1,0 +1,519 @@
+import {
+  createInMemoryEventStore,
+  createStructuredPlayApplication,
+  type ApplicationView,
+  type AvailableAction,
+  type EventStore,
+  type RandomSource,
+  type StructuredPlayInput,
+  type StructuredPlayOptions,
+  type TimelineStore,
+} from "./structured-play.js";
+import {
+  hasExactKeys,
+  immutableSnapshot,
+  invokeWithinTimeout,
+  isRecord,
+} from "./model-boundary.js";
+import { readTraitRating } from "./text-play-input.js";
+import {
+  runStructuredPlay,
+  type PresentationModel,
+  type StructuredPlayIO,
+} from "./structured-play-runner.js";
+
+export type InputClassification =
+  | "player-action"
+  | "in-character-speech"
+  | "rules-query"
+  | "out-of-character-request"
+  | "table-chat"
+  | "system-command";
+
+export interface KnownEntity {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: "Player Character" | "Scene" | "Inventory Item" | "Established Fact";
+}
+
+export interface AvailableCapability {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: AvailableAction["kind"];
+}
+
+export interface InterpretationRequest {
+  readonly utterance: string;
+  readonly knownEntities: readonly KnownEntity[];
+  readonly availableCapabilities: readonly AvailableCapability[];
+  readonly visibleEvidence: ApplicationView["state"]["establishedFacts"];
+}
+
+export interface InterpretationModel {
+  interpret(request: InterpretationRequest): Promise<unknown>;
+}
+
+export interface NaturalLanguagePlayOptions {
+  readonly io: StructuredPlayIO;
+  readonly interpreter: InterpretationModel;
+  readonly eventStore?: EventStore;
+  readonly timelineStore?: TimelineStore;
+  readonly randomSource?: RandomSource;
+  readonly applicationOptions?: Omit<
+    StructuredPlayOptions,
+    "eventStore" | "randomSource" | "timelineStore"
+  >;
+  readonly runToAdventureEnd?: boolean;
+  readonly interpretationTimeoutMs?: number;
+  readonly narrator?: PresentationModel;
+  readonly narrationTimeoutMs?: number;
+}
+
+export interface NaturalLanguagePlayResult extends ApplicationView {
+  readonly interpretedCommands: readonly StructuredPlayInput[];
+}
+
+const knownEntitiesFrom = (view: ApplicationView): readonly KnownEntity[] => {
+  const entities: KnownEntity[] = [];
+  const playerCharacter = view.state.playerCharacter;
+  if (playerCharacter !== null) {
+    entities.push({
+      id: "player-character",
+      label: playerCharacter.name,
+      kind: "Player Character",
+    });
+    playerCharacter.inventory
+      .filter((item) => item.state === "carried")
+      .forEach((item) =>
+        entities.push({
+          id: `inventory:${item.name}`,
+          label: item.name,
+          kind: "Inventory Item",
+        }),
+      );
+  }
+  if (view.state.activeScene !== null) {
+    entities.push({
+      id: `scene:${view.state.activeScene}`,
+      label: view.state.activeScene,
+      kind: "Scene",
+    });
+  }
+  view.state.establishedFacts.forEach((fact) =>
+    entities.push({ id: fact.id, label: fact.text, kind: "Established Fact" }),
+  );
+  return entities;
+};
+
+const actionCommand = (
+  action: AvailableAction,
+): StructuredPlayInput | null =>
+  action.kind === "Free Action" ||
+  action.kind === "Check" ||
+  action.kind === "Oracle"
+    ? { type: "choose-action", actionId: action.id }
+    : action.kind === "Recovery"
+      ? { type: "use-field-kit", resource: action.resource }
+      : action.kind === "Scene Transition"
+        ? { type: "transition-scene", scene: action.scene }
+        : action.kind === "Timeline Selection"
+          ? { type: "select-timeline", timelineId: action.timelineId }
+          : null;
+
+const selectedCapability = (
+  interpretation: unknown,
+  request: InterpretationRequest,
+  actions: readonly AvailableAction[],
+): { readonly action: AvailableAction; readonly command: StructuredPlayInput } | null => {
+  if (
+    !isRecord(interpretation) ||
+    !hasExactKeys(interpretation, [
+      "status",
+      "classification",
+      "capabilityId",
+      "referencedEntityIds",
+      "arguments",
+    ]) ||
+    interpretation.status !== "interpreted" ||
+    (interpretation.classification !== "player-action" &&
+      interpretation.classification !== "in-character-speech") ||
+    typeof interpretation.capabilityId !== "string" ||
+    !Array.isArray(interpretation.referencedEntityIds) ||
+    !interpretation.referencedEntityIds.every((id) => typeof id === "string") ||
+    !isRecord(interpretation.arguments) ||
+    Object.keys(interpretation.arguments).length !== 0
+  ) {
+    return null;
+  }
+  const knownIds = new Set(request.knownEntities.map((entity) => entity.id));
+  if (!interpretation.referencedEntityIds.every((id) => knownIds.has(id))) {
+    return null;
+  }
+  const action = actions.find((candidate) => candidate.id === interpretation.capabilityId);
+  if (action === undefined) return null;
+  const command = actionCommand(action);
+  return command === null ? null : { action, command };
+};
+
+const referencesAreKnown = (
+  interpretation: Record<string, unknown>,
+  request: InterpretationRequest,
+): boolean => {
+  if (
+    !Array.isArray(interpretation.referencedEntityIds) ||
+    !interpretation.referencedEntityIds.every((id) => typeof id === "string")
+  ) {
+    return false;
+  }
+  const knownIds = new Set(request.knownEntities.map((entity) => entity.id));
+  return interpretation.referencedEntityIds.every((id) => knownIds.has(id));
+};
+
+const isRulesQuery = (
+  interpretation: unknown,
+  request: InterpretationRequest,
+): boolean => {
+  if (
+    !isRecord(interpretation) ||
+    !hasExactKeys(interpretation, [
+      "status",
+      "classification",
+      "referencedEntityIds",
+    ]) ||
+    interpretation.status !== "interpreted" ||
+    interpretation.classification !== "rules-query" ||
+    !referencesAreKnown(interpretation, request)
+  ) {
+    return false;
+  }
+  return true;
+};
+
+type NonGameplayClassification =
+  | "in-character-speech"
+  | "out-of-character-request"
+  | "table-chat"
+  | "show-state"
+  | "show-actions"
+  | "stop";
+
+const nonGameplayClassification = (
+  interpretation: unknown,
+  request: InterpretationRequest,
+): NonGameplayClassification | null => {
+  if (!isRecord(interpretation) || interpretation.status !== "interpreted") {
+    return null;
+  }
+  if (
+    interpretation.classification === "in-character-speech" &&
+    hasExactKeys(interpretation, [
+      "status",
+      "classification",
+      "capabilityId",
+      "referencedEntityIds",
+      "arguments",
+    ]) &&
+    interpretation.capabilityId === null &&
+    isRecord(interpretation.arguments) &&
+    Object.keys(interpretation.arguments).length === 0 &&
+    referencesAreKnown(interpretation, request)
+  ) {
+    return "in-character-speech";
+  }
+  if (
+    (interpretation.classification === "out-of-character-request" ||
+      interpretation.classification === "table-chat") &&
+    hasExactKeys(interpretation, [
+      "status",
+      "classification",
+      "referencedEntityIds",
+    ]) &&
+    referencesAreKnown(interpretation, request)
+  ) {
+    return interpretation.classification;
+  }
+  if (
+    interpretation.classification === "system-command" &&
+    hasExactKeys(interpretation, [
+      "status",
+      "classification",
+      "command",
+      "referencedEntityIds",
+    ]) &&
+    (interpretation.command === "show-state" ||
+      interpretation.command === "show-actions" ||
+      interpretation.command === "stop") &&
+    referencesAreKnown(interpretation, request)
+  ) {
+    return interpretation.command;
+  }
+  return null;
+};
+
+const clarificationFrom = (
+  interpretation: unknown,
+  request: InterpretationRequest,
+): string | null => {
+  if (
+    !isRecord(interpretation) ||
+    !hasExactKeys(interpretation, ["status", "candidateCapabilityIds"]) ||
+    interpretation.status !== "ambiguous" ||
+    !Array.isArray(interpretation.candidateCapabilityIds) ||
+    interpretation.candidateCapabilityIds.length < 2 ||
+    !interpretation.candidateCapabilityIds.every(
+      (id) => typeof id === "string",
+    )
+  ) {
+    return null;
+  }
+  const capabilities = new Map(
+    request.availableCapabilities.map((capability) => [
+      capability.id,
+      capability,
+    ]),
+  );
+  const candidateIds = interpretation.candidateCapabilityIds as string[];
+  if (
+    new Set(candidateIds).size !== candidateIds.length ||
+    !candidateIds.every((id) => capabilities.has(id))
+  ) {
+    return null;
+  }
+  const labels = candidateIds.map((id) => capabilities.get(id)!.label);
+  if (labels.length === 2) {
+    return `Did you mean "${labels[0]}" or "${labels[1]}"?`;
+  }
+  return `Did you mean one of: ${labels.map((label) => `"${label}"`).join(", ")}?`;
+};
+
+const writeNonGameplayResponse = (
+  io: StructuredPlayIO,
+  classification: NonGameplayClassification,
+  view: ApplicationView,
+): void => {
+  if (classification === "in-character-speech") {
+    io.write("In-character speech acknowledged; no gameplay action was taken.\n");
+    return;
+  }
+  if (classification === "out-of-character-request") {
+    io.write("Out-of-character request acknowledged; no gameplay action was taken.\n");
+    return;
+  }
+  if (classification === "table-chat") {
+    io.write("Table chat acknowledged; no gameplay action was taken.\n");
+    return;
+  }
+  if (classification === "show-state") {
+    io.write("Current Player-visible state:\n");
+    io.write(`${JSON.stringify(view.state, null, 2)}\n`);
+    return;
+  }
+  if (classification === "show-actions") {
+    io.write("Available capabilities:\n");
+    view.availableActions.forEach((action) =>
+      io.write(`- ${action.label} [${action.kind}]\n`),
+    );
+    return;
+  }
+  io.write("Natural-language play stopped without changing game truth.\n");
+};
+
+const writeRulesEvidence = (
+  io: StructuredPlayIO,
+  view: ApplicationView,
+): void => {
+  io.write("Rules evidence\n");
+  io.write(`Active Scene: ${view.state.activeScene ?? "None"}\n`);
+  if (view.state.lastCheckResolution !== null) {
+    const trace = view.state.lastCheckResolution.trace;
+    io.write(
+      `${trace.rule.id}@${trace.rule.version}: total ${trace.result.total} resolved as ${trace.result.outcome}.\n`,
+    );
+  }
+  if (view.state.lastOracleResolution !== null) {
+    const trace = view.state.lastOracleResolution.trace;
+    io.write(
+      `${trace.rule.id}@${trace.rule.version}: roll ${trace.result.roll} resolved ${trace.result.answer}.\n`,
+    );
+  }
+  io.write("Visible Established Facts:\n");
+  if (view.state.establishedFacts.length === 0) {
+    io.write("- None\n");
+  } else {
+    view.state.establishedFacts.forEach((fact) => io.write(`- ${fact.text}\n`));
+  }
+};
+
+const createApplication = (
+  options: NaturalLanguagePlayOptions,
+  eventStore: EventStore,
+) =>
+  createStructuredPlayApplication(
+    options.timelineStore !== undefined
+      ? { ...options.applicationOptions, timelineStore: options.timelineStore }
+      : options.randomSource === undefined
+        ? { ...options.applicationOptions, eventStore }
+        : {
+            ...options.applicationOptions,
+            eventStore,
+            randomSource: options.randomSource,
+          },
+  );
+
+const runThroughStructuredPlay = (
+  options: NaturalLanguagePlayOptions,
+  eventStore: EventStore,
+  io: StructuredPlayIO,
+): Promise<ApplicationView> =>
+  runStructuredPlay({
+    io,
+    eventStore,
+    ...(options.timelineStore === undefined
+      ? {}
+      : { timelineStore: options.timelineStore }),
+    ...(options.randomSource === undefined
+      ? {}
+      : { randomSource: options.randomSource }),
+    ...(options.applicationOptions === undefined
+      ? {}
+      : { applicationOptions: options.applicationOptions }),
+    ...(options.narrator === undefined ? {} : { narrator: options.narrator }),
+    ...(options.narrationTimeoutMs === undefined
+      ? {}
+      : { narrationTimeoutMs: options.narrationTimeoutMs }),
+  });
+
+export const runNaturalLanguagePlay = async (
+  options: NaturalLanguagePlayOptions,
+): Promise<NaturalLanguagePlayResult> => {
+  const eventStore = options.eventStore ?? createInMemoryEventStore();
+  let app = createApplication(options, eventStore);
+  let view = app.view();
+  if (view.state.playerCharacter === null) {
+    const name = await options.io.read("Player Character name: ");
+    const pronouns = await options.io.read("Pronouns: ");
+    const motivation = await options.io.read("Motivation: ");
+    const configured = app.submit({
+      type: "configure-player-character",
+      name,
+      pronouns,
+      motivation,
+      traits: {
+        Might: await readTraitRating(options.io, "Might"),
+        Wits: await readTraitRating(options.io, "Wits"),
+        Presence: await readTraitRating(options.io, "Presence"),
+      },
+    });
+    options.io.write(`\n${configured.message}\n`);
+    if (configured.status === "rejected") {
+      return { ...app.view(), interpretedCommands: [] };
+    }
+    const started = app.submit({ type: "begin-adventure" });
+    options.io.write(`${started.message}\n\n`);
+    view = started;
+  }
+
+  if (
+    view.state.pendingChoice !== null ||
+    view.state.pendingCheckProposal !== null ||
+    view.state.pendingNarratorRecommendation !== null
+  ) {
+    const completed = await runThroughStructuredPlay(
+      options,
+      eventStore,
+      options.io,
+    );
+    return { ...completed, interpretedCommands: [] };
+  }
+  if (view.state.adventureEnding !== null) {
+    return { ...view, interpretedCommands: [] };
+  }
+
+  const utterance = await options.io.read("What do you do? ");
+  const request = immutableSnapshot({
+    utterance,
+    knownEntities: knownEntitiesFrom(view),
+    availableCapabilities: view.availableActions.map((action) => ({
+      id: action.id,
+      label: action.label,
+      kind: action.kind,
+    })),
+    visibleEvidence: view.state.establishedFacts,
+  });
+  let interpretation: unknown;
+  try {
+    interpretation = await invokeWithinTimeout(
+      () => options.interpreter.interpret(request),
+      options.interpretationTimeoutMs ?? 5_000,
+    );
+  } catch {
+    options.io.write(
+      "I could not safely map that input to an available capability. Please clarify.\n",
+    );
+    return { ...view, interpretedCommands: [] };
+  }
+  const clarification = clarificationFrom(interpretation, request);
+  if (clarification !== null) {
+    options.io.write(`Clarification needed: ${clarification}\n`);
+    return { ...view, interpretedCommands: [] };
+  }
+  if (isRulesQuery(interpretation, request)) {
+    writeRulesEvidence(options.io, view);
+    return { ...view, interpretedCommands: [] };
+  }
+  const nonGameplay = nonGameplayClassification(interpretation, request);
+  if (nonGameplay !== null) {
+    writeNonGameplayResponse(options.io, nonGameplay, view);
+    return { ...view, interpretedCommands: [] };
+  }
+  const selected = selectedCapability(
+    interpretation,
+    request,
+    view.availableActions,
+  );
+  if (selected === null) {
+    options.io.write(
+      "I could not safely map that input to an available capability. Please clarify.\n",
+    );
+    return { ...view, interpretedCommands: [] };
+  }
+
+  const actionIndex = view.availableActions.findIndex(
+    (action) => action.id === selected.action.id,
+  );
+  let actionSelected = false;
+  const proxyIO: StructuredPlayIO = {
+    read: async (prompt) => {
+      if (!actionSelected && prompt === "\nChoose an action: ") {
+        actionSelected = true;
+        return String(actionIndex + 1);
+      }
+      if (prompt === "Continue in the current Scene (c) or stop (s): ") {
+        return "s";
+      }
+      return options.io.read(prompt);
+    },
+    write: (text) => options.io.write(text),
+  };
+  const completed = await runThroughStructuredPlay(options, eventStore, proxyIO);
+  if (
+    options.runToAdventureEnd === true &&
+    completed.state.adventureEnding === null
+  ) {
+    const continued = await runNaturalLanguagePlay({
+      ...options,
+      eventStore,
+    });
+    return {
+      ...continued,
+      interpretedCommands: [
+        selected.command,
+        ...continued.interpretedCommands,
+      ],
+    };
+  }
+  return {
+    ...completed,
+    interpretedCommands: [selected.command],
+  };
+};

@@ -12,8 +12,8 @@ import {
   type StructuredPlayOptions,
   type TimelineStore,
   type Trait,
-  type TraitRatings,
 } from "./structured-play.js";
+import { readTraitRating } from "./text-play-input.js";
 import {
   createPresentationContext,
   explainCommittedRules,
@@ -130,19 +130,6 @@ const presentCommittedOutcome = async (
       continue;
     }
     io.write("Choose c, r, or q.\n");
-  }
-};
-
-const readRating = async (
-  io: StructuredPlayIO,
-  trait: keyof TraitRatings,
-): Promise<0 | 1 | 2> => {
-  while (true) {
-    const answer = (await io.read(`${trait} rating (0, 1, or 2): `)).trim();
-    if (answer === "0" || answer === "1" || answer === "2") {
-      return Number(answer) as 0 | 1 | 2;
-    }
-    io.write("Enter 0, 1, or 2.\n");
   }
 };
 
@@ -642,10 +629,10 @@ export const runStructuredPlay = async ({
   const name = await io.read("Player Character name: ");
   const pronouns = await io.read("Pronouns: ");
   const motivation = await io.read("Motivation: ");
-  const traits: TraitRatings = {
-    Might: await readRating(io, "Might"),
-    Wits: await readRating(io, "Wits"),
-    Presence: await readRating(io, "Presence"),
+  const traits = {
+    Might: await readTraitRating(io, "Might"),
+    Wits: await readTraitRating(io, "Wits"),
+    Presence: await readTraitRating(io, "Presence"),
   };
 
   const configured = app.submit({

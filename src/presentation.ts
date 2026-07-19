@@ -4,6 +4,11 @@ import type {
   EstablishedFact,
   OracleTrace,
 } from "./structured-play.js";
+import {
+  immutableSnapshot,
+  invokeWithinTimeout,
+  isRecord,
+} from "./model-boundary.js";
 
 export type ResolutionTrace = CheckTrace | OracleTrace | null;
 
@@ -40,9 +45,6 @@ export interface PresentedText {
   readonly text: string;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 const isCitation = (value: unknown): value is PresentationCitation =>
   isRecord(value) &&
   Object.keys(value).length === 2 &&
@@ -76,17 +78,6 @@ const validatesAgainst = (
   });
 };
 
-const immutableSnapshot = <Value>(value: Value): Value => {
-  const snapshot = structuredClone(value);
-  const freeze = (candidate: unknown): void => {
-    if (!isRecord(candidate) && !Array.isArray(candidate)) return;
-    Object.freeze(candidate);
-    Object.values(candidate).forEach(freeze);
-  };
-  freeze(snapshot);
-  return snapshot;
-};
-
 export const createPresentationContext = (
   context: PresentationContext,
 ): PresentationContext => immutableSnapshot(context);
@@ -97,26 +88,6 @@ const requestFrom = (context: PresentationContext): NarrationRequest =>
     resolutionTrace: context.resolutionTrace,
     committedEvents: context.committedEvents,
   });
-
-const invokeWithin = async (
-  invocation: () => Promise<unknown>,
-  timeoutMs: number,
-): Promise<unknown> => {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      Promise.resolve().then(invocation),
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(
-          () => reject(new Error("Presentation timed out.")),
-          timeoutMs,
-        );
-      }),
-    ]);
-  } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
-  }
-};
 
 const renderRule = (trace: ResolutionTrace): string | null => {
   if (trace === null) return null;
@@ -159,7 +130,10 @@ const present = async (
 ): Promise<PresentedText> => {
   const request = requestFrom(context);
   try {
-    const response = await invokeWithin(() => invocation(request), timeoutMs);
+    const response = await invokeWithinTimeout(
+      () => invocation(request),
+      timeoutMs,
+    );
     if (!validatesAgainst(response, request)) {
       return {
         source: "deterministic-fallback",
