@@ -17,6 +17,7 @@ import {
 } from "./model-boundary.js";
 import {
   assembleInterpretationEvidence,
+  assembleRulesExplanationEvidence,
   type EvidenceBundle,
 } from "./evidence-bundle.js";
 import {
@@ -415,6 +416,54 @@ const isStructurallyValidInterpretation = (interpretation: unknown): boolean => 
   );
 };
 
+interface RulesExplanationSegment {
+  readonly evidenceItemIds: readonly string[];
+}
+
+interface RulesExplanation {
+  readonly segments: readonly RulesExplanationSegment[];
+}
+
+const isRulesExplanationSegment = (
+  value: unknown,
+): value is RulesExplanationSegment =>
+  isRecord(value) &&
+  hasExactKeys(value, ["evidenceItemIds"]) &&
+  hasStringArray(value, "evidenceItemIds") &&
+  (value.evidenceItemIds as readonly string[]).length > 0;
+
+const hasRulesExplanationShape = (
+  value: unknown,
+): value is RulesExplanation =>
+  isRecord(value) &&
+  hasExactKeys(value, ["segments"]) &&
+  Array.isArray(value.segments) &&
+  value.segments.length > 0 &&
+  value.segments.every(isRulesExplanationSegment);
+
+const validatedRulesExplanation = (
+  value: unknown,
+  evidenceBundle: EvidenceBundle,
+): RulesExplanation | null => {
+  if (!hasRulesExplanationShape(value)) return null;
+  const evidenceById = new Map(
+    evidenceBundle.items.map((item) => [item.id, item]),
+  );
+  if (
+    !value.segments.every((segment) => {
+      const ids = segment.evidenceItemIds;
+      return (
+        new Set(ids).size === ids.length &&
+        ids.every((id) => evidenceById.has(id)) &&
+        ids.some((id) => evidenceById.get(id)?.sourceKind === "authority-rule")
+      );
+    })
+  ) {
+    return null;
+  }
+  return immutableSnapshot(value);
+};
+
 const writeNonGameplayResponse = (
   io: StructuredPlayIO,
   classification: NonGameplayClassification,
@@ -471,6 +520,31 @@ const writeRulesEvidence = (
   } else {
     view.state.establishedFacts.forEach((fact) => io.write(`- ${fact.text}\n`));
   }
+};
+
+const writeRulesExplanation = (
+  io: StructuredPlayIO,
+  evidenceBundle: EvidenceBundle,
+  explanation: RulesExplanation | null,
+): void => {
+  const fallback = explanation === null;
+  io.write(
+    `Rules explanation${fallback ? " (deterministic fallback)" : ""}\n`,
+  );
+  const citedIds =
+    explanation === null
+      ? evidenceBundle.items
+          .filter((item) => item.sourceKind !== "accepted-event")
+          .map((item) => item.id)
+      : explanation.segments.flatMap((segment) => segment.evidenceItemIds);
+  const cited = new Set(citedIds);
+  evidenceBundle.items
+    .filter((item) => cited.has(item.id))
+    .forEach((item) =>
+      io.write(
+        `- ${item.sourceKind === "authority-rule" ? "Rule" : "Current situation"} [${item.id}]: ${item.content}\n`,
+      ),
+    );
 };
 
 export const writeStructuredPlayChoices = (
@@ -579,6 +653,73 @@ const appendUncorrelatedModelCall = (
       fallbackOutcome,
     }),
   );
+
+const explainRulesQuery = async ({
+  options,
+  view,
+  eventStore,
+  modelCallStore,
+  utterance,
+}: {
+  readonly options: NaturalLanguagePlayOptions;
+  readonly view: ApplicationView;
+  readonly eventStore: EventStore;
+  readonly modelCallStore: ModelCallRecordStore;
+  readonly utterance: string;
+}): Promise<void> => {
+  if (options.modelGateway === undefined) {
+    writeRulesEvidence(options.io, view);
+    return;
+  }
+  const evidenceBundle = assembleRulesExplanationEvidence({
+    utterance,
+    view,
+    acceptedEvents: acceptedEventsFor(options, eventStore),
+    ...(options.evidenceBudget === undefined
+      ? {}
+      : { maxItems: options.evidenceBudget }),
+  });
+  const execution = await options.modelGateway.execute(
+    immutableSnapshot({
+      type: "explain-rules" as const,
+      input: { utterance },
+      evidenceBundle,
+    }),
+    {
+      timeoutMs: options.interpretationTimeoutMs ?? 5_000,
+      isStructurallyValid: hasRulesExplanationShape,
+    },
+  );
+  if (execution.outcome.status === "failed") {
+    appendUncorrelatedModelCall(
+      modelCallStore,
+      execution,
+      { status: "rejected", reason: execution.outcome.reason },
+      null,
+      "deterministic-rules",
+    );
+    writeRulesExplanation(options.io, evidenceBundle, null);
+    return;
+  }
+  const explanation = validatedRulesExplanation(
+    execution.outcome.output,
+    evidenceBundle,
+  );
+  appendUncorrelatedModelCall(
+    modelCallStore,
+    execution,
+    explanation === null
+      ? {
+          status: "rejected",
+          reason:
+            "Every rules explanation segment must cite known, applicable Evidence Bundle items including an authored rule.",
+        }
+      : { status: "accepted" },
+    explanation,
+    explanation === null ? "deterministic-rules" : "none",
+  );
+  writeRulesExplanation(options.io, evidenceBundle, explanation);
+};
 
 export const runNaturalLanguagePlay = async (
   options: NaturalLanguagePlayOptions,
@@ -708,7 +849,13 @@ export const runNaturalLanguagePlay = async (
         "none",
       );
     }
-    writeRulesEvidence(options.io, view);
+    await explainRulesQuery({
+      options,
+      view,
+      eventStore,
+      modelCallStore,
+      utterance,
+    });
     return withoutInterpretedCommand(view, modelCallStore);
   }
   const nonGameplay = nonGameplayClassification(interpretation, request);

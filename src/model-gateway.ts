@@ -17,7 +17,16 @@ export interface InterpretationModelTask {
   readonly evidenceBundle: EvidenceBundle;
 }
 
-export type ModelTask = InterpretationModelTask;
+export interface RulesExplanationModelTask {
+  readonly type: "explain-rules";
+  readonly input: {
+    readonly utterance: string;
+    readonly repairOf?: unknown;
+  };
+  readonly evidenceBundle: EvidenceBundle;
+}
+
+export type ModelTask = InterpretationModelTask | RulesExplanationModelTask;
 
 export interface ModelProvider {
   readonly provider: string;
@@ -89,13 +98,18 @@ export interface ModelGateway {
 
 export const createModelGateway = ({
   provider,
-  promptVersion = "interpret-player-input-v1",
+  promptVersion,
 }: {
   readonly provider: ModelProvider;
   readonly promptVersion?: string;
 }): ModelGateway => ({
   execute: async (task, options) => {
     const started = Date.now();
+    const taskPromptVersion =
+      promptVersion ??
+      (task.type === "interpret-player-input"
+        ? "interpret-player-input-v1"
+        : "explain-rules-v1");
     const taskSnapshot = immutableSnapshot(task);
     let outcome: ModelGatewayExecution["outcome"];
     let retryCount: 0 | 1 = 0;
@@ -158,7 +172,7 @@ export const createModelGateway = ({
       callId: randomUUID(),
       provider: provider.provider,
       model: provider.model,
-      promptVersion,
+      promptVersion: taskPromptVersion,
       startedAt: new Date(started).toISOString(),
       completedAt: new Date(completed).toISOString(),
       durationMs: Math.max(0, completed - started),
@@ -181,7 +195,9 @@ export const createScriptedModelProvider = ({
     provider: "scripted",
     model,
     invoke: async (task) => {
-      const response = script[task.input.utterance];
+      const response =
+        script[`${task.type}:${task.input.utterance}`] ??
+        script[task.input.utterance];
       if (response === undefined) {
         throw new Error("No scripted model response exists for that task input.");
       }
@@ -208,7 +224,10 @@ export interface ModelCallRecord {
   readonly durationMs: number;
   readonly usage: ModelUsage | null;
   readonly retryCount: number;
-  readonly fallbackOutcome: "none" | "safe-rejection";
+  readonly fallbackOutcome:
+    | "none"
+    | "safe-rejection"
+    | "deterministic-rules";
   readonly validation:
     | { readonly status: "accepted" }
     | { readonly status: "rejected"; readonly reason: string };
