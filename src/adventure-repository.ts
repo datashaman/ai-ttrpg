@@ -11,6 +11,7 @@ import { join } from "node:path";
 import {
   createInMemoryTimelineStore,
   createStructuredPlayApplication,
+  type BatchEventStore,
   type CanonicalEvent,
   type EventStore,
   type RandomSource,
@@ -31,7 +32,7 @@ export interface AdventureSummary extends AdventureIdentity {
 }
 
 export interface OpenAdventure extends AdventureIdentity {
-  readonly eventStore: EventStore;
+  readonly eventStore: BatchEventStore;
   readonly randomSource: RandomSource;
   readonly timelineStore: TimelineStore;
   close(): void;
@@ -79,6 +80,10 @@ const openAdventure = (
     append: (event) => {
       ensureOpen();
       store.append(event);
+    },
+    appendBatch: (request) => {
+      ensureOpen();
+      return store.appendBatch(request);
     },
     rollDie: (sides) => {
       ensureOpen();

@@ -1,13 +1,16 @@
+import { randomUUID } from "node:crypto";
 import {
-  appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 
 import type { CanonicalEvent, TimelineStore } from "./structured-play.js";
+import { acceptEventBatch } from "./event-batch.js";
 import {
   createTimelineStore,
   type TimelineSnapshot,
@@ -108,6 +111,22 @@ const serializedEvents = (events: readonly CanonicalEvent[]): string =>
     ? ""
     : `${events.map((event) => JSON.stringify(event)).join("\n")}\n`;
 
+const replaceEventsAtomically = (
+  path: string,
+  events: readonly CanonicalEvent[],
+): void => {
+  const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporaryPath, serializedEvents(events), "utf8");
+    renameSync(temporaryPath, path);
+  } catch (error) {
+    try {
+      unlinkSync(temporaryPath);
+    } catch {}
+    throw error;
+  }
+};
+
 export const createDurableTimelineStore = ({
   directory,
   seed,
@@ -147,11 +166,13 @@ export const createDurableTimelineStore = ({
     activeTimelineId: graph.activeTimelineId,
     snapshots,
     persistence: {
-      append: (timelineId, event) =>
-        appendFileSync(
-          eventFile(directory, timelineId),
-          `${JSON.stringify(event)}\n`,
-        ),
+      appendBatch: (timelineId, request) => {
+        const path = eventFile(directory, timelineId);
+        const history = parseEvents(readFileSync(path, "utf8"));
+        return acceptEventBatch(history, request, (events) =>
+          replaceEventsAtomically(path, events),
+        );
+      },
       branch: (timeline, activeTimelineId, timelineSnapshots) => {
         writeFileSync(
           eventFile(directory, timeline.id),

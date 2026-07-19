@@ -596,7 +596,11 @@ export interface RejectedResult {
     | "scene-transition-unavailable"
     | "action-requires-free-movement"
     | "timeline-unavailable"
-    | "invalid-timeline-position";
+    | "invalid-timeline-position"
+    | "write-conflict"
+    | "idempotency-conflict"
+    | "invalid-write-batch"
+    | "persistence-failed";
   readonly message: string;
   readonly state: GameState;
   readonly availableActions: readonly AvailableAction[];
@@ -613,6 +617,35 @@ export interface ApplicationView {
 export interface EventStore {
   readAll(): readonly CanonicalEvent[];
   append(event: CanonicalEvent): void;
+  appendBatch?(request: EventBatchRequest): EventBatchResult;
+}
+
+export interface EventBatchRequest {
+  readonly expectedPosition: number;
+  readonly idempotencyKey: string;
+  readonly events: readonly CanonicalEvent[];
+}
+
+export type EventBatchResult =
+  | {
+      readonly status: "accepted" | "replayed";
+      readonly events: readonly CanonicalEvent[];
+      readonly actualPosition: number;
+    }
+  | {
+      readonly status: "rejected";
+      readonly code:
+        | "stale-position"
+        | "idempotency-conflict"
+        | "invalid-batch"
+        | "persistence-failed";
+      readonly message: string;
+      readonly expectedPosition: number;
+      readonly actualPosition: number;
+    };
+
+export interface BatchEventStore extends EventStore {
+  appendBatch(request: EventBatchRequest): EventBatchResult;
 }
 
 export interface TimelineSummary {
@@ -635,7 +668,7 @@ export interface TimelineEventSummary {
   readonly type: CanonicalEvent["type"];
 }
 
-export interface TimelineStore extends EventStore, RandomSource {
+export interface TimelineStore extends BatchEventStore, RandomSource {
   view(): TimelineCollectionView;
   readTimeline(timelineId: string): readonly CanonicalEvent[];
   branchTimeline(eventPosition: number): TimelineSummary;
@@ -1502,8 +1535,15 @@ export const createStructuredPlayApplication = (
     ...timelineActions(),
   ];
 
+  let pendingEvents: CanonicalEvent[] = [];
+  let commandStartPosition = 0;
+  const currentEvents = (): readonly CanonicalEvent[] => [
+    ...eventStore.readAll(),
+    ...pendingEvents,
+  ];
+
   const view = (): ApplicationView => {
-    const state = project(eventStore.readAll());
+    const state = project(currentEvents());
     return {
       state,
       availableActions: currentAvailableActions(state),
@@ -1515,15 +1555,18 @@ export const createStructuredPlayApplication = (
     code: RejectedResult["code"],
     message: string,
     state = project(eventStore.readAll()),
-  ): RejectedResult => ({
-    status: "rejected",
-    code,
-    message,
-    state,
-    availableActions: currentAvailableActions(state),
-    timeline: timelineStore?.view() ?? null,
-    appendedEvents: [],
-  });
+  ): RejectedResult => {
+    pendingEvents = [];
+    return {
+      status: "rejected",
+      code,
+      message,
+      state,
+      availableActions: currentAvailableActions(state),
+      timeline: timelineStore?.view() ?? null,
+      appendedEvents: [],
+    };
+  };
 
   const append = <EventType extends keyof EventPayloads>(
     type: EventType,
@@ -1533,25 +1576,48 @@ export const createStructuredPlayApplication = (
     const event = createEvent(
       type,
       payload,
-      eventStore.readAll().length + 1,
+      currentEvents().length + 1,
       commandId,
     );
-    eventStore.append(event as CanonicalEvent);
+    pendingEvents.push(event as CanonicalEvent);
     return event;
   };
 
-  const accept = (
+  const commitPendingEvents = (
     message: string,
     appendedEvents: readonly CanonicalEvent[],
-  ): AcceptedResult => {
-    const state = project(eventStore.readAll());
+  ): AcceptedResult | RejectedResult => {
+    let acceptedEvents = appendedEvents;
+    if (pendingEvents.length > 0) {
+      if (eventStore.appendBatch !== undefined) {
+        const result = eventStore.appendBatch({
+          expectedPosition: commandStartPosition,
+          idempotencyKey: pendingEvents[0]!.causationId,
+          events: pendingEvents,
+        });
+        if (result.status === "rejected") {
+          const code: RejectedResult["code"] =
+            result.code === "stale-position"
+              ? "write-conflict"
+              : result.code === "invalid-batch"
+                ? "invalid-write-batch"
+                : result.code;
+          return reject(code, result.message);
+        }
+        acceptedEvents = result.events;
+      } else {
+        pendingEvents.forEach((event) => eventStore.append(event));
+      }
+    }
+    pendingEvents = [];
+    const state = project(currentEvents());
     return {
       status: "accepted",
       message,
       state,
       availableActions: currentAvailableActions(state),
       timeline: timelineStore?.view() ?? null,
-      appendedEvents,
+      appendedEvents: acceptedEvents,
     };
   };
 
@@ -1560,7 +1626,7 @@ export const createStructuredPlayApplication = (
     likelihood: Likelihood,
     evidence: readonly EstablishedFact[],
     commandId: string,
-  ): AcceptedResult => {
+  ): AcceptedResult | RejectedResult => {
     const recommendation = createNarratorLikelihoodRecommendation(
       proposition,
       likelihood,
@@ -1571,7 +1637,7 @@ export const createStructuredPlayApplication = (
       { recommendation },
       commandId,
     );
-    return accept(
+    return commitPendingEvents(
       `The Narrator recommends ${recommendation.likelihood}; the Player must confirm or change it before rolling.`,
       [event],
     );
@@ -1582,7 +1648,7 @@ export const createStructuredPlayApplication = (
     commandId: string,
     appendedEvents: CanonicalEvent[],
   ): AdventureEnding | null => {
-    const state = project(eventStore.readAll());
+    const state = project(currentEvents());
     const definition = adventureEndings.find(
       (candidate) =>
         candidate.from === from &&
@@ -1604,7 +1670,7 @@ export const createStructuredPlayApplication = (
     commandId: string,
     appendedEvents: CanonicalEvent[],
   ): Scene | null => {
-    const state = project(eventStore.readAll());
+    const state = project(currentEvents());
     const transition = sceneTransitions.find(
       (candidate) =>
         candidate.automatic === true &&
@@ -1653,7 +1719,7 @@ export const createStructuredPlayApplication = (
     definition: FreeActionDefinition,
     from: Scene,
     commandId: string,
-  ): AcceptedResult => {
+  ): AcceptedResult | RejectedResult => {
     const event = append(
       "FreeActionCompleted",
       {
@@ -1668,7 +1734,7 @@ export const createStructuredPlayApplication = (
       commandId,
       appendedEvents,
     );
-    return accept(
+    return commitPendingEvents(
       `${definition.establishedFact.text}${sceneExit.ending === null ? "" : ` The Adventure ends ${endingAdverb(sceneExit.ending.kind)}: ${sceneExit.ending.text}`}${sceneExit.nextScene === null ? "" : ` The ${from} Scene ends and ${sceneExit.nextScene} begins.`}`,
       appendedEvents,
     );
@@ -1678,6 +1744,8 @@ export const createStructuredPlayApplication = (
     view,
     submit(input) {
       const events = eventStore.readAll();
+      pendingEvents = [];
+      commandStartPosition = events.length;
       const state = project(events);
       const commandId = randomUUID();
 
@@ -1691,7 +1759,7 @@ export const createStructuredPlayApplication = (
         }
         try {
           const timeline = timelineStore.branchTimeline(input.eventPosition);
-          return accept(
+          return commitPendingEvents(
             `Created and selected ${timeline.id} from accepted event ${input.eventPosition}.`,
             [],
           );
@@ -1716,7 +1784,7 @@ export const createStructuredPlayApplication = (
             state,
           );
         }
-        return accept(`Selected ${input.timelineId}.`, []);
+        return commitPendingEvents(`Selected ${input.timelineId}.`, []);
       }
 
       if (input.type === "use-field-kit") {
@@ -1754,7 +1822,7 @@ export const createStructuredPlayApplication = (
           },
           commandId,
         );
-        return accept(
+        return commitPendingEvents(
           `The Field Kit restores 1 ${input.resource} and is removed from Inventory.`,
           [event],
         );
@@ -1791,7 +1859,7 @@ export const createStructuredPlayApplication = (
             append("ConfrontationStarted", { definition: confrontation }, commandId),
           );
         }
-        return accept(
+        return commitPendingEvents(
           `The ${from} Scene ends and ${input.scene} begins.`,
           appendedEvents,
         );
@@ -1849,7 +1917,7 @@ export const createStructuredPlayApplication = (
           commandId,
           appendedEvents,
         );
-        return accept(
+        return commitPendingEvents(
           `${answer} (${roll} <= ${yesThreshold}): ${establishedFact.text}${sceneExit.ending === null ? "" : ` The Adventure ends ${endingAdverb(sceneExit.ending.kind)}: ${sceneExit.ending.text}`}${sceneExit.nextScene === null ? "" : ` The ${state.activeScene} Scene ends and ${sceneExit.nextScene} begins.`}`,
           appendedEvents,
         );
@@ -1964,7 +2032,7 @@ export const createStructuredPlayApplication = (
         };
         const event = append("CheckResolved", resolution, commandId);
         const appendedEvents: CanonicalEvent[] = [event];
-        const resolvedState = project(eventStore.readAll());
+        const resolvedState = project(currentEvents());
         const activeConfrontation = resolvedState.confrontation;
         let confrontationEnding: ConfrontationEnding | null = null;
         let adventureEnding: AdventureEnding | null = null;
@@ -2034,7 +2102,7 @@ export const createStructuredPlayApplication = (
               )
             : { ending: null, nextScene: null };
         adventureEnding ??= sceneExit.ending;
-        return accept(
+        return commitPendingEvents(
           `${outcome} (${adjustedTotal}): ${resolution.committedStake.summary}${confrontationEnding === null ? "" : ` ${confrontationEnding.establishedFact.text}`}${adventureEnding === null ? "" : ` The Adventure ends ${endingAdverb(adventureEnding.kind)}: ${adventureEnding.text}`}${sceneExit.nextScene === null ? "" : ` The ${state.activeScene} Scene ends and ${sceneExit.nextScene} begins.`}`,
           appendedEvents,
         );
@@ -2079,7 +2147,7 @@ export const createStructuredPlayApplication = (
               : ["decline", "spend-resolve"],
         };
         const event = append("CheckRollRevealed", { pendingChoice }, commandId);
-        return accept(
+        return commitPendingEvents(
           `Roll revealed (${inputs.join(" + ")} + ${modifier} = ${total}). Decide whether to spend Resolve.`,
           [event],
         );
@@ -2116,7 +2184,7 @@ export const createStructuredPlayApplication = (
           },
           commandId,
         );
-        return accept("The corrected Check Proposal is ready for review.", [event]);
+        return commitPendingEvents("The corrected Check Proposal is ready for review.", [event]);
       }
 
       if (input.type === "revise-check-action") {
@@ -2158,7 +2226,7 @@ export const createStructuredPlayApplication = (
           },
           commandId,
         );
-        return accept("A new validated Check Proposal is ready for review.", [event]);
+        return commitPendingEvents("A new validated Check Proposal is ready for review.", [event]);
       }
 
       if (input.type === "withdraw-check-proposal") {
@@ -2174,7 +2242,7 @@ export const createStructuredPlayApplication = (
           { proposalId: input.proposalId },
           commandId,
         );
-        return accept("The action was withdrawn before rolling.", [event]);
+        return commitPendingEvents("The action was withdrawn before rolling.", [event]);
       }
 
       if (input.type === "amend-check-stakes") {
@@ -2269,7 +2337,7 @@ export const createStructuredPlayApplication = (
         }
         const proposal = createProposal(definition);
         const event = append("CheckProposalCreated", { proposal }, commandId);
-        return accept("Review the Check Proposal before rolling.", [event]);
+        return commitPendingEvents("Review the Check Proposal before rolling.", [event]);
       }
 
       if (input.type === "begin-adventure") {
@@ -2285,7 +2353,7 @@ export const createStructuredPlayApplication = (
           { scene: "arrival" },
           commandId,
         );
-        return accept("The Adventure begins at the locked manor.", [event]);
+        return commitPendingEvents("The Adventure begins at the locked manor.", [event]);
       }
 
       if (state.playerCharacter !== null) {
@@ -2338,7 +2406,7 @@ export const createStructuredPlayApplication = (
         playerCharacter,
         commandId,
       );
-      return accept(`${playerCharacter.name} is ready for the Adventure.`, [event]);
+      return commitPendingEvents(`${playerCharacter.name} is ready for the Adventure.`, [event]);
     },
   };
 };

@@ -7,10 +7,13 @@ import {
 } from "./random-source.js";
 import type {
   CanonicalEvent,
+  EventBatchRequest,
+  EventBatchResult,
   TimelineCollectionView,
   TimelineStore,
   TimelineSummary,
 } from "./structured-play.js";
+import { acceptEventBatch } from "./event-batch.js";
 
 export interface TimelineSnapshot {
   readonly id: string;
@@ -20,7 +23,10 @@ export interface TimelineSnapshot {
 }
 
 export interface TimelinePersistence {
-  append(timelineId: string, event: CanonicalEvent): void;
+  appendBatch(
+    timelineId: string,
+    request: EventBatchRequest,
+  ): EventBatchResult;
   branch(
     timeline: TimelineSnapshot,
     activeTimelineId: string,
@@ -34,7 +40,7 @@ export interface TimelinePersistence {
 
 interface StoredTimeline extends TimelineSnapshot {
   readonly events: CanonicalEvent[];
-  readonly randomSource: RandomSource;
+  randomSource: RandomSource;
 }
 
 export const createTimelineStore = ({
@@ -67,6 +73,13 @@ export const createTimelineStore = ({
   let activeTimelineId = initialActiveTimelineId;
 
   const active = (): StoredTimeline => timelines.get(activeTimelineId)!;
+  const restoreRandomPosition = (): void => {
+    const timeline = active();
+    timeline.randomSource = createSeededRandomSourceAtPosition(
+      seed,
+      committedRandomPosition(timeline.events),
+    );
+  };
   const snapshot = (timeline: StoredTimeline): TimelineSnapshot => ({
     id: timeline.id,
     parentTimelineId: timeline.parentTimelineId,
@@ -82,13 +95,39 @@ export const createTimelineStore = ({
     eventCount: timeline.events.length,
     randomPosition: timeline.randomSource.position(),
   });
+  const commitBatch = (request: EventBatchRequest): EventBatchResult => {
+    const result =
+      persistence?.appendBatch(activeTimelineId, request) ??
+      acceptEventBatch(active().events, request, () => {});
+    if (result.status === "accepted") {
+      active().events.push(...structuredClone(result.events));
+    } else if (
+      result.status === "replayed" &&
+      active().events.length === request.expectedPosition
+    ) {
+      active().events.push(...structuredClone(result.events));
+    }
+    restoreRandomPosition();
+    return result;
+  };
 
   return {
     readAll: () => structuredClone(active().events),
     append: (event) => {
-      persistence?.append(activeTimelineId, event);
-      active().events.push(structuredClone(event));
+      const result = commitBatch({
+        expectedPosition: active().events.length,
+        idempotencyKey: event.causationId,
+        events: [event],
+      });
+      if (result.status !== "accepted") {
+        throw new Error(
+          result.status === "rejected"
+            ? result.message
+            : "The event was already accepted.",
+        );
+      }
     },
+    appendBatch: commitBatch,
     rollDie: (sides) => active().randomSource.rollDie(sides),
     metadata: () => active().randomSource.metadata(),
     position: () => active().randomSource.position(),
