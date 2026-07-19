@@ -303,11 +303,30 @@ const applicableRules = (query: string): readonly EvidenceItem[] => {
   return matching.length > 0 ? matching : [AUTHORED_RULES[1]!.item];
 };
 
+const RELEVANCE_STOP_WORDS = new Set([
+    "and",
+    "are",
+    "can",
+    "does",
+    "from",
+    "how",
+    "that",
+    "the",
+    "this",
+    "use",
+    "was",
+    "what",
+    "why",
+    "with",
+    "you",
+    "your",
+]);
+
 const relevanceScore = (query: string, item: EvidenceItem): number => {
   const queryTerms = new Set(
     normalized(query)
       .split(" ")
-      .filter((term) => term.length >= 3),
+      .filter((term) => term.length >= 3 && !RELEVANCE_STOP_WORDS.has(term)),
   );
   return normalized(`${item.id} ${item.sourceReference} ${item.content}`)
     .split(" ")
@@ -320,7 +339,6 @@ export const isRulesEvidenceApplicable = (
 ): boolean => {
   if (item.sourceKind === "authority-rule") return true;
   if (item.sourceKind === "active-scene") return true;
-  if (item.sourceKind === "resolution") return true;
   return relevanceScore(query, item) > 0;
 };
 

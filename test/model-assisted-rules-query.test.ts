@@ -243,9 +243,24 @@ for (const [kind, explanation] of [
 }
 
 test("an irrelevant in-bundle citation selects deterministic presentation", async () => {
-  const { eventStore } = beginAdventureFixture();
-  const unrelatedEvent = eventStore.readAll().at(-1);
-  assert.ok(unrelatedEvent);
+  const { app, eventStore } = beginAdventureFixture();
+  const proposed = app.submit({
+    type: "choose-action",
+    actionId: "inspect-dark-entryway",
+  });
+  const proposal = proposed.state.pendingCheckProposal;
+  assert.ok(proposal);
+  const revealed = app.submit({
+    type: "confirm-check-proposal",
+    proposalId: proposal.id,
+  });
+  const pendingChoice = revealed.state.pendingChoice;
+  assert.ok(pendingChoice);
+  app.submit({
+    type: "resolve-pending-check",
+    pendingChoiceId: pendingChoice.id,
+    choice: "decline",
+  });
   const provider = createScriptedModelProvider({
     model: "mismatched-rules-citation-v1",
     responses: {
@@ -260,7 +275,7 @@ test("an irrelevant in-bundle citation selects deterministic presentation", asyn
             text: INVENTORY_RULE,
             evidenceItemIds: [
               "rule:inventory-items@1.0.0",
-              `event:${unrelatedEvent.id}`,
+              "resolution:current",
             ],
           },
         ],
@@ -278,7 +293,7 @@ test("an irrelevant in-bundle citation selects deterministic presentation", asyn
   assert.match(script.output.join(""), /deterministic fallback/);
   assert.ok(
     result.modelCallRecords[1]?.evidenceReferences.some(
-      (reference) => reference.itemId === `event:${unrelatedEvent.id}`,
+      (reference) => reference.itemId === "resolution:current",
     ),
   );
   assert.equal(result.modelCallRecords[1]?.validation.status, "rejected");
