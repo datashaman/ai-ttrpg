@@ -10,7 +10,8 @@
     "start": "tsx src/cli.ts",
     "test": "tsx --test test/**/*.test.ts",
     "test:openai-smoke": "node --env-file-if-exists=.env.local --import tsx --test test/openai-smoke.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:release": "npm test && npm run typecheck"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
