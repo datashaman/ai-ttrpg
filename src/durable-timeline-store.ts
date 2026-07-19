@@ -15,6 +15,11 @@ import {
   createTimelineStore,
   type TimelineSnapshot,
 } from "./timeline-store.js";
+import {
+  isTimelineId,
+  rootTimelineId,
+  validateTimelineGraph,
+} from "./timeline-graph.js";
 
 interface TimelineMetadata {
   readonly id: string;
@@ -27,11 +32,8 @@ interface TimelineGraph {
   readonly timelines: readonly TimelineMetadata[];
 }
 
-const rootTimelineId = "timeline-main";
 const graphFile = "timelines.json";
 const childDirectory = "timelines";
-const isTimelineId = (value: string): boolean =>
-  /^timeline-[a-zA-Z0-9-]+$/.test(value);
 
 const rootGraph = (): TimelineGraph => ({
   activeTimelineId: rootTimelineId,
@@ -61,6 +63,31 @@ export const initializeDurableTimelineStorage = (directory: string): void => {
   writeGraph(directory, rootGraph());
 };
 
+export const writeDurableTimelineStorage = (
+  directory: string,
+  activeTimelineId: string,
+  timelines: readonly TimelineSnapshot[],
+): void => {
+  mkdirSync(join(directory, childDirectory), { recursive: true });
+  for (const timeline of timelines) {
+    writeFileSync(
+      eventFile(directory, timeline.id),
+      serializedEvents(timeline.events),
+      "utf8",
+    );
+  }
+  writeGraph(directory, {
+    activeTimelineId,
+    timelines: timelines.map(
+      ({ id, parentTimelineId, branchEventPosition }) => ({
+        id,
+        parentTimelineId,
+        branchEventPosition,
+      }),
+    ),
+  });
+};
+
 const isTimelineMetadata = (value: unknown): value is TimelineMetadata =>
   typeof value === "object" &&
   value !== null &&
@@ -87,22 +114,6 @@ const readGraph = (directory: string): TimelineGraph => {
     throw new Error("Invalid Timeline graph.");
   }
   const graph = value as TimelineGraph;
-  const ids = graph.timelines.map((timeline) => timeline.id);
-  if (
-    new Set(ids).size !== ids.length ||
-    !ids.includes(rootTimelineId) ||
-    !ids.includes(graph.activeTimelineId) ||
-    graph.timelines.some(
-      (timeline) =>
-        timeline.id === rootTimelineId
-          ? timeline.parentTimelineId !== null ||
-            timeline.branchEventPosition !== null
-          : timeline.parentTimelineId === null ||
-            !ids.includes(timeline.parentTimelineId),
-    )
-  ) {
-    throw new Error("Invalid Timeline relationships.");
-  }
   return graph;
 };
 
@@ -144,18 +155,10 @@ export const createDurableTimelineStore = ({
       readFileSync(eventFile(directory, metadata.id), "utf8"),
     ),
   }));
-  const timelines = new Map(snapshots.map((timeline) => [timeline.id, timeline]));
-  for (const timeline of snapshots) {
-    if (timeline.parentTimelineId === null) continue;
-    const parent = timelines.get(timeline.parentTimelineId)!;
-    if (
-      timeline.branchEventPosition! > parent.events.length ||
-      JSON.stringify(timeline.events.slice(0, timeline.branchEventPosition!)) !==
-        JSON.stringify(parent.events.slice(0, timeline.branchEventPosition!))
-    ) {
-      throw new Error("Invalid Timeline branch history.");
-    }
-  }
+  validateTimelineGraph({
+    activeTimelineId: graph.activeTimelineId,
+    timelines: snapshots,
+  });
   const metadata = (timeline: TimelineSnapshot): TimelineMetadata => ({
     id: timeline.id,
     parentTimelineId: timeline.parentTimelineId,

@@ -4,6 +4,8 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -20,7 +22,14 @@ import {
 import {
   createDurableTimelineStore,
   initializeDurableTimelineStorage,
+  writeDurableTimelineStorage,
 } from "./durable-timeline-store.js";
+import {
+  parseAdventureArchive,
+  serializeAdventureArchive,
+  type PortableAdventureRecord,
+} from "./adventure-archive.js";
+import { isCanonicalEventEnvelope } from "./canonical-event-validation.js";
 
 export interface AdventureIdentity {
   readonly id: string;
@@ -42,9 +51,12 @@ export interface AdventureRepository {
   create(name: string): OpenAdventure;
   list(): readonly AdventureSummary[];
   open(id: string): OpenAdventure;
+  exportArchive(id: string): string;
+  importArchive(serialized: string): OpenAdventure;
 }
 
 interface InMemoryAdventureRecord extends AdventureIdentity {
+  readonly randomSeed: number;
   readonly timelineStore: TimelineStore;
 }
 
@@ -126,6 +138,26 @@ const openAdventure = (
   };
 };
 
+const portableRecord = (
+  identity: AdventureIdentity,
+  randomSeed: number,
+  timelineStore: TimelineStore,
+): PortableAdventureRecord => {
+  const view = timelineStore.view();
+  return {
+    ...identity,
+    randomSeed,
+    activeTimelineId: view.activeTimelineId,
+    timelines: view.timelines.map((timeline) => ({
+      id: timeline.id,
+      parentTimelineId: timeline.parentTimelineId,
+      branchEventPosition: timeline.branchEventPosition,
+      randomPosition: timeline.randomPosition,
+      events: timelineStore.readTimeline(timeline.id),
+    })),
+  };
+};
+
 export const createInMemoryAdventureRepository = (): AdventureRepository => {
   const records = new Map<string, InMemoryAdventureRecord>();
 
@@ -139,11 +171,13 @@ export const createInMemoryAdventureRepository = (): AdventureRepository => {
 
   return {
     create: (name) => {
+      const randomSeed = randomInt(0x1_0000_0000);
       const record: InMemoryAdventureRecord = {
         id: randomUUID(),
         name: adventureName(name),
+        randomSeed,
         timelineStore: createInMemoryTimelineStore({
-          seed: randomInt(0x1_0000_0000),
+          seed: randomSeed,
         }),
       };
       records.set(record.id, record);
@@ -156,165 +190,40 @@ export const createInMemoryAdventureRepository = (): AdventureRepository => {
         eventCount: timelineStore.view().activeTimeline.eventCount,
       })),
     open,
+    exportArchive: (id) => {
+      const record = records.get(id);
+      if (record === undefined) {
+        throw new Error(`Adventure "${id}" is unavailable.`);
+      }
+      return serializeAdventureArchive(
+        portableRecord(record, record.randomSeed, record.timelineStore),
+      );
+    },
+    importArchive: (serialized) => {
+      const archive = parseAdventureArchive(serialized, validateArchivedEvents);
+      if (records.has(archive.id)) {
+        throw new Error(
+          `Adventure "${archive.id}" already exists; import did not overwrite it.`,
+        );
+      }
+      const record: InMemoryAdventureRecord = {
+        id: archive.id,
+        name: archive.name,
+        randomSeed: archive.randomSeed,
+        timelineStore: createInMemoryTimelineStore({
+          seed: archive.randomSeed,
+          activeTimelineId: archive.activeTimelineId,
+          snapshots: archive.timelines,
+        }),
+      };
+      records.set(record.id, record);
+      return open(record.id);
+    },
   };
 };
 
 const metadataFile = "adventure.json";
 const eventsFile = "events.jsonl";
-
-const canonicalEventTypes: ReadonlySet<CanonicalEvent["type"]> = new Set([
-  "PlayerCharacterConfigured",
-  "SceneStarted",
-  "SceneTransitioned",
-  "ConfrontationStarted",
-  "FreeActionCompleted",
-  "AdventureEnded",
-  "CheckProposalCreated",
-  "CheckProposalReplaced",
-  "CheckProposalWithdrawn",
-  "CheckRollRevealed",
-  "CheckResolved",
-  "ConfrontationEnded",
-  "FieldKitUsed",
-  "NarratorLikelihoodRecommended",
-  "OracleAnswered",
-]);
-
-const isObject = (value: unknown): value is object =>
-  typeof value === "object" && value !== null;
-
-const hasString = (value: object, property: string): boolean =>
-  typeof Reflect.get(value, property) === "string";
-
-const isScene = (value: unknown): boolean =>
-  value === "arrival" ||
-  value === "discovery" ||
-  value === "confrontation" ||
-  value === "consequence";
-
-const isEstablishedFact = (value: unknown): value is object =>
-  isObject(value) && hasString(value, "id") && hasString(value, "text");
-
-const isAdventureEnding = (value: unknown): boolean =>
-  isEstablishedFact(value) &&
-  ["favourable", "adverse", "unresolved"].includes(
-    Reflect.get(value, "kind") as string,
-  );
-
-const isPlayerCharacter = (value: unknown): boolean => {
-  if (!isObject(value)) return false;
-  const traits = Reflect.get(value, "traits");
-  const inventory = Reflect.get(value, "inventory");
-  return (
-    hasString(value, "name") &&
-    hasString(value, "pronouns") &&
-    hasString(value, "motivation") &&
-    isObject(traits) &&
-    ["Might", "Wits", "Presence"].every((trait) =>
-      [0, 1, 2].includes(Reflect.get(traits, trait) as number),
-    ) &&
-    [0, 1, 2, 3].includes(Reflect.get(value, "health") as number) &&
-    [0, 1, 2, 3].includes(Reflect.get(value, "resolve") as number) &&
-    Array.isArray(inventory)
-  );
-};
-
-const isCanonicalEventPayload = (
-  type: CanonicalEvent["type"],
-  payload: unknown,
-): boolean => {
-  if (!isObject(payload)) return false;
-  switch (type) {
-    case "PlayerCharacterConfigured":
-      return isPlayerCharacter(payload);
-    case "SceneStarted":
-      return isScene(Reflect.get(payload, "scene"));
-    case "SceneTransitioned":
-      return (
-        isScene(Reflect.get(payload, "from")) &&
-        isScene(Reflect.get(payload, "to"))
-      );
-    case "ConfrontationStarted":
-      return isObject(Reflect.get(payload, "definition"));
-    case "FreeActionCompleted":
-      return (
-        hasString(payload, "actionId") &&
-        isEstablishedFact(Reflect.get(payload, "establishedFact"))
-      );
-    case "AdventureEnded":
-      return (
-        isScene(Reflect.get(payload, "from")) &&
-        isAdventureEnding(Reflect.get(payload, "ending"))
-      );
-    case "CheckProposalCreated":
-      return isObject(Reflect.get(payload, "proposal"));
-    case "CheckProposalReplaced":
-      return (
-        hasString(payload, "supersededProposalId") &&
-        isObject(Reflect.get(payload, "proposal")) &&
-        ["correction", "revised-action"].includes(
-          Reflect.get(payload, "reason") as string,
-        )
-      );
-    case "CheckProposalWithdrawn":
-      return hasString(payload, "proposalId");
-    case "CheckRollRevealed":
-      return isObject(Reflect.get(payload, "pendingChoice"));
-    case "CheckResolved":
-      return (
-        hasString(payload, "proposalId") &&
-        hasString(payload, "actionId") &&
-        hasString(payload, "pendingChoiceId") &&
-        isObject(Reflect.get(payload, "committedStake")) &&
-        isObject(Reflect.get(payload, "trace"))
-      );
-    case "ConfrontationEnded":
-      return (
-        hasString(payload, "confrontationId") &&
-        isObject(Reflect.get(payload, "ending")) &&
-        Array.isArray(Reflect.get(payload, "effects")) &&
-        (Reflect.get(payload, "nextScene") === null ||
-          Reflect.get(payload, "nextScene") === "consequence")
-      );
-    case "FieldKitUsed":
-      return (
-        Reflect.get(payload, "item") === "Field Kit" &&
-        Reflect.get(payload, "removalReason") === "consumption" &&
-        ["Health", "Resolve"].includes(Reflect.get(payload, "resource") as string) &&
-        Reflect.get(payload, "restored") === 1 &&
-        [0, 1, 2, 3].includes(Reflect.get(payload, "resultingValue") as number)
-      );
-    case "NarratorLikelihoodRecommended":
-      return isObject(Reflect.get(payload, "recommendation"));
-    case "OracleAnswered":
-      return (
-        hasString(payload, "recommendationId") &&
-        isEstablishedFact(Reflect.get(payload, "establishedFact")) &&
-        isObject(Reflect.get(payload, "trace"))
-      );
-  }
-};
-
-const isCanonicalEventEnvelope = (
-  value: unknown,
-  expectedSequence: number,
-): value is CanonicalEvent => {
-  if (!isObject(value)) return false;
-  const type = Reflect.get(value, "type") as CanonicalEvent["type"];
-  const payload = Reflect.get(value, "payload");
-  return (
-    hasString(value, "id") &&
-    Reflect.get(value, "streamId") === "adventure" &&
-    Reflect.get(value, "sequence") === expectedSequence &&
-    canonicalEventTypes.has(type) &&
-    Reflect.get(value, "schemaVersion") === 1 &&
-    hasString(value, "timestamp") &&
-    Reflect.get(value, "origin") === "structured-play" &&
-    hasString(value, "correlationId") &&
-    hasString(value, "causationId") &&
-    isCanonicalEventPayload(type, payload)
-  );
-};
 
 const isMetadata = (value: unknown): value is AdventureMetadata =>
   typeof value === "object" &&
@@ -348,6 +257,15 @@ const parseEvents = (serializedEvents: string): CanonicalEvent[] => {
   }).view();
   return events;
 };
+
+const validateArchivedEvents = (
+  events: readonly unknown[],
+): readonly CanonicalEvent[] =>
+  parseEvents(
+    events.length === 0
+      ? ""
+      : `${events.map((event) => JSON.stringify(event)).join("\n")}\n`,
+  );
 
 const readRecord = (rootDirectory: string, id: string): LocalAdventureRecord => {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(id)) {
@@ -415,7 +333,9 @@ export const createLocalAdventureRepository = (
     },
     list: () =>
       readdirSync(rootDirectory, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
+        .filter(
+          (entry) => entry.isDirectory() && !entry.name.startsWith("."),
+        )
         .map((entry) => readRecord(rootDirectory, entry.name))
         .map((record) => {
           const timelineStore = createDurableTimelineStore({
@@ -430,5 +350,52 @@ export const createLocalAdventureRepository = (
           };
         }),
     open,
+    exportArchive: (id) => {
+      const record = readRecord(rootDirectory, id);
+      const timelineStore = createDurableTimelineStore({
+        directory: join(rootDirectory, record.id),
+        seed: record.randomSeed,
+        parseEvents,
+      });
+      return serializeAdventureArchive(
+        portableRecord(record, record.randomSeed, timelineStore),
+      );
+    },
+    importArchive: (serialized) => {
+      const archive = parseAdventureArchive(serialized, validateArchivedEvents);
+      const directory = join(rootDirectory, archive.id);
+      if (existsSync(directory)) {
+        throw new Error(
+          `Adventure "${archive.id}" already exists; import did not overwrite it.`,
+        );
+      }
+      const temporaryDirectory = join(
+        rootDirectory,
+        `.${archive.id}.${randomUUID()}.import`,
+      );
+      try {
+        mkdirSync(temporaryDirectory);
+        const metadata: AdventureMetadata = {
+          id: archive.id,
+          name: archive.name,
+          randomSeed: archive.randomSeed,
+        };
+        writeFileSync(
+          join(temporaryDirectory, metadataFile),
+          `${JSON.stringify(metadata, null, 2)}\n`,
+          "utf8",
+        );
+        writeDurableTimelineStorage(
+          temporaryDirectory,
+          archive.activeTimelineId,
+          archive.timelines,
+        );
+        renameSync(temporaryDirectory, directory);
+      } catch (error) {
+        rmSync(temporaryDirectory, { recursive: true, force: true });
+        throw error;
+      }
+      return open(archive.id);
+    },
   };
 };
