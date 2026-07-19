@@ -1,6 +1,5 @@
 import { randomInt, randomUUID } from "node:crypto";
 import {
-  appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -10,15 +9,17 @@ import {
 import { join } from "node:path";
 
 import {
+  createInMemoryTimelineStore,
   createStructuredPlayApplication,
   type CanonicalEvent,
   type EventStore,
   type RandomSource,
+  type TimelineStore,
 } from "./structured-play.js";
 import {
-  committedRandomPosition,
-  createSeededRandomSourceAtPosition,
-} from "./random-source.js";
+  createDurableTimelineStore,
+  initializeDurableTimelineStorage,
+} from "./durable-timeline-store.js";
 
 export interface AdventureIdentity {
   readonly id: string;
@@ -32,6 +33,7 @@ export interface AdventureSummary extends AdventureIdentity {
 export interface OpenAdventure extends AdventureIdentity {
   readonly eventStore: EventStore;
   readonly randomSource: RandomSource;
+  readonly timelineStore: TimelineStore;
   close(): void;
 }
 
@@ -41,13 +43,16 @@ export interface AdventureRepository {
   open(id: string): OpenAdventure;
 }
 
-interface AdventureRecord extends AdventureIdentity {
-  readonly events: CanonicalEvent[];
-  readonly randomSeed: number;
+interface InMemoryAdventureRecord extends AdventureIdentity {
+  readonly timelineStore: TimelineStore;
 }
 
 interface AdventureMetadata extends AdventureIdentity {
   readonly randomSeed: number;
+}
+
+interface LocalAdventureRecord extends AdventureMetadata {
+  readonly events: CanonicalEvent[];
 }
 
 const adventureName = (name: string): string => {
@@ -59,30 +64,57 @@ const adventureName = (name: string): string => {
 };
 
 const openAdventure = (
-  record: AdventureRecord,
-  appendEvent: (event: CanonicalEvent) => void,
+  identity: AdventureIdentity,
+  store: TimelineStore,
 ): OpenAdventure => {
   let closed = false;
   const ensureOpen = (): void => {
-    if (closed) throw new Error(`Adventure "${record.id}" is closed.`);
+    if (closed) throw new Error(`Adventure "${identity.id}" is closed.`);
+  };
+  const timelineStore: TimelineStore = {
+    readAll: () => {
+      ensureOpen();
+      return store.readAll();
+    },
+    append: (event) => {
+      ensureOpen();
+      store.append(event);
+    },
+    rollDie: (sides) => {
+      ensureOpen();
+      return store.rollDie(sides);
+    },
+    metadata: () => {
+      ensureOpen();
+      return store.metadata();
+    },
+    position: () => {
+      ensureOpen();
+      return store.position();
+    },
+    view: () => {
+      ensureOpen();
+      return store.view();
+    },
+    readTimeline: (timelineId) => {
+      ensureOpen();
+      return store.readTimeline(timelineId);
+    },
+    branchTimeline: (eventPosition) => {
+      ensureOpen();
+      return store.branchTimeline(eventPosition);
+    },
+    selectTimeline: (timelineId) => {
+      ensureOpen();
+      return store.selectTimeline(timelineId);
+    },
   };
   return {
-    id: record.id,
-    name: record.name,
-    randomSource: createSeededRandomSourceAtPosition(
-      record.randomSeed,
-      committedRandomPosition(record.events),
-    ),
-    eventStore: {
-      readAll: () => {
-        ensureOpen();
-        return structuredClone(record.events);
-      },
-      append: (event) => {
-        ensureOpen();
-        appendEvent(structuredClone(event));
-      },
-    },
+    id: identity.id,
+    name: identity.name,
+    eventStore: timelineStore,
+    randomSource: timelineStore,
+    timelineStore,
     close: () => {
       closed = true;
     },
@@ -90,32 +122,33 @@ const openAdventure = (
 };
 
 export const createInMemoryAdventureRepository = (): AdventureRepository => {
-  const records = new Map<string, AdventureRecord>();
+  const records = new Map<string, InMemoryAdventureRecord>();
 
   const open = (id: string): OpenAdventure => {
     const record = records.get(id);
     if (record === undefined) {
       throw new Error(`Adventure "${id}" is unavailable.`);
     }
-    return openAdventure(record, (event) => record.events.push(event));
+    return openAdventure(record, record.timelineStore);
   };
 
   return {
     create: (name) => {
-      const record: AdventureRecord = {
+      const record: InMemoryAdventureRecord = {
         id: randomUUID(),
         name: adventureName(name),
-        events: [],
-        randomSeed: randomInt(0x1_0000_0000),
+        timelineStore: createInMemoryTimelineStore({
+          seed: randomInt(0x1_0000_0000),
+        }),
       };
       records.set(record.id, record);
       return open(record.id);
     },
     list: () =>
-      [...records.values()].map(({ id, name, events }) => ({
+      [...records.values()].map(({ id, name, timelineStore }) => ({
         id,
         name,
-        eventCount: events.length,
+        eventCount: timelineStore.view().activeTimeline.eventCount,
       })),
     open,
   };
@@ -287,7 +320,31 @@ const isMetadata = (value: unknown): value is AdventureMetadata =>
   (Reflect.get(value, "randomSeed") as number) >= 0 &&
   (Reflect.get(value, "randomSeed") as number) <= 0xffff_ffff;
 
-const readRecord = (rootDirectory: string, id: string): AdventureRecord => {
+const parseEvents = (serializedEvents: string): CanonicalEvent[] => {
+  const parsedEvents: unknown[] = serializedEvents
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line): unknown => JSON.parse(line));
+  if (
+    !parsedEvents.every((event, index) =>
+      isCanonicalEventEnvelope(event, index + 1),
+    )
+  ) {
+    throw new Error("Invalid canonical event history.");
+  }
+  const events: CanonicalEvent[] = parsedEvents;
+  createStructuredPlayApplication({
+    eventStore: {
+      readAll: () => events,
+      append: () => {
+        throw new Error("Replay validation cannot append events.");
+      },
+    },
+  }).view();
+  return events;
+};
+
+const readRecord = (rootDirectory: string, id: string): LocalAdventureRecord => {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(id)) {
     throw new Error(`Adventure "${id}" is unavailable.`);
   }
@@ -301,27 +358,7 @@ const readRecord = (rootDirectory: string, id: string): AdventureRecord => {
       readFileSync(join(directory, metadataFile), "utf8"),
     );
     if (!isMetadata(metadata) || metadata.id !== id) throw new Error();
-    const serializedEvents = readFileSync(join(directory, eventsFile), "utf8");
-    const parsedEvents: unknown[] = serializedEvents
-      .split("\n")
-      .filter((line) => line.length > 0)
-      .map((line): unknown => JSON.parse(line));
-    if (
-      !parsedEvents.every((event, index) =>
-        isCanonicalEventEnvelope(event, index + 1),
-      )
-    ) {
-      throw new Error();
-    }
-    const events: CanonicalEvent[] = parsedEvents;
-    createStructuredPlayApplication({
-      eventStore: {
-        readAll: () => events,
-        append: () => {
-          throw new Error("Replay validation cannot append events.");
-        },
-      },
-    }).view();
+    const events = parseEvents(readFileSync(join(directory, eventsFile), "utf8"));
     return {
       id: metadata.id,
       name: metadata.name,
@@ -340,11 +377,17 @@ export const createLocalAdventureRepository = (
 
   const open = (id: string): OpenAdventure => {
     const record = readRecord(rootDirectory, id);
-    const eventPath = join(rootDirectory, id, eventsFile);
-    return openAdventure(record, (event) => {
-      appendFileSync(eventPath, `${JSON.stringify(event)}\n`, "utf8");
-      record.events.push(event);
-    });
+    const directory = join(rootDirectory, id);
+    try {
+      const timelineStore = createDurableTimelineStore({
+        directory,
+        seed: record.randomSeed,
+        parseEvents,
+      });
+      return openAdventure(record, timelineStore);
+    } catch {
+      throw new Error(`Adventure "${id}" could not be read.`);
+    }
   };
 
   return {
@@ -362,17 +405,25 @@ export const createLocalAdventureRepository = (
         "utf8",
       );
       writeFileSync(join(directory, eventsFile), "", "utf8");
+      initializeDurableTimelineStorage(directory);
       return open(metadata.id);
     },
     list: () =>
       readdirSync(rootDirectory, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
         .map((entry) => readRecord(rootDirectory, entry.name))
-        .map(({ id, name, events }) => ({
-          id,
-          name,
-          eventCount: events.length,
-        })),
+        .map((record) => {
+          const timelineStore = createDurableTimelineStore({
+            directory: join(rootDirectory, record.id),
+            seed: record.randomSeed,
+            parseEvents,
+          });
+          return {
+            id: record.id,
+            name: record.name,
+            eventCount: timelineStore.view().activeTimeline.eventCount,
+          };
+        }),
     open,
   };
 };

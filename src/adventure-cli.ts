@@ -21,8 +21,7 @@ const playAdventure = async (
   try {
     await runStructuredPlay({
       io,
-      eventStore: adventure.eventStore,
-      randomSource: adventure.randomSource,
+      timelineStore: adventure.timelineStore,
       runToAdventureEnd,
     });
   } finally {

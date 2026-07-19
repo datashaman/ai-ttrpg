@@ -46,7 +46,7 @@ test("CLI creates, lists, and opens a durable Adventure without a model or stora
   finishing.close();
 
   const secondProcess = createLocalAdventureRepository(directory);
-  const reopening = scriptedIO([]);
+  const reopening = scriptedIO(["1", "5"]);
   await runAdventureCli(["open", summary.id], reopening.io, secondProcess);
   const transcript = reopening.output.join("");
   assert.match(transcript, /Opened Adventure "The Locked Manor"/);
