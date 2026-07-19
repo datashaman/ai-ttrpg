@@ -69,7 +69,6 @@ export interface InterpretationEvidenceInput {
 export type RulesExplanationEvidenceInput = InterpretationEvidenceInput;
 
 export interface NarrationEvidenceInput {
-  readonly deterministicSummary: string;
   readonly visibleEvidence: readonly EstablishedFact[];
   readonly resolutionTrace: CheckTrace | OracleTrace;
   readonly committedEvents: readonly CanonicalEvent[];
@@ -305,6 +304,72 @@ const directlyInvolvedEntity = (
   };
 };
 
+const acceptedEventContent = (event: CanonicalEvent): string => {
+  if (event.type === "CheckResolved") {
+    return JSON.stringify({
+      type: event.type,
+      actionId: event.payload.actionId,
+      goal: event.payload.goal,
+      trait: event.payload.trait,
+      resolveSpent: event.payload.resolveSpent,
+      adjustedTotal: event.payload.adjustedTotal,
+      outcome: event.payload.outcome,
+      committedStake: event.payload.committedStake,
+    });
+  }
+  if (event.type === "OracleAnswered") {
+    return JSON.stringify({
+      type: event.type,
+      proposition: {
+        id: event.payload.trace.proposition.id,
+        text: event.payload.trace.proposition.text,
+      },
+      confirmedLikelihood: event.payload.trace.confirmedLikelihood,
+      recommendationEvidence: event.payload.trace.recommendation.evidence,
+      result: event.payload.trace.result,
+      establishedFact: event.payload.establishedFact,
+    });
+  }
+  if (event.type === "SceneTransitioned") {
+    return JSON.stringify({ type: event.type, ...event.payload });
+  }
+  if (event.type === "ConfrontationStarted") {
+    return JSON.stringify({
+      type: event.type,
+      confrontationId: event.payload.definition.id,
+      resistanceCapacity:
+        event.payload.definition.resistanceClock.capacity,
+      dangerCapacity: event.payload.definition.dangerClock.capacity,
+    });
+  }
+  if (event.type === "ConfrontationEnded") {
+    return JSON.stringify({ type: event.type, ...event.payload });
+  }
+  if (event.type === "AdventureEnded") {
+    return JSON.stringify({ type: event.type, ...event.payload });
+  }
+  return JSON.stringify({ type: event.type });
+};
+
+const resolutionContent = (trace: CheckTrace | OracleTrace): string =>
+  "proposition" in trace
+    ? JSON.stringify({
+        rule: trace.rule,
+        proposition: {
+          id: trace.proposition.id,
+          text: trace.proposition.text,
+        },
+        recommendation: trace.recommendation,
+        confirmedLikelihood: trace.confirmedLikelihood,
+        result: trace.result,
+      })
+    : JSON.stringify({
+        rule: trace.rule,
+        randomInputs: trace.random.inputs,
+        modifiers: trace.modifiers,
+        result: trace.result,
+      });
+
 export const assembleNarrationEvidence = (
   input: NarrationEvidenceInput,
 ): EvidenceBundle => {
@@ -319,7 +384,7 @@ export const assembleNarrationEvidence = (
         id: `event:committed:${index}`,
         sourceKind: "accepted-event",
         sourceReference: `adventure-event:${event.id}`,
-        content: JSON.stringify({ type: event.type, payload: event.payload }),
+        content: acceptedEventContent(event),
         inclusionReason:
           "This accepted event is part of the committed outcome being narrated.",
       },
@@ -331,12 +396,9 @@ export const assembleNarrationEvidence = (
       id: "resolution:committed",
       sourceKind: "resolution",
       sourceReference: "projected-state:committed-resolution",
-      content: JSON.stringify({
-        deterministicSummary: input.deterministicSummary,
-        trace: input.resolutionTrace,
-      }),
+      content: resolutionContent(input.resolutionTrace),
       inclusionReason:
-        "This accepted resolution trace and deterministic summary define the outcome.",
+        "This Player-visible accepted resolution trace defines the outcome.",
     },
     0,
   );
@@ -347,7 +409,10 @@ export const assembleNarrationEvidence = (
     input.committedEvents,
   );
   if (involvedEntity !== null) add(involvedEntity, 1);
-  if (input.playerCharacter !== null) {
+  if (
+    input.playerCharacter !== null &&
+    input.resolutionTrace.rule.id === "micro-ruleset.check"
+  ) {
     add(
       {
         id: "entity:player-character",
@@ -356,7 +421,6 @@ export const assembleNarrationEvidence = (
         content: JSON.stringify({
           name: input.playerCharacter.name,
           pronouns: input.playerCharacter.pronouns,
-          motivation: input.playerCharacter.motivation,
         }),
         inclusionReason:
           "This Player-visible Player Character is directly involved in the committed outcome.",
@@ -378,7 +442,10 @@ export const assembleNarrationEvidence = (
     );
   }
 
-  const committedContent = JSON.stringify(input.committedEvents);
+  const committedContent = [
+    ...input.committedEvents.map(acceptedEventContent),
+    resolutionContent(input.resolutionTrace),
+  ].join(" ");
   input.visibleEvidence
     .filter(
       (fact) =>

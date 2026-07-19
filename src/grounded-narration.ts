@@ -16,7 +16,12 @@ import type {
   PresentationContext,
   PresentedText,
 } from "./presentation.js";
-import type { ApplicationView } from "./structured-play.js";
+import type {
+  ApplicationView,
+  CanonicalEvent,
+  CheckTrace,
+  OracleTrace,
+} from "./structured-play.js";
 
 interface NarrationSegment {
   readonly text: string;
@@ -54,13 +59,18 @@ const hasGroundedNarrationShape = (
 const normalizedTokens = (value: string): readonly string[] =>
   value.toLocaleLowerCase("en").match(/[a-z0-9]+/g) ?? [];
 
-const PROSE_GLUE = new Set([
+const SAFE_NARRATIVE_FRAMING = new Set([
   "a",
   "an",
   "and",
+  "answer",
   "as",
   "at",
   "by",
+  "certain",
+  "certainty",
+  "clear",
+  "clearly",
   "for",
   "from",
   "has",
@@ -69,6 +79,12 @@ const PROSE_GLUE = new Set([
   "is",
   "of",
   "on",
+  "outcome",
+  "quiet",
+  "settled",
+  "settles",
+  "so",
+  "stands",
   "the",
   "then",
   "this",
@@ -77,11 +93,48 @@ const PROSE_GLUE = new Set([
   "with",
 ]);
 
-const NEGATIONS = new Set(["never", "no", "not", "without"]);
+interface AcceptedNarrationClaim {
+  readonly text: string;
+  readonly evidenceItemId: string;
+}
+
+const acceptedClaimsFrom = (
+  events: readonly CanonicalEvent[],
+): readonly AcceptedNarrationClaim[] =>
+  events.flatMap((event, index) => {
+    const evidenceItemId = `event:committed:${index}`;
+    if (event.type === "CheckResolved") {
+      return [{ text: event.payload.committedStake.summary, evidenceItemId }];
+    }
+    if (event.type === "OracleAnswered") {
+      return [
+        { text: event.payload.establishedFact.text, evidenceItemId },
+        ...(event.payload.trace.result.exceptionalConsequence === null
+          ? []
+          : [
+              {
+                text: event.payload.trace.result.exceptionalConsequence
+                  .establishedFact.text,
+                evidenceItemId,
+              },
+            ]),
+      ];
+    }
+    if (event.type === "ConfrontationEnded") {
+      return [
+        { text: event.payload.ending.establishedFact.text, evidenceItemId },
+      ];
+    }
+    if (event.type === "AdventureEnded") {
+      return [{ text: event.payload.ending.text, evidenceItemId }];
+    }
+    return [];
+  });
 
 const claimsRemainWithin = (
   segment: NarrationSegment,
   evidenceBundle: EvidenceBundle,
+  acceptedClaims: readonly AcceptedNarrationClaim[],
 ): boolean => {
   const evidenceById = new Map(
     evidenceBundle.items.map((item) => [item.id, item]),
@@ -93,37 +146,42 @@ const claimsRemainWithin = (
   ) {
     return false;
   }
-  const citedItems = ids.map((id) => evidenceById.get(id)!);
-  if (
-    !citedItems.some(
-      (item) =>
-        item.sourceKind === "accepted-event" ||
-        item.sourceKind === "resolution",
-    )
-  ) {
-    return false;
-  }
-  const supported = new Set(
-    citedItems.flatMap((item) => normalizedTokens(item.content)),
+  const citedClaims = acceptedClaims.filter((claim) =>
+    ids.includes(claim.evidenceItemId),
   );
-  return normalizedTokens(segment.text).every(
-    (token) =>
-      supported.has(token) ||
-      (PROSE_GLUE.has(token) &&
-        (!NEGATIONS.has(token) || supported.has(token))),
+  const lowerText = segment.text.toLocaleLowerCase("en");
+  const anchoredClaims = citedClaims.filter((claim) =>
+    lowerText.includes(claim.text.toLocaleLowerCase("en")),
+  );
+  if (anchoredClaims.length === 0) return false;
+  const framing = anchoredClaims.reduce(
+    (remaining, claim) =>
+      remaining.replaceAll(claim.text.toLocaleLowerCase("en"), " "),
+    lowerText,
+  );
+  return normalizedTokens(framing).every((token) =>
+    SAFE_NARRATIVE_FRAMING.has(token),
   );
 };
 
 const validatedNarration = (
   value: unknown,
   evidenceBundle: EvidenceBundle,
-): GroundedNarration | null =>
-  hasGroundedNarrationShape(value) &&
-  value.segments.every((segment) =>
-    claimsRemainWithin(segment, evidenceBundle),
+  committedEvents: readonly CanonicalEvent[],
+): GroundedNarration | null => {
+  if (!hasGroundedNarrationShape(value)) return null;
+  const acceptedClaims = acceptedClaimsFrom(committedEvents);
+  return value.segments.every((segment) =>
+    claimsRemainWithin(segment, evidenceBundle, acceptedClaims),
   )
     ? immutableSnapshot(value)
     : null;
+};
+
+const outcomeReferenceFrom = (trace: CheckTrace | OracleTrace): string =>
+  `${trace.rule.id}@${trace.rule.version}:${
+    "outcome" in trace.result ? trace.result.outcome : trace.result.answer
+  }`;
 
 export const narrateCommittedOutcomeThroughGateway = async ({
   gateway,
@@ -147,7 +205,6 @@ export const narrateCommittedOutcomeThroughGateway = async ({
     };
   }
   const evidenceBundle = assembleNarrationEvidence({
-    deterministicSummary: context.deterministicSummary,
     visibleEvidence: context.visibleEvidence,
     resolutionTrace: context.resolutionTrace,
     committedEvents: context.committedEvents,
@@ -158,7 +215,7 @@ export const narrateCommittedOutcomeThroughGateway = async ({
   const execution = await gateway.execute(
     immutableSnapshot({
       type: "narrate-committed-outcome" as const,
-      input: { deterministicSummary: context.deterministicSummary },
+      input: { outcomeReference: outcomeReferenceFrom(context.resolutionTrace) },
       evidenceBundle,
     }),
     {
@@ -168,7 +225,11 @@ export const narrateCommittedOutcomeThroughGateway = async ({
   );
   const narration =
     execution.outcome.status === "succeeded"
-      ? validatedNarration(execution.outcome.output, evidenceBundle)
+      ? validatedNarration(
+          execution.outcome.output,
+          evidenceBundle,
+          context.committedEvents,
+        )
       : null;
   modelCallStore.append(
     modelCallRecordFrom({

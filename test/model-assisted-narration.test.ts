@@ -5,6 +5,7 @@ import {
   createInMemoryModelCallRecordStore,
   createModelGateway,
   createScriptedModelProvider,
+  type ModelProvider,
 } from "../src/model-gateway.js";
 import {
   createInMemoryEventStore,
@@ -64,13 +65,14 @@ const pendingOracleStore = (): EventStore => {
 test("a committed Check receives original Narration from attributable evidence", async () => {
   const eventStore = pendingCheckStore();
   const modelCallStore = createInMemoryModelCallRecordStore();
-  const provider = createScriptedModelProvider({
+  const scriptedProvider = createScriptedModelProvider({
     model: "locked-manor-narration-v1",
     responses: {
-      "narrate-committed-outcome:Clean Success (10): The door opens quietly.": {
+      "narrate-committed-outcome:micro-ruleset.check@1.0.0:Clean Success": {
         segments: [
           {
-            text: "Mara quietly opens the door: Clean Success.",
+            text:
+              "With quiet certainty, the outcome settles: The door opens quietly.",
             evidenceItemIds: [
               "event:committed:0",
               "resolution:committed",
@@ -83,6 +85,22 @@ test("a committed Check receives original Narration from attributable evidence",
       },
     },
   });
+  const provider: ModelProvider = {
+    ...scriptedProvider,
+    invoke: async (task) => {
+      assert.equal(task.type, "narrate-committed-outcome");
+      assert.deepEqual(Object.keys(task.input), ["outcomeReference"]);
+      assert.equal(Object.isFrozen(task), true);
+      assert.equal(Object.isFrozen(task.evidenceBundle.items), true);
+      const serializedTask = JSON.stringify(task);
+      assert.doesNotMatch(serializedTask, /deterministicSummary/);
+      assert.doesNotMatch(
+        serializedTask,
+        /Clean Success \(10\): The door opens quietly\./,
+      );
+      return scriptedProvider.invoke(task);
+    },
+  };
   const script = scriptedIO(["d", "c"]);
 
   const view = await runStructuredPlay({
@@ -94,7 +112,7 @@ test("a committed Check receives original Narration from attributable evidence",
 
   assert.match(
     script.output.join(""),
-    /Narration\nMara quietly opens the door: Clean Success\./,
+    /Narration\nWith quiet certainty, the outcome settles: The door opens quietly\./,
   );
   assert.equal(view.state.lastCheckResolution?.outcome, "Clean Success");
   assert.deepEqual(
@@ -115,7 +133,8 @@ test("a committed Check receives original Narration from attributable evidence",
   assert.deepEqual(record.validatedOutput, {
     segments: [
       {
-        text: "Mara quietly opens the door: Clean Success.",
+        text:
+          "With quiet certainty, the outcome settles: The door opens quietly.",
         evidenceItemIds: [
           "event:committed:0",
           "resolution:committed",
@@ -145,10 +164,11 @@ test("unsupported additions select deterministic Narration without changing game
   const provider = createScriptedModelProvider({
     model: "locked-manor-narration-v1",
     responses: {
-      "narrate-committed-outcome:Clean Success (10): The door opens quietly.": {
+      "narrate-committed-outcome:micro-ruleset.check@1.0.0:Clean Success": {
         segments: [
           {
-            text: "Quietly, a ghost opens the door: Clean Success.",
+            text:
+              "A ghost watches as the outcome settles: The door opens quietly.",
             evidenceItemIds: [
               "event:committed:0",
               "resolution:committed",
@@ -197,10 +217,11 @@ test("unknown Narration citations select deterministic presentation", async () =
   const provider = createScriptedModelProvider({
     model: "locked-manor-narration-v1",
     responses: {
-      "narrate-committed-outcome:Clean Success (10): The door opens quietly.": {
+      "narrate-committed-outcome:micro-ruleset.check@1.0.0:Clean Success": {
         segments: [
           {
-            text: "Quietly, the door opens: Clean Success.",
+            text:
+              "With quiet certainty, the outcome settles: The door opens quietly.",
             evidenceItemIds: ["fact:hidden-ghost"],
           },
         ],
@@ -220,6 +241,40 @@ test("unknown Narration citations select deterministic presentation", async () =
     script.output.join(""),
     /Narration \(deterministic fallback\)\nClean Success \(10\): The door opens quietly\./,
   );
+  const [record] = modelCallStore.readAll();
+  assert.ok(record);
+  assert.equal(record.validation.status, "rejected");
+  assert.equal(record.fallbackOutcome, "deterministic-narration");
+});
+
+test("cited outcome terms cannot be recombined into a different outcome", async () => {
+  const eventStore = pendingCheckStore();
+  const modelCallStore = createInMemoryModelCallRecordStore();
+  const provider = createScriptedModelProvider({
+    model: "locked-manor-narration-v1",
+    responses: {
+      "narrate-committed-outcome:micro-ruleset.check@1.0.0:Clean Success": {
+        segments: [
+          {
+            text: "The outcome is a Setback. The door opens quietly.",
+            evidenceItemIds: [
+              "event:committed:0",
+              "resolution:committed",
+              "rule:micro-ruleset.check@1.0.0",
+            ],
+          },
+        ],
+      },
+    },
+  });
+
+  await runStructuredPlay({
+    io: scriptedIO(["d"]).io,
+    eventStore,
+    modelGateway: createModelGateway({ provider }),
+    modelCallStore,
+  });
+
   const [record] = modelCallStore.readAll();
   assert.ok(record);
   assert.equal(record.validation.status, "rejected");
@@ -265,10 +320,11 @@ test("Narration output cannot apply a Mechanical Effect or survive malformed rep
   const provider = createScriptedModelProvider({
     model: "locked-manor-narration-v1",
     responses: {
-      "narrate-committed-outcome:Clean Success (10): The door opens quietly.": {
+      "narrate-committed-outcome:micro-ruleset.check@1.0.0:Clean Success": {
         segments: [
           {
-            text: "Quietly, the door opens: Clean Success.",
+            text:
+              "With quiet certainty, the outcome settles: The door opens quietly.",
             evidenceItemIds: ["event:committed:0"],
           },
         ],
@@ -310,13 +366,14 @@ test("Narration output cannot apply a Mechanical Effect or survive malformed rep
 test("a committed Oracle answer is narrated from relevant Player-visible evidence", async () => {
   const eventStore = pendingOracleStore();
   const modelCallStore = createInMemoryModelCallRecordStore();
-  const provider = createScriptedModelProvider({
+  const scriptedProvider = createScriptedModelProvider({
     model: "locked-manor-narration-v1",
     responses: {
-      "narrate-committed-outcome:No (30 <= 25): No one is currently inside the manor.": {
+      "narrate-committed-outcome:micro-ruleset.oracle@1.0.0:No": {
         segments: [
           {
-            text: "No one is inside the manor currently.",
+            text:
+              "The answer settles clearly: No one is currently inside the manor.",
             evidenceItemIds: [
               "event:committed:0",
               "resolution:committed",
@@ -328,6 +385,19 @@ test("a committed Oracle answer is narrated from relevant Player-visible evidenc
       },
     },
   });
+  const provider: ModelProvider = {
+    ...scriptedProvider,
+    invoke: async (task) => {
+      assert.equal(task.type, "narrate-committed-outcome");
+      const serializedTask = JSON.stringify(task);
+      assert.doesNotMatch(serializedTask, /someone-inside-manor-yes/);
+      assert.doesNotMatch(serializedTask, /exceptionalConsequences/);
+      assert.doesNotMatch(serializedTask, /"answers"/);
+      assert.doesNotMatch(serializedTask, /"seed"/);
+      assert.doesNotMatch(serializedTask, /missing sister/i);
+      return scriptedProvider.invoke(task);
+    },
+  };
   const script = scriptedIO(["u"]);
 
   const view = await runStructuredPlay({
@@ -340,7 +410,7 @@ test("a committed Oracle answer is narrated from relevant Player-visible evidenc
 
   assert.match(
     script.output.join(""),
-    /Narration\nNo one is inside the manor currently\./,
+    /Narration\nThe answer settles clearly: No one is currently inside the manor\./,
   );
   assert.equal(view.state.lastOracleResolution?.trace.result.answer, "No");
   assert.equal(

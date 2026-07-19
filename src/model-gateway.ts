@@ -29,7 +29,7 @@ export interface RulesExplanationModelTask {
 export interface NarrationModelTask {
   readonly type: "narrate-committed-outcome";
   readonly input: {
-    readonly deterministicSummary: string;
+    readonly outcomeReference: string;
     readonly repairOf?: unknown;
   };
   readonly evidenceBundle: EvidenceBundle;
@@ -108,21 +108,14 @@ export interface ModelGateway {
   ): Promise<ModelGatewayExecution>;
 }
 
-const repairTaskFrom = (
-  task: ModelTask,
+const repairTaskFrom = <Task extends ModelTask>(
+  task: Task,
   repairOf: unknown,
-): ModelTask => {
-  if (task.type === "narrate-committed-outcome") {
-    return immutableSnapshot({
-      ...task,
-      input: { ...task.input, repairOf },
-    });
-  }
-  return immutableSnapshot({
+): Task =>
+  immutableSnapshot({
     ...task,
     input: { ...task.input, repairOf },
   });
-};
 
 export const createModelGateway = ({
   provider,
@@ -221,7 +214,7 @@ export const createScriptedModelProvider = ({
     invoke: async (task) => {
       const taskInput =
         task.type === "narrate-committed-outcome"
-          ? task.input.deterministicSummary
+          ? task.input.outcomeReference
           : task.input.utterance;
       const response =
         script[`${task.type}:${taskInput}`] ?? script[taskInput];
