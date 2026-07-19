@@ -30,7 +30,12 @@ test("scripted Structured Play configures, starts, and completes a Free Action",
   assert.match(output.join(""), /Fresh footprints lead from the manor gate/);
   assert.deepEqual(
     eventStore.readAll().map((event) => event.type),
-    ["PlayerCharacterConfigured", "SceneStarted", "FreeActionCompleted"],
+    [
+      "PlayerCharacterConfigured",
+      "WorldKnowledgeEstablished",
+      "SceneStarted",
+      "FreeActionCompleted",
+    ],
   );
   assert.equal(view.state.activeScene, "arrival");
   assert.deepEqual(view.state.establishedFacts, [
@@ -167,7 +172,7 @@ for (const example of [
       eventStore.readAll().slice(-2).map((event) => event.type),
       ["CheckRollRevealed", "CheckResolved"],
     );
-    assert.equal(eventStore.readAll().at(-1)?.sequence, 5);
+    assert.equal(eventStore.readAll().at(-1)?.sequence, 6);
     assert.equal(view.state.lastCheckResolution?.outcome, example.outcome);
   });
 }
@@ -343,6 +348,7 @@ test("scripted Structured Play spends Resolve after the roll is revealed", async
     eventStore.readAll().map((event) => event.type),
     [
       "PlayerCharacterConfigured",
+      "WorldKnowledgeEstablished",
       "SceneStarted",
       "CheckProposalCreated",
       "CheckRollRevealed",
@@ -392,6 +398,7 @@ test("scripted Structured Play resumes a persisted Pending Choice without reroll
     eventStore.readAll().map((event) => event.type),
     [
       "PlayerCharacterConfigured",
+      "WorldKnowledgeEstablished",
       "SceneStarted",
       "CheckProposalCreated",
       "CheckRollRevealed",

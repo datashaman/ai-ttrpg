@@ -25,6 +25,13 @@ export interface WorldKnowledgeEntry {
   readonly knowledgeScope: readonly KnowledgeScope[];
 }
 
+export interface WorldKnowledgeEstablishedPayload {
+  readonly fact: EstablishedFact;
+  readonly provenance: Omit<Provenance, "establishedByEventId">;
+  readonly visibility: WorldKnowledgeVisibility;
+  readonly knowledgeScope: readonly KnowledgeScope[];
+}
+
 export interface WorldKnowledgeProjection {
   readonly actorScope: WorldKnowledgeActorScope;
   readonly entries: readonly WorldKnowledgeEntry[];
@@ -42,6 +49,7 @@ export interface WorldKnowledgeAppendValidation {
 
 export type WorldKnowledgeErrorCode =
   | "INVALID_ACTOR_SCOPE"
+  | "INVALID_KNOWLEDGE_ENTRY"
   | "DUPLICATE_KNOWLEDGE_ID"
   | "CONTRADICTORY_KNOWLEDGE_ID";
 
@@ -84,9 +92,77 @@ const knowledgeEntry = (
   knowledgeScope: ["Player Character"],
 });
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === "string" && value.trim() !== "";
+
+export const isWorldKnowledgeEstablishedPayload = (
+  value: unknown,
+): value is WorldKnowledgeEstablishedPayload => {
+  if (!isRecord(value)) return false;
+  const fact = value.fact;
+  const provenance = value.provenance;
+  const knowledgeScope = value.knowledgeScope;
+  const validOriginKinds: readonly ProvenanceOriginKind[] = [
+    "authored-content",
+    "imported-content",
+    "human-action",
+    "rule-outcome",
+    "validated-model-proposal",
+  ];
+  const validKnowledgeScopes: readonly KnowledgeScope[] = [
+    "Player Character",
+    "Game Master",
+  ];
+  return (
+    isRecord(fact) &&
+    isNonEmptyString(fact.id) &&
+    isNonEmptyString(fact.text) &&
+    isRecord(provenance) &&
+    validOriginKinds.includes(provenance.originKind as ProvenanceOriginKind) &&
+    isNonEmptyString(provenance.sourceReference) &&
+    (value.visibility === "Player-visible" ||
+      value.visibility === "Game Master-only") &&
+    Array.isArray(knowledgeScope) &&
+    knowledgeScope.length > 0 &&
+    knowledgeScope.every((scope) =>
+      validKnowledgeScopes.includes(scope as KnowledgeScope),
+    ) &&
+    new Set(knowledgeScope).size === knowledgeScope.length
+  );
+};
+
+const authoredEntryEstablishedBy = (
+  event: Extract<CanonicalEvent, { readonly type: "WorldKnowledgeEstablished" }>,
+): WorldKnowledgeEntry => {
+  const payload: unknown = event.payload;
+  if (!isWorldKnowledgeEstablishedPayload(payload)) {
+    throw new WorldKnowledgeError(
+      "INVALID_KNOWLEDGE_ENTRY",
+      "World Knowledge metadata is invalid.",
+    );
+  }
+  return {
+    id: payload.fact.id,
+    kind: "Established Fact",
+    text: payload.fact.text,
+    provenance: {
+      ...payload.provenance,
+      establishedByEventId: event.id,
+    },
+    visibility: payload.visibility,
+    knowledgeScope: payload.knowledgeScope,
+  };
+};
+
 const entriesEstablishedBy = (
   event: CanonicalEvent,
 ): readonly WorldKnowledgeEntry[] => {
+  if (event.type === "WorldKnowledgeEstablished") {
+    return [authoredEntryEstablishedBy(event)];
+  }
   if (event.type === "FreeActionCompleted") {
     return [
       knowledgeEntry(
@@ -200,14 +276,31 @@ export const validateWorldKnowledgeAppend = (
 export const projectWorldKnowledge = (
   query: WorldKnowledgeQuery,
 ): WorldKnowledgeProjection => {
-  if (query.actorScope !== "Player" && query.actorScope !== "Game Master") {
-    throw new WorldKnowledgeError(
-      "INVALID_ACTOR_SCOPE",
-      "World Knowledge requires an explicit Player or Game Master actor scope.",
-    );
-  }
+  assertWorldKnowledgeActorScope(query.actorScope);
   const entries = normalizedEntries(query.events).filter((entry) =>
     isVisibleTo(entry, query.actorScope),
   );
   return immutableSnapshot({ actorScope: query.actorScope, entries });
+};
+
+const assertWorldKnowledgeActorScope = (
+  actorScope: WorldKnowledgeActorScope,
+): void => {
+  if (actorScope === "Player" || actorScope === "Game Master") return;
+  throw new WorldKnowledgeError(
+    "INVALID_ACTOR_SCOPE",
+    "World Knowledge requires an explicit Player or Game Master actor scope.",
+  );
+};
+
+export const filterCanonicalEventsVisibleTo = (
+  query: WorldKnowledgeQuery,
+): readonly CanonicalEvent[] => {
+  assertWorldKnowledgeActorScope(query.actorScope);
+  return query.events.filter(
+    (event) =>
+      event.type !== "WorldKnowledgeEstablished" ||
+      query.actorScope === "Game Master" ||
+      event.payload.visibility === "Player-visible",
+  );
 };

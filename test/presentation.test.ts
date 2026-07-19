@@ -218,7 +218,7 @@ test("a rules query explains the committed resolution from relevant evidence wit
     rulesRequest.visibleEvidence.map((fact) => fact.id),
     ["side-door-open"],
   );
-  assert.equal(eventStore.readAll().length, 5);
+  assert.equal(eventStore.readAll().length, 6);
   assert.equal(view.state.activeScene, "arrival");
 });
 

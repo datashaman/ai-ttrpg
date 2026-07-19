@@ -49,7 +49,7 @@ for (const factory of repositoryFactories) {
       {
         id: created.id,
         name: "The Locked Manor",
-        eventCount: 3,
+        eventCount: 4,
       },
     ]);
 
@@ -67,10 +67,10 @@ for (const factory of repositoryFactories) {
       actionId: "not-an-authored-action",
     });
     assert.equal(rejected.status, "rejected");
-    assert.equal(reopened.eventStore.readAll().length, 3);
+    assert.equal(reopened.eventStore.readAll().length, 4);
 
     resumed.submit({ type: "choose-action", actionId: "withdraw-from-manor" });
-    assert.equal(reopened.eventStore.readAll().length, 5);
+    assert.equal(reopened.eventStore.readAll().length, 6);
     reopened.close();
   });
 
@@ -176,6 +176,7 @@ test("a new local repository instance reopens the same Adventure", () => {
     reopened.eventStore.readAll().map((event) => event.type),
     [
       "PlayerCharacterConfigured",
+      "WorldKnowledgeEstablished",
       "SceneStarted",
       "FreeActionCompleted",
       "SceneTransitioned",
@@ -187,7 +188,7 @@ test("a new local repository instance reopens the same Adventure", () => {
     actionId: "enter-passage",
   });
   assert.equal(continued.status, "accepted");
-  assert.equal(reopened.eventStore.readAll().length, 5);
+  assert.equal(reopened.eventStore.readAll().length, 6);
 });
 
 test("opening an unavailable or unreadable local Adventure reports a concise diagnostic", () => {

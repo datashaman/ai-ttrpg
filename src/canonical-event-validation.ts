@@ -1,4 +1,5 @@
 import type { CanonicalEvent } from "./structured-play.js";
+import { isWorldKnowledgeEstablishedPayload } from "./world-knowledge.js";
 
 type ValueObject = Record<string, unknown>;
 
@@ -345,6 +346,7 @@ type PayloadValidator = (payload: ValueObject) => boolean;
 const payloadValidators = {
   PlayerCharacterConfigured: isPlayerCharacter,
   SceneStarted: (payload) => isOneOf(payload.scene, scenes),
+  WorldKnowledgeEstablished: isWorldKnowledgeEstablishedPayload,
   SceneTransitioned: (payload) =>
     isOneOf(payload.from, scenes) && isOneOf(payload.to, scenes),
   ConfrontationStarted: (payload) =>

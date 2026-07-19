@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createInMemoryEventStore } from "./in-memory-event-store.js";
 import {
   DEFAULT_ADVENTURE_ENDINGS,
+  DEFAULT_AUTHORED_WORLD_KNOWLEDGE,
   DEFAULT_CHECK_ACTIONS,
   DEFAULT_CONFRONTATION,
   DEFAULT_FREE_ACTIONS,
@@ -15,6 +16,8 @@ import {
   type RandomSource,
 } from "./random-source.js";
 import {
+  filterCanonicalEventsVisibleTo,
+  type WorldKnowledgeEstablishedPayload,
   validateWorldKnowledgeAppend,
   WorldKnowledgeError,
 } from "./world-knowledge.js";
@@ -322,6 +325,7 @@ interface EventEnvelope<EventType extends string, Payload> {
 interface EventPayloads {
   readonly PlayerCharacterConfigured: PlayerCharacter;
   readonly SceneStarted: { readonly scene: Scene };
+  readonly WorldKnowledgeEstablished: WorldKnowledgeEstablishedPayload;
   readonly SceneTransitioned: {
     readonly from: Scene;
     readonly to: Scene;
@@ -694,6 +698,7 @@ export interface StructuredPlayOptions {
   readonly confrontation?: ConfrontationDefinition;
   readonly freeActions?: readonly FreeActionDefinition[];
   readonly adventureEndings?: readonly AdventureEndingDefinition[];
+  readonly authoredWorldKnowledge?: readonly WorldKnowledgeEstablishedPayload[];
   readonly timelineStore?: TimelineStore;
 }
 
@@ -1218,6 +1223,8 @@ const project = (events: readonly CanonicalEvent[]): GameState =>
         return { ...state, playerCharacter: event.payload };
       case "SceneStarted":
         return { ...state, activeScene: event.payload.scene };
+      case "WorldKnowledgeEstablished":
+        return state;
       case "SceneTransitioned":
         return {
           ...state,
@@ -1478,6 +1485,8 @@ export const createStructuredPlayApplication = (
   const freeActions = options.freeActions ?? DEFAULT_FREE_ACTIONS;
   const adventureEndings =
     options.adventureEndings ?? DEFAULT_ADVENTURE_ENDINGS;
+  const authoredWorldKnowledge =
+    options.authoredWorldKnowledge ?? DEFAULT_AUTHORED_WORLD_KNOWLEDGE;
   checkActions.forEach(validateCheckAction);
   oracleActions.forEach(validateOracleAction);
   sceneTransitions.forEach(validateSceneTransition);
@@ -1506,9 +1515,74 @@ export const createStructuredPlayApplication = (
     }
   }
 
+  const playerVisibleTimelineEvents = (
+    timelineId: string,
+  ): readonly CanonicalEvent[] =>
+    timelineStore === null
+      ? []
+      : filterCanonicalEventsVisibleTo({
+          actorScope: "Player",
+          events: timelineStore.readTimeline(timelineId),
+        });
+
+  const playerTimelineView = (): TimelineCollectionView | null => {
+    if (timelineStore === null) return null;
+    const timeline = timelineStore.view();
+    const timelines = timeline.timelines.map((candidate) => {
+      const eventCount = playerVisibleTimelineEvents(candidate.id).length;
+      const branchEventPosition =
+        candidate.parentTimelineId === null ||
+        candidate.branchEventPosition === null
+          ? null
+          : filterCanonicalEventsVisibleTo({
+              actorScope: "Player",
+              events: timelineStore
+                .readTimeline(candidate.parentTimelineId)
+                .slice(0, candidate.branchEventPosition),
+            }).length;
+      return { ...candidate, eventCount, branchEventPosition };
+    });
+    const activeTimeline = timelines.find(
+      (candidate) => candidate.id === timeline.activeTimelineId,
+    )!;
+    return {
+      ...timeline,
+      activeTimeline,
+      timelines,
+      acceptedEvents: playerVisibleTimelineEvents(
+        timeline.activeTimelineId,
+      ).map((event, index) => ({ position: index + 1, type: event.type })),
+    };
+  };
+
+  const canonicalTimelinePositionFor = (playerPosition: number): number => {
+    if (timelineStore === null || !Number.isInteger(playerPosition)) {
+      throw new RangeError(
+        "A Timeline branch requires an accepted event position.",
+      );
+    }
+    const events = timelineStore.readAll();
+    let visiblePosition = 0;
+    for (let index = 0; index < events.length; index += 1) {
+      if (
+        filterCanonicalEventsVisibleTo({
+          actorScope: "Player",
+          events: [events[index]!],
+        }).length === 0
+      ) {
+        continue;
+      }
+      visiblePosition += 1;
+      if (visiblePosition === playerPosition) return index + 1;
+    }
+    throw new RangeError(
+      "A Timeline branch requires an accepted event position.",
+    );
+  };
+
   const timelineActions = (): readonly AvailableAction[] => {
     if (timelineStore === null) return [];
-    const timeline = timelineStore.view();
+    const timeline = playerTimelineView()!;
     if (timeline.activeTimeline.eventCount === 0) return [];
     return [
       {
@@ -1552,7 +1626,7 @@ export const createStructuredPlayApplication = (
     return {
       state,
       availableActions: currentAvailableActions(state),
-      timeline: timelineStore?.view() ?? null,
+      timeline: playerTimelineView(),
     };
   };
 
@@ -1568,7 +1642,7 @@ export const createStructuredPlayApplication = (
       message,
       state,
       availableActions: currentAvailableActions(state),
-      timeline: timelineStore?.view() ?? null,
+      timeline: playerTimelineView(),
       appendedEvents: [],
     };
   };
@@ -1601,7 +1675,10 @@ export const createStructuredPlayApplication = (
         });
       } catch (error) {
         if (error instanceof WorldKnowledgeError) {
-          return reject("invalid-world-knowledge", error.message);
+          return reject(
+            "invalid-world-knowledge",
+            "World Knowledge could not be established.",
+          );
         }
         throw error;
       }
@@ -1632,8 +1709,11 @@ export const createStructuredPlayApplication = (
       message,
       state,
       availableActions: currentAvailableActions(state),
-      timeline: timelineStore?.view() ?? null,
-      appendedEvents: acceptedEvents,
+      timeline: playerTimelineView(),
+      appendedEvents: filterCanonicalEventsVisibleTo({
+        actorScope: "Player",
+        events: acceptedEvents,
+      }),
     };
   };
 
@@ -1774,7 +1854,9 @@ export const createStructuredPlayApplication = (
           );
         }
         try {
-          const timeline = timelineStore.branchTimeline(input.eventPosition);
+          const timeline = timelineStore.branchTimeline(
+            canonicalTimelinePositionFor(input.eventPosition),
+          );
           return commitPendingEvents(
             `Created and selected ${timeline.id} from accepted event ${input.eventPosition}.`,
             [],
@@ -2364,12 +2446,18 @@ export const createStructuredPlayApplication = (
             state,
           );
         }
+        const knowledgeEvents = authoredWorldKnowledge.map((knowledge) =>
+          append("WorldKnowledgeEstablished", knowledge, commandId),
+        );
         const event = append(
           "SceneStarted",
           { scene: "arrival" },
           commandId,
         );
-        return commitPendingEvents("The Adventure begins at the locked manor.", [event]);
+        return commitPendingEvents("The Adventure begins at the locked manor.", [
+          ...knowledgeEvents,
+          event,
+        ]);
       }
 
       if (state.playerCharacter !== null) {

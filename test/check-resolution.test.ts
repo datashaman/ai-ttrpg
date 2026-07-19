@@ -98,6 +98,7 @@ test("confirmed Check reveals a durable roll before committing its outcome", () 
     eventStore.readAll().map((event) => event.type),
     [
       "PlayerCharacterConfigured",
+      "WorldKnowledgeEstablished",
       "SceneStarted",
       "CheckProposalCreated",
       "CheckRollRevealed",

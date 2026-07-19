@@ -350,6 +350,7 @@ test("Oracle answer and Established Fact rebuild from canonical events", () => {
     eventStore.readAll().map((event) => event.type),
     [
       "PlayerCharacterConfigured",
+      "WorldKnowledgeEstablished",
       "SceneStarted",
       "FreeActionCompleted",
       "NarratorLikelihoodRecommended",

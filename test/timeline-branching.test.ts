@@ -55,7 +55,7 @@ test("branching at an accepted event preserves and can resume the source Timelin
   assert.equal(branched.status, "accepted");
   assert.notEqual(timelineStore.view().activeTimelineId, sourceTimelineId);
   assert.equal(timelineStore.view().activeTimeline.parentTimelineId, sourceTimelineId);
-  assert.equal(timelineStore.view().activeTimeline.branchEventPosition, 3);
+  assert.equal(timelineStore.view().activeTimeline.branchEventPosition, 4);
   assert.equal(branched.state.pendingCheckProposal?.id, proposal.id);
   assert.equal(branched.state.pendingChoice, null);
   assert.deepEqual(timelineStore.readTimeline(sourceTimelineId), sourceEvents);
@@ -103,6 +103,7 @@ test("a branch inherits the random position so identical play cannot reroll", ()
     timelineStore.readTimeline(divergentTimelineId).map((event) => event.type),
     [
       "PlayerCharacterConfigured",
+      "WorldKnowledgeEstablished",
       "SceneStarted",
       "CheckProposalCreated",
       "CheckProposalWithdrawn",
@@ -112,6 +113,7 @@ test("a branch inherits the random position so identical play cannot reroll", ()
     timelineStore.readTimeline(matchingTimelineId).map((event) => event.type),
     [
       "PlayerCharacterConfigured",
+      "WorldKnowledgeEstablished",
       "SceneStarted",
       "CheckProposalCreated",
       "CheckRollRevealed",
@@ -121,6 +123,7 @@ test("a branch inherits the random position so identical play cannot reroll", ()
     timelineStore.readTimeline(sourceTimelineId).map((event) => event.type),
     [
       "PlayerCharacterConfigured",
+      "WorldKnowledgeEstablished",
       "SceneStarted",
       "CheckProposalCreated",
       "CheckRollRevealed",

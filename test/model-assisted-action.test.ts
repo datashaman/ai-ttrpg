@@ -296,12 +296,25 @@ test("Timeline-backed play attributes evidence and the accepted event to the act
   assert.ok(record);
   assert.deepEqual(record.acceptedEventIds, [acceptedEvent.id]);
   assert.ok(
-    initialEvents.every((event) =>
+    initialEvents
+      .filter((event) => event.type !== "WorldKnowledgeEstablished")
+      .every((event) =>
       record.evidenceReferences.some(
         (reference) =>
           reference.sourceReference === `adventure-event:${event.id}`,
       ),
     ),
+  );
+  const hiddenEvent = initialEvents.find(
+    (event) => event.type === "WorldKnowledgeEstablished",
+  );
+  assert.ok(hiddenEvent);
+  assert.equal(
+    record.evidenceReferences.some(
+      (reference) =>
+        reference.sourceReference === `adventure-event:${hiddenEvent.id}`,
+    ),
+    false,
   );
   assert.deepEqual(unrelatedStore.readAll(), []);
 });
