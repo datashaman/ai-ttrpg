@@ -1,11 +1,11 @@
 import { createInterface } from "node:readline";
-import { stderr, stdin, stdout } from "node:process";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { argv, env, stderr, stdin, stdout } from "node:process";
 
-import {
-  runStructuredPlay,
-  type StructuredPlayIO,
-} from "./structured-play-runner.js";
-import { createInMemoryTimelineStore } from "./structured-play.js";
+import { runAdventureCli } from "./adventure-cli.js";
+import { createLocalAdventureRepository } from "./adventure-repository.js";
+import type { StructuredPlayIO } from "./structured-play-runner.js";
 
 const terminal = createInterface({ input: stdin, output: stdout });
 const answers = terminal[Symbol.asyncIterator]();
@@ -22,11 +22,13 @@ const io: StructuredPlayIO = {
 };
 
 try {
-  await runStructuredPlay({
+  const dataDirectory =
+    env.AI_TTRPG_DATA_DIRECTORY ?? join(homedir(), ".ai-ttrpg", "adventures");
+  await runAdventureCli(
+    argv.slice(2),
     io,
-    timelineStore: createInMemoryTimelineStore({ seed: Date.now() }),
-    runToAdventureEnd: true,
-  });
+    createLocalAdventureRepository(dataDirectory),
+  );
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   stderr.write(`${message}\n`);
