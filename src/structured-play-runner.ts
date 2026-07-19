@@ -27,6 +27,7 @@ export interface StructuredPlayRunnerOptions {
     StructuredPlayOptions,
     "eventStore" | "randomSource"
   >;
+  readonly runToAdventureEnd?: boolean;
 }
 
 const readRating = async (
@@ -266,10 +267,23 @@ const finishCheckProposal = async (
   }
 };
 
+const continueAdventure = async (
+  app: StructuredPlayApplication,
+  io: StructuredPlayIO,
+  view: ApplicationView,
+  enabled: boolean,
+): Promise<ApplicationView> =>
+  enabled &&
+  view.state.adventureEnding === null &&
+  view.availableActions.length > 0
+    ? chooseAvailableAction(app, io, view, true)
+    : view;
+
 const chooseAvailableAction = async (
   app: StructuredPlayApplication,
   io: StructuredPlayIO,
   view: ApplicationView,
+  runToAdventureEnd = false,
 ): Promise<ApplicationView> => {
   const confrontation = view.state.confrontation;
   if (confrontation?.status === "active") {
@@ -312,7 +326,13 @@ const chooseAvailableAction = async (
       io.write("Current state:\n");
       io.write(`${JSON.stringify(completed.state, null, 2)}\n`);
     }
-    return app.view();
+    const nextView = app.view();
+    return continueAdventure(
+      app,
+      io,
+      nextView,
+      runToAdventureEnd && completed.status === "accepted",
+    );
   }
 
   const completed = app.submit({
@@ -321,14 +341,28 @@ const chooseAvailableAction = async (
   });
   io.write(`\n${completed.message}\n\n`);
   if (completed.state.pendingCheckProposal !== null) {
-    return finishCheckProposal(app, io);
+    const finished = await finishCheckProposal(app, io);
+    return continueAdventure(app, io, finished, runToAdventureEnd);
   }
   if (completed.state.pendingNarratorRecommendation !== null) {
-    return finishNarratorLikelihoodRecommendation(app, io, completed.appendedEvents);
+    const finished = await finishNarratorLikelihoodRecommendation(
+      app,
+      io,
+      completed.appendedEvents,
+    );
+    return continueAdventure(app, io, finished, runToAdventureEnd);
   }
   io.write("Current state:\n");
   io.write(`${JSON.stringify(completed.state, null, 2)}\n`);
   const nextView = app.view();
+  if (
+    runToAdventureEnd &&
+    nextView.state.adventureEnding === null &&
+    nextView.availableActions.length > 0
+  ) {
+    io.write("\n");
+    return continueAdventure(app, io, nextView, true);
+  }
   if (selectedAction.kind === "Free Action" && nextView.availableActions.length > 0) {
     const continueChoice = (
       await io.read("Continue in the current Scene (c) or stop (s): ")
@@ -348,6 +382,7 @@ export const runStructuredPlay = async ({
   eventStore = createInMemoryEventStore(),
   randomSource,
   applicationOptions = {},
+  runToAdventureEnd = false,
 }: StructuredPlayRunnerOptions): Promise<ApplicationView> => {
   const app = createStructuredPlayApplication(
     randomSource === undefined
@@ -357,24 +392,33 @@ export const runStructuredPlay = async ({
   io.write("AI TTRPG — Structured Play\n\n");
 
   const current = app.view();
+  if (current.state.adventureEnding !== null) {
+    io.write(
+      `Adventure ended ${current.state.adventureEnding.kind}: ${current.state.adventureEnding.text}\n`,
+    );
+    return current;
+  }
   if (current.state.pendingChoice !== null) {
     io.write("Resuming Pending Choice.\n");
-    return finishPendingChoice(app, io);
+    const finished = await finishPendingChoice(app, io);
+    return continueAdventure(app, io, finished, runToAdventureEnd);
   }
   if (current.state.pendingCheckProposal !== null) {
     io.write("Resuming Check Proposal.\n");
-    return finishCheckProposal(app, io);
+    const finished = await finishCheckProposal(app, io);
+    return continueAdventure(app, io, finished, runToAdventureEnd);
   }
   if (current.state.pendingNarratorRecommendation !== null) {
     io.write("Resuming Narrator Likelihood recommendation.\n");
-    return finishNarratorLikelihoodRecommendation(app, io);
+    const finished = await finishNarratorLikelihoodRecommendation(app, io);
+    return continueAdventure(app, io, finished, runToAdventureEnd);
   }
   if (
     current.state.playerCharacter !== null &&
     current.state.activeScene !== null
   ) {
     io.write("Resuming Adventure.\n\n");
-    return chooseAvailableAction(app, io, current);
+    return chooseAvailableAction(app, io, current, runToAdventureEnd);
   }
 
   const name = await io.read("Player Character name: ");
@@ -400,5 +444,5 @@ export const runStructuredPlay = async ({
 
   const started = app.submit({ type: "begin-adventure" });
   io.write(`${started.message}\n\n`);
-  return chooseAvailableAction(app, io, started);
+  return chooseAvailableAction(app, io, started, runToAdventureEnd);
 };

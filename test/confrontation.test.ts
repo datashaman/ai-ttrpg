@@ -79,7 +79,7 @@ test("filling Resistance commits the visible successful ending and closes the Co
   );
   assert.deepEqual(
     victory.appendedEvents.map((event) => event.type),
-    ["CheckResolved", "ConfrontationEnded"],
+    ["CheckResolved", "ConfrontationEnded", "AdventureEnded"],
   );
 });
 

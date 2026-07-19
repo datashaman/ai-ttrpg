@@ -8,27 +8,8 @@ import {
   type CheckActionDefinition,
   type CheckOutcome,
 } from "../src/structured-play.js";
-import {
-  runStructuredPlay,
-  type StructuredPlayIO,
-} from "../src/structured-play-runner.js";
-
-const scriptedIO = (answers: readonly string[]) => {
-  const remainingAnswers = [...answers];
-  const output: string[] = [];
-  const io: StructuredPlayIO = {
-    read: async (prompt) => {
-      output.push(prompt);
-      const answer = remainingAnswers.shift();
-      if (answer === undefined) {
-        throw new Error("Scripted input exhausted.");
-      }
-      return answer;
-    },
-    write: (text) => output.push(text),
-  };
-  return { io, output };
-};
+import { runStructuredPlay } from "../src/structured-play-runner.js";
+import { scriptedIO } from "./support/scripted-io.js";
 
 test("scripted Structured Play configures, starts, and completes a Free Action", async () => {
   const eventStore = createInMemoryEventStore();

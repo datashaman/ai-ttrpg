@@ -1,9 +1,11 @@
 import type {
+  AdventureEndingDefinition,
   CheckActionDefinition,
   CheckStakes,
   ConfrontationDefinition,
   EstablishedFact,
   FictionalConsequence,
+  FreeActionDefinition,
   MechanicalEffect,
   OracleActionDefinition,
   SceneTransitionDefinition,
@@ -13,6 +15,92 @@ export const FRESH_FOOTPRINTS: EstablishedFact = {
   id: "fresh-footprints",
   text: "Fresh footprints lead from the manor gate toward a dark side entrance.",
 };
+
+const WITHDREW_FROM_MANOR: EstablishedFact = {
+  id: "withdrew-from-manor",
+  text: "Mara chooses to leave the locked manor without answers.",
+};
+
+export const DEFAULT_FREE_ACTIONS: readonly FreeActionDefinition[] = [
+  {
+    id: "withdraw-from-manor",
+    label: "Withdraw from the manor",
+    kind: "Free Action",
+    establishedFact: WITHDREW_FROM_MANOR,
+    availableInScenes: ["arrival"],
+    requiredFactIds: [FRESH_FOOTPRINTS.id],
+  },
+  {
+    id: "accept-capture",
+    label: "Accept capture and await a chance to escape",
+    kind: "Free Action",
+    establishedFact: {
+      id: "capture-consequence-accepted",
+      text: "Restrained in the manor cells, Mara waits for a chance to escape.",
+    },
+    availableInScenes: ["consequence"],
+    requiredFactIds: ["mara-captured-by-guardian"],
+  },
+  {
+    id: "accept-imprisonment",
+    label: "Regroup in the manor cells",
+    kind: "Free Action",
+    establishedFact: {
+      id: "imprisonment-consequence-accepted",
+      text: "Injured and restrained, Mara regroups in the manor cells.",
+    },
+    availableInScenes: ["consequence"],
+    requiredFactIds: ["mara-overwhelmed-and-imprisoned"],
+  },
+];
+
+export const DEFAULT_ADVENTURE_ENDINGS: readonly AdventureEndingDefinition[] = [
+  {
+    from: "arrival",
+    requiredFactIds: [WITHDREW_FROM_MANOR.id],
+    ending: {
+      id: "withdrawal-without-answers",
+      kind: "unresolved",
+      text: "Mara leaves the locked manor without learning what happened inside.",
+    },
+  },
+  {
+    from: "discovery",
+    requiredFactIds: ["sister-escaped-safely"],
+    ending: {
+      id: "sister-escaped-safely",
+      kind: "favourable",
+      text: "Mara leaves the manor knowing her sister escaped safely.",
+    },
+  },
+  {
+    from: "confrontation",
+    requiredFactIds: ["cellar-guardian-overcome"],
+    ending: {
+      id: "cellar-secured",
+      kind: "favourable",
+      text: "Mara secures the cellar and ends the threat within the manor.",
+    },
+  },
+  {
+    from: "consequence",
+    requiredFactIds: ["capture-consequence-accepted"],
+    ending: {
+      id: "captured-in-manor",
+      kind: "adverse",
+      text: "Mara remains captive in the locked manor.",
+    },
+  },
+  {
+    from: "consequence",
+    requiredFactIds: ["imprisonment-consequence-accepted"],
+    ending: {
+      id: "imprisoned-in-manor",
+      kind: "adverse",
+      text: "Mara remains injured and imprisoned in the locked manor.",
+    },
+  },
+];
 
 const SIDE_DOOR_OPEN: FictionalConsequence = {
   type: "establish-fact",
@@ -41,6 +129,22 @@ const SIDE_DOOR_HELD: FictionalConsequence = {
 const FORCED_DOOR_HARM: MechanicalEffect = {
   type: "lose-health",
   amount: 1,
+};
+
+const CELLAR_ROUTE_REVEALED: FictionalConsequence = {
+  type: "establish-fact",
+  fact: {
+    id: "cellar-route-revealed",
+    text: "The housekeeper reveals the concealed route into the manor cellar.",
+  },
+};
+
+const SISTER_ESCAPED_SAFELY: FictionalConsequence = {
+  type: "establish-fact",
+  fact: {
+    id: "sister-escaped-safely",
+    text: "The housekeeper's account establishes that Mara's sister escaped safely.",
+  },
 };
 
 const FORCE_SIDE_DOOR_STAKES: CheckStakes = {
@@ -139,6 +243,34 @@ export const DEFAULT_CHECK_ACTIONS: readonly CheckActionDefinition[] = [
       "Clean Success": {
         summary: "The Short Blade quietly clears the vines.",
         consequences: [],
+      },
+    },
+  },
+  {
+    id: "question-housekeeper",
+    label: "Question the frightened housekeeper",
+    kind: "Check",
+    goal: "Learn what happened to Mara's sister",
+    trait: "Presence",
+    availableInScenes: ["discovery"],
+    stakes: {
+      Setback: {
+        summary:
+          "The housekeeper reveals the cellar route, but the exchange leaves you Shaken.",
+        consequences: [
+          CELLAR_ROUTE_REVEALED,
+          { type: "add-condition", condition: "Shaken" },
+        ],
+      },
+      "Success with Cost": {
+        summary:
+          "The housekeeper reveals the cellar route before raising the alarm.",
+        consequences: [CELLAR_ROUTE_REVEALED, MANOR_ALERTED],
+      },
+      "Clean Success": {
+        summary:
+          "The housekeeper confirms that your sister escaped the manor safely.",
+        consequences: [SISTER_ESCAPED_SAFELY],
       },
     },
   },
@@ -244,7 +376,31 @@ export const DEFAULT_SCENE_TRANSITIONS: readonly SceneTransitionDefinition[] = [
   {
     from: "arrival",
     to: "discovery",
+    requiredFactIds: [
+      SIDE_DOOR_OPEN.fact.id,
+      "someone-inside-manor-yes",
+    ],
+    automatic: true,
+  },
+  {
+    from: "arrival",
+    to: "confrontation",
+    requiredFactIds: [
+      SIDE_DOOR_OPEN.fact.id,
+      "someone-inside-manor-no",
+    ],
+    automatic: true,
+  },
+  {
+    from: "arrival",
+    to: "discovery",
     requiredFactIds: [SIDE_DOOR_OPEN.fact.id],
+  },
+  {
+    from: "discovery",
+    to: "confrontation",
+    requiredFactIds: [CELLAR_ROUTE_REVEALED.fact.id],
+    automatic: true,
   },
   {
     from: "discovery",

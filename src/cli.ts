@@ -21,7 +21,7 @@ const io: StructuredPlayIO = {
 };
 
 try {
-  await runStructuredPlay({ io });
+  await runStructuredPlay({ io, runToAdventureEnd: true });
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   stderr.write(`${message}\n`);
