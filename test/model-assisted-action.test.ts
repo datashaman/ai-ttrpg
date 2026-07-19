@@ -13,6 +13,7 @@ import {
   createInMemoryEventStore,
   createInMemoryTimelineStore,
   createStructuredPlayApplication,
+  type EventStore,
 } from "../src/structured-play.js";
 import { beginAdventureFixture } from "./support/adventure-fixture.js";
 import { scriptedIO } from "./support/scripted-io.js";
@@ -327,6 +328,55 @@ test("provider failure creates a normalized Model Call Record without changing t
   assert.equal(record.usage, null);
   assert.match(record.evidenceBundleHash, /^[0-9a-f]{64}$/);
   assert.ok(record.evidenceReferences.length > 0);
+  assert.equal(record.command, null);
+  assert.deepEqual(record.acceptedEventIds, []);
+});
+
+test("authority rejection cannot be recorded or reported as an interpreted command", async () => {
+  const { eventStore: acceptedHistory } = beginAdventureFixture();
+  const before = acceptedHistory.readAll();
+  const rejectingStore: EventStore = {
+    readAll: () => acceptedHistory.readAll(),
+    append: () => {
+      throw new Error("single-event writes are not expected");
+    },
+    appendBatch: (request) => ({
+      status: "rejected",
+      code: "persistence-failed",
+      message: "The event batch could not be persisted.",
+      expectedPosition: request.expectedPosition,
+      actualPosition: before.length,
+    }),
+  };
+  const provider = createScriptedModelProvider({
+    model: "locked-manor-script-v1",
+    responses: {
+      "I survey the manor grounds.": {
+        status: "interpreted",
+        classification: "player-action",
+        capabilityId: "survey-manor",
+        referencedEntityIds: ["scene:arrival"],
+        evidenceItemIds: [
+          "entity:scene:arrival",
+          "capability:survey-manor",
+        ],
+        arguments: {},
+      },
+    },
+  });
+
+  const result = await runNaturalLanguagePlay({
+    io: scriptedIO(["I survey the manor grounds."]).io,
+    modelGateway: createModelGateway({ provider }),
+    eventStore: rejectingStore,
+  });
+
+  assert.deepEqual(acceptedHistory.readAll(), before);
+  assert.deepEqual(result.interpretedCommands, []);
+  const [record] = result.modelCallRecords;
+  assert.ok(record);
+  assert.equal(record.validation.status, "rejected");
+  assert.equal(record.fallbackOutcome, "safe-rejection");
   assert.equal(record.command, null);
   assert.deepEqual(record.acceptedEventIds, []);
 });

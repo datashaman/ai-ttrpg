@@ -647,6 +647,19 @@ export const runNaturalLanguagePlay = async (
     const acceptedEvents = acceptedEventsFor(options, eventStore).slice(
       eventPositionBeforeCommand,
     );
+    if (acceptedEvents.length === 0) {
+      appendUncorrelatedModelCall(
+        modelCallStore,
+        gatewayExecution,
+        {
+          status: "rejected",
+          reason: "Structured Play authority did not accept and append the interpreted command.",
+        },
+        null,
+        "safe-rejection",
+      );
+      return withoutInterpretedCommand(completed, modelCallStore);
+    }
     modelCallStore.append(
       modelCallRecordFrom({
         execution: gatewayExecution,
