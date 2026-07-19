@@ -1,3 +1,5 @@
+import { readFileSync, writeFileSync } from "node:fs";
+
 import type {
   AdventureRepository,
   OpenAdventure,
@@ -11,7 +13,8 @@ export interface AdventureCliOptions {
   readonly runToAdventureEnd?: boolean;
 }
 
-const usage = "Usage: npm start -- <create <name>|list|open <id>>\n";
+const usage =
+  "Usage: npm start -- <create <name>|list|open <id>|export <id> <path>|import <path>>\n";
 
 const playAdventure = async (
   adventure: OpenAdventure,
@@ -68,6 +71,22 @@ export const runAdventureCli = async (
     const adventure = repository.open(values[0]!);
     io.write(`Opened Adventure "${adventure.name}" (${adventure.id}).\n\n`);
     await playAdventure(adventure, io, runToAdventureEnd);
+    return;
+  }
+
+  if (command === "export" && values.length === 2) {
+    const [id, path] = values as [string, string];
+    const archive = repository.exportArchive(id);
+    writeFileSync(path, archive, "utf8");
+    io.write(`Exported Adventure "${id}" to ${path}.\n`);
+    return;
+  }
+
+  if (command === "import" && values.length === 1) {
+    const path = values[0]!;
+    const adventure = repository.importArchive(readFileSync(path, "utf8"));
+    io.write(`Imported Adventure "${adventure.name}" (${adventure.id}).\n`);
+    adventure.close();
     return;
   }
 

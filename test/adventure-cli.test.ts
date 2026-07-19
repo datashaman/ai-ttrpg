@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -64,4 +64,51 @@ test("CLI reports usage without creating an unnamed Adventure", async () => {
 
   assert.match(script.output.join(""), /create <name>\|list\|open <id>/);
   assert.deepEqual(repository.list(), []);
+});
+
+test("CLI exports and imports a portable Adventure without entering play", async () => {
+  const sourceDirectory = mkdtempSync(join(tmpdir(), "ai-ttrpg-cli-"));
+  const sourceRepository = createLocalAdventureRepository(sourceDirectory);
+  const source = sourceRepository.create("The Portable Manor");
+  const app = createStructuredPlayApplication({
+    timelineStore: source.timelineStore,
+  });
+  app.submit({
+    type: "configure-player-character",
+    name: "Mara Vey",
+    pronouns: "she/her",
+    motivation: "Find her missing sister",
+    traits: { Might: 0, Wits: 2, Presence: 1 },
+  });
+  app.submit({ type: "begin-adventure" });
+  const archivePath = join(sourceDirectory, "portable-manor.adventure.json");
+  const exporting = scriptedIO([]);
+
+  await runAdventureCli(
+    ["export", source.id, archivePath],
+    exporting.io,
+    sourceRepository,
+  );
+
+  assert.equal(
+    readFileSync(archivePath, "utf8"),
+    sourceRepository.exportArchive(source.id),
+  );
+  assert.match(exporting.output.join(""), /Exported Adventure/);
+
+  const importedRepository = createLocalAdventureRepository(
+    mkdtempSync(join(tmpdir(), "ai-ttrpg-cli-")),
+  );
+  const importing = scriptedIO([]);
+  await runAdventureCli(
+    ["import", archivePath],
+    importing.io,
+    importedRepository,
+  );
+
+  assert.deepEqual(importedRepository.list(), [
+    { id: source.id, name: source.name, eventCount: 2 },
+  ]);
+  assert.match(importing.output.join(""), /Imported Adventure/);
+  source.close();
 });

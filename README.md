@@ -25,6 +25,18 @@ npm start -- list
 npm start -- open <adventure-id>
 ```
 
+Export a complete Adventure—including every Timeline, accepted event, active
+selection, and inherited random-stream position—to a versioned,
+integrity-checked archive, then import it into another data directory:
+
+```sh
+npm start -- export <adventure-id> portable-adventure.json
+npm start -- import portable-adventure.json
+```
+
+Import validates the complete archive before making the Adventure visible and
+refuses to overwrite an existing Adventure with the same identity.
+
 Choose a name, pronouns, Motivation, and assign `0`, `1`, and `2` exactly once among Might, Wits, and Presence. The CLI then starts the arrival Scene and offers authored Free Actions and uncertain actions. An uncertain action presents its complete Check Proposal before you confirm, correct, revise, or withdraw it. A confirmed Check records and reveals `2d6 + Trait`; before the outcome commits, you may spend one Resolve for `+1` or decline. The selected predeclared stakes commit only after that Pending Choice is resolved. Closing and reopening the Adventure replays its durable event history to restore the same Player-visible state, after which accepted actions append to that same history.
 
 Surveying the manor establishes visible evidence for an authored Unresolved Proposition. Continue in the Scene to ask the Oracle question: the Narrator recommends a grounded Likelihood, the Player confirms or changes it, and a recorded percentile roll establishes a visible Yes or No fact. Extreme rolls attach an Exceptional Consequence without changing the answer. The recommendation, evidence, confirmation, roll, committed events, and projected fact remain inspectable in the trace. This path does not call a language model.
