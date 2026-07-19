@@ -14,6 +14,12 @@ import {
   type Trait,
 } from "./structured-play.js";
 import { completePlayerCharacterSetup } from "./player-character-setup.js";
+import { narrateCommittedOutcomeThroughGateway } from "./grounded-narration.js";
+import {
+  createInMemoryModelCallRecordStore,
+  type ModelCallRecordStore,
+  type ModelGateway,
+} from "./model-gateway.js";
 import {
   createPresentationContext,
   explainCommittedRules,
@@ -46,13 +52,25 @@ export interface StructuredPlayRunnerOptions {
   >;
   readonly runToAdventureEnd?: boolean;
   readonly narrator?: PresentationModel;
+  readonly modelGateway?: ModelGateway;
+  readonly modelCallStore?: ModelCallRecordStore;
+  readonly evidenceBudget?: number;
   readonly narrationTimeoutMs?: number;
 }
 
-interface PresentationRuntime {
-  readonly narrator: PresentationModel;
-  readonly timeoutMs: number;
-}
+type PresentationRuntime =
+  | {
+      readonly kind: "legacy";
+      readonly narrator: PresentationModel;
+      readonly timeoutMs: number;
+    }
+  | {
+      readonly kind: "model-gateway";
+      readonly gateway: ModelGateway;
+      readonly modelCallStore: ModelCallRecordStore;
+      readonly evidenceBudget?: number;
+      readonly timeoutMs: number;
+    };
 
 const traceFrom = (
   events: readonly CanonicalEvent[],
@@ -81,6 +99,12 @@ const presentCommittedOutcome = async (
     committedEvents: result.appendedEvents,
     deterministicSummary: result.message,
   });
+  if (
+    runtime.kind === "model-gateway" &&
+    context.resolutionTrace === null
+  ) {
+    return;
+  }
 
   const writePresentation = (
     heading: string,
@@ -94,10 +118,24 @@ const presentCommittedOutcome = async (
     io.write(`${presentation.text}\n`);
   };
 
-  writePresentation(
-    "Narration",
-    await narrateCommittedOutcome(runtime.narrator, context, runtime.timeoutMs),
-  );
+  const narrate = (): Promise<
+    Awaited<ReturnType<typeof narrateCommittedOutcome>>
+  > =>
+    runtime.kind === "legacy"
+      ? narrateCommittedOutcome(runtime.narrator, context, runtime.timeoutMs)
+      : narrateCommittedOutcomeThroughGateway({
+          gateway: runtime.gateway,
+          modelCallStore: runtime.modelCallStore,
+          context,
+          state: result.state,
+          timeoutMs: runtime.timeoutMs,
+          ...(runtime.evidenceBudget === undefined
+            ? {}
+            : { evidenceBudget: runtime.evidenceBudget }),
+        });
+
+  writePresentation("Narration", await narrate());
+  if (runtime.kind === "model-gateway") return;
   while (true) {
     const choice = (
       await io.read(
@@ -108,14 +146,7 @@ const presentCommittedOutcome = async (
       .toLowerCase();
     if (choice === "c") return;
     if (choice === "r") {
-      writePresentation(
-        "Regenerated narration",
-        await narrateCommittedOutcome(
-          runtime.narrator,
-          context,
-          runtime.timeoutMs,
-        ),
-      );
+      writePresentation("Regenerated narration", await narrate());
       continue;
     }
     if (choice === "q") {
@@ -510,6 +541,9 @@ export const runStructuredPlay = async ({
   applicationOptions = {},
   runToAdventureEnd = false,
   narrator,
+  modelGateway,
+  modelCallStore,
+  evidenceBudget,
   narrationTimeoutMs = 5_000,
 }: StructuredPlayRunnerOptions): Promise<ApplicationView> => {
   const selectedEventStore = eventStore ?? createInMemoryEventStore();
@@ -525,9 +559,22 @@ export const runStructuredPlay = async ({
           },
   );
   const presentation =
-    narrator === undefined
-      ? undefined
-      : { narrator, timeoutMs: narrationTimeoutMs };
+    modelGateway !== undefined
+      ? {
+          kind: "model-gateway" as const,
+          gateway: modelGateway,
+          modelCallStore:
+            modelCallStore ?? createInMemoryModelCallRecordStore(),
+          ...(evidenceBudget === undefined ? {} : { evidenceBudget }),
+          timeoutMs: narrationTimeoutMs,
+        }
+      : narrator === undefined
+        ? undefined
+        : {
+            kind: "legacy" as const,
+            narrator,
+            timeoutMs: narrationTimeoutMs,
+          };
   io.write("AI TTRPG — Structured Play\n\n");
 
   const current = app.view();
