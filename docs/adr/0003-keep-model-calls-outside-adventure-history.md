@@ -1,0 +1,3 @@
+# Keep Model Calls Outside Adventure History
+
+Normalized task metadata, provider details, prompt versions, Evidence Bundle references and hashes, usage, validation, retries, fallback outcomes, and validated output are stored as operational Model Call Records rather than canonical Adventure events. Raw provider payload capture requires an explicit local diagnostic option and is excluded from Adventure exports. Records may correlate with resulting commands and accepted events, but excluding them from Timelines keeps replay provider-independent, avoids making transient or sensitive prose portable game truth, and prevents operational data from changing deterministic projections.

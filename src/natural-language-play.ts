@@ -15,6 +15,18 @@ import {
   invokeWithinTimeout,
   isRecord,
 } from "./model-boundary.js";
+import {
+  assembleInterpretationEvidence,
+  type EvidenceBundle,
+} from "./evidence-bundle.js";
+import {
+  createInMemoryModelCallRecordStore,
+  modelCallRecordFrom,
+  type ModelCallRecord,
+  type ModelCallRecordStore,
+  type ModelGateway,
+  type ModelGatewayExecution,
+} from "./model-gateway.js";
 import { completePlayerCharacterSetup } from "./player-character-setup.js";
 import {
   runStructuredPlay,
@@ -55,7 +67,10 @@ export interface InterpretationModel {
 
 export interface NaturalLanguagePlayOptions {
   readonly io: StructuredPlayIO;
-  readonly interpreter: InterpretationModel;
+  readonly interpreter?: InterpretationModel;
+  readonly modelGateway?: ModelGateway;
+  readonly modelCallStore?: ModelCallRecordStore;
+  readonly evidenceBudget?: number;
   readonly eventStore?: EventStore;
   readonly timelineStore?: TimelineStore;
   readonly randomSource?: RandomSource;
@@ -71,6 +86,7 @@ export interface NaturalLanguagePlayOptions {
 
 export interface NaturalLanguagePlayResult extends ApplicationView {
   readonly interpretedCommands: readonly StructuredPlayInput[];
+  readonly modelCallRecords: readonly ModelCallRecord[];
 }
 
 const knownEntitiesFrom = (view: ApplicationView): readonly KnownEntity[] => {
@@ -124,16 +140,19 @@ const selectedCapability = (
   interpretation: unknown,
   request: InterpretationRequest,
   actions: readonly AvailableAction[],
+  evidenceBundle?: EvidenceBundle,
 ): { readonly action: AvailableAction; readonly command: StructuredPlayInput } | null => {
+  const expectedKeys = [
+    "status",
+    "classification",
+    "capabilityId",
+    "referencedEntityIds",
+    "arguments",
+    ...(evidenceBundle === undefined ? [] : ["evidenceItemIds"]),
+  ];
   if (
     !isRecord(interpretation) ||
-    !hasExactKeys(interpretation, [
-      "status",
-      "classification",
-      "capabilityId",
-      "referencedEntityIds",
-      "arguments",
-    ]) ||
+    !hasExactKeys(interpretation, expectedKeys) ||
     interpretation.status !== "interpreted" ||
     (interpretation.classification !== "player-action" &&
       interpretation.classification !== "in-character-speech") ||
@@ -148,6 +167,32 @@ const selectedCapability = (
   const knownIds = new Set(request.knownEntities.map((entity) => entity.id));
   if (!interpretation.referencedEntityIds.every((id) => knownIds.has(id))) {
     return null;
+  }
+  if (evidenceBundle !== undefined) {
+    if (
+      interpretation.referencedEntityIds.length === 0 ||
+      !Array.isArray(interpretation.evidenceItemIds) ||
+      !interpretation.evidenceItemIds.every((id) => typeof id === "string")
+    ) {
+      return null;
+    }
+    const evidenceById = new Map(
+      evidenceBundle.items.map((item) => [item.id, item]),
+    );
+    const evidenceIds = interpretation.evidenceItemIds as string[];
+    if (
+      new Set(evidenceIds).size !== evidenceIds.length ||
+      !evidenceIds.every((id) => evidenceById.has(id)) ||
+      !evidenceIds.includes(`capability:${interpretation.capabilityId}`) ||
+      !interpretation.referencedEntityIds.every((entityId) =>
+        evidenceIds.some(
+          (evidenceId) =>
+            evidenceById.get(evidenceId)?.sourceReference === entityId,
+        ),
+      )
+    ) {
+      return null;
+    }
   }
   const action = actions.find((candidate) => candidate.id === interpretation.capabilityId);
   if (action === undefined) return null;
@@ -383,10 +428,49 @@ const runThroughStructuredPlay = (
       : { narrationTimeoutMs: options.narrationTimeoutMs }),
   });
 
+const acceptedEventsFor = (
+  options: NaturalLanguagePlayOptions,
+  eventStore: EventStore,
+) =>
+  options.timelineStore === undefined
+    ? eventStore.readAll()
+    : options.timelineStore.readTimeline(
+        options.timelineStore.view().activeTimelineId,
+      );
+
+const withoutInterpretedCommand = (
+  view: ApplicationView,
+  modelCallStore: ModelCallRecordStore,
+): NaturalLanguagePlayResult => ({
+  ...view,
+  interpretedCommands: [],
+  modelCallRecords: modelCallStore.readAll(),
+});
+
+const appendUncorrelatedModelCall = (
+  modelCallStore: ModelCallRecordStore,
+  execution: ModelGatewayExecution,
+  validation: ModelCallRecord["validation"],
+  validatedOutput: unknown | null,
+  fallbackOutcome: ModelCallRecord["fallbackOutcome"],
+): void =>
+  modelCallStore.append(
+    modelCallRecordFrom({
+      execution,
+      validation,
+      validatedOutput,
+      command: null,
+      acceptedEvents: [],
+      fallbackOutcome,
+    }),
+  );
+
 export const runNaturalLanguagePlay = async (
   options: NaturalLanguagePlayOptions,
 ): Promise<NaturalLanguagePlayResult> => {
   const eventStore = options.eventStore ?? createInMemoryEventStore();
+  const modelCallStore =
+    options.modelCallStore ?? createInMemoryModelCallRecordStore();
   let app = createApplication(options, eventStore);
   let view = app.view();
   if (view.state.playerCharacter === null) {
@@ -406,10 +490,10 @@ export const runNaturalLanguagePlay = async (
       eventStore,
       options.io,
     );
-    return { ...completed, interpretedCommands: [] };
+    return withoutInterpretedCommand(completed, modelCallStore);
   }
   if (view.state.adventureEnding !== null) {
-    return { ...view, interpretedCommands: [] };
+    return withoutInterpretedCommand(view, modelCallStore);
   }
 
   const utterance = await options.io.read("What do you do? ");
@@ -423,42 +507,121 @@ export const runNaturalLanguagePlay = async (
     })),
     visibleEvidence: view.state.establishedFacts,
   });
+  const evidenceBundle = assembleInterpretationEvidence({
+    utterance,
+    view,
+    acceptedEvents: acceptedEventsFor(options, eventStore),
+    ...(options.evidenceBudget === undefined
+      ? {}
+      : { maxItems: options.evidenceBudget }),
+  });
   let interpretation: unknown;
+  let gatewayExecution: ModelGatewayExecution | null = null;
   try {
-    interpretation = await invokeWithinTimeout(
-      () => options.interpreter.interpret(request),
-      options.interpretationTimeoutMs ?? 5_000,
-    );
+    if (options.modelGateway !== undefined) {
+      gatewayExecution = await options.modelGateway.execute(
+        immutableSnapshot({
+          type: "interpret-player-input" as const,
+          input: { utterance },
+          evidenceBundle,
+        }),
+        { timeoutMs: options.interpretationTimeoutMs ?? 5_000 },
+      );
+      if (gatewayExecution.outcome.status === "failed") {
+        appendUncorrelatedModelCall(
+          modelCallStore,
+          gatewayExecution,
+          {
+            status: "rejected",
+            reason: gatewayExecution.outcome.reason,
+          },
+          null,
+          "safe-rejection",
+        );
+        options.io.write(
+          "I could not safely map that input to an available capability. Please clarify.\n",
+        );
+        return withoutInterpretedCommand(view, modelCallStore);
+      }
+      interpretation = gatewayExecution.outcome.output;
+    } else if (options.interpreter !== undefined) {
+      interpretation = await invokeWithinTimeout(
+        () => options.interpreter!.interpret(request),
+        options.interpretationTimeoutMs ?? 5_000,
+      );
+    } else {
+      throw new Error("Natural Language Play requires a model gateway.");
+    }
   } catch {
     options.io.write(
       "I could not safely map that input to an available capability. Please clarify.\n",
     );
-    return { ...view, interpretedCommands: [] };
+    return withoutInterpretedCommand(view, modelCallStore);
   }
   const clarification = clarificationFrom(interpretation, request);
   if (clarification !== null) {
+    if (gatewayExecution !== null) {
+      appendUncorrelatedModelCall(
+        modelCallStore,
+        gatewayExecution,
+        { status: "accepted" },
+        interpretation,
+        "none",
+      );
+    }
     options.io.write(`Clarification needed: ${clarification}\n`);
-    return { ...view, interpretedCommands: [] };
+    return withoutInterpretedCommand(view, modelCallStore);
   }
   if (isRulesQuery(interpretation, request)) {
+    if (gatewayExecution !== null) {
+      appendUncorrelatedModelCall(
+        modelCallStore,
+        gatewayExecution,
+        { status: "accepted" },
+        interpretation,
+        "none",
+      );
+    }
     writeRulesEvidence(options.io, view);
-    return { ...view, interpretedCommands: [] };
+    return withoutInterpretedCommand(view, modelCallStore);
   }
   const nonGameplay = nonGameplayClassification(interpretation, request);
   if (nonGameplay !== null) {
+    if (gatewayExecution !== null) {
+      appendUncorrelatedModelCall(
+        modelCallStore,
+        gatewayExecution,
+        { status: "accepted" },
+        interpretation,
+        "none",
+      );
+    }
     writeNonGameplayResponse(options.io, nonGameplay, view);
-    return { ...view, interpretedCommands: [] };
+    return withoutInterpretedCommand(view, modelCallStore);
   }
   const selected = selectedCapability(
     interpretation,
     request,
     view.availableActions,
+    gatewayExecution === null ? undefined : evidenceBundle,
   );
   if (selected === null) {
+    if (gatewayExecution !== null) {
+      appendUncorrelatedModelCall(
+        modelCallStore,
+        gatewayExecution,
+        {
+          status: "rejected",
+          reason: "The output did not select exact, evidenced entity and capability references.",
+        },
+        null,
+        "safe-rejection",
+      );
+    }
     options.io.write(
       "I could not safely map that input to an available capability. Please clarify.\n",
     );
-    return { ...view, interpretedCommands: [] };
+    return withoutInterpretedCommand(view, modelCallStore);
   }
 
   const actionIndex = view.availableActions.findIndex(
@@ -478,7 +641,36 @@ export const runNaturalLanguagePlay = async (
     },
     write: (text) => options.io.write(text),
   };
+  const eventPositionBeforeCommand = acceptedEventsFor(options, eventStore).length;
   const completed = await runThroughStructuredPlay(options, eventStore, proxyIO);
+  if (gatewayExecution !== null) {
+    const acceptedEvents = acceptedEventsFor(options, eventStore).slice(
+      eventPositionBeforeCommand,
+    );
+    if (acceptedEvents.length === 0) {
+      appendUncorrelatedModelCall(
+        modelCallStore,
+        gatewayExecution,
+        {
+          status: "rejected",
+          reason: "Structured Play authority did not accept and append the interpreted command.",
+        },
+        null,
+        "safe-rejection",
+      );
+      return withoutInterpretedCommand(completed, modelCallStore);
+    }
+    modelCallStore.append(
+      modelCallRecordFrom({
+        execution: gatewayExecution,
+        validation: { status: "accepted" },
+        validatedOutput: interpretation,
+        command: selected.command,
+        acceptedEvents,
+        fallbackOutcome: "none",
+      }),
+    );
+  }
   if (
     options.runToAdventureEnd === true &&
     completed.state.adventureEnding === null
@@ -486,6 +678,7 @@ export const runNaturalLanguagePlay = async (
     const continued = await runNaturalLanguagePlay({
       ...options,
       eventStore,
+      modelCallStore,
     });
     return {
       ...continued,
@@ -498,5 +691,6 @@ export const runNaturalLanguagePlay = async (
   return {
     ...completed,
     interpretedCommands: [selected.command],
+    modelCallRecords: modelCallStore.readAll(),
   };
 };

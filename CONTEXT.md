@@ -136,6 +136,18 @@ _Avoid_: secret, hidden fact, unknown fact
 A proposition about the game world whose truth has been determined. In the first Adventure, Established Facts are visible to the Player rather than held as privileged Game Master knowledge.
 _Avoid_: lore, canon, hidden fact
 
+**Evidence Bundle**:
+An immutable, task-specific collection of Player-visible source items supplied to a model, each identified by its source and inclusion reason. An Evidence Bundle may include Established Facts, rules, entities, and accepted events, but is not itself game truth and cannot authorize a state change.
+_Avoid_: prompt context, model memory, truth
+
+**Model Call Record**:
+An operational audit record of one model task, including its provider, model, prompt version, Evidence Bundle references and hashes, timing, usage, validation, retries, fallback result, and validated output. A Model Call Record may correlate with accepted commands and events, but raw provider payloads are diagnostic data rather than default record content; the record is not part of a Timeline and cannot rebuild game state.
+_Avoid_: canonical event, Adventure history, model memory
+
+**Model Task**:
+One stateless request for interpretation, rules explanation, or narration, containing explicit task input and one Evidence Bundle. A Model Task has no provider-managed conversational memory and cannot directly establish game truth.
+_Avoid_: chat session, agent turn, conversation memory
+
 **Micro-ruleset**:
 The original, intentionally small ruleset used to prove the first playable experience. It resolves uncertain actions with 2d6 plus a relevant trait and distinguishes a Setback, Success with Cost, and Clean Success.
 _Avoid_: demo rules, test rules, house rules
@@ -177,6 +189,22 @@ _Avoid_: critical success, full success
 > **Developer:** Is the witness secretly a cult member before the Player investigates?
 >
 > **Domain expert:** No—the witness's allegiance is an Unresolved Proposition. It becomes an Established Fact when play requires the Oracle to answer it.
+>
+> **Developer:** The Evidence Bundle includes a rule and an Established Fact. Can the model commit the rule's effect or treat the bundle as new game truth?
+>
+> **Domain expert:** No. The Evidence Bundle only attributes the sources available for one model task. Established Facts and accepted events remain authoritative, and application code still validates and commits any resulting command.
+>
+> **Developer:** Should the model's full request and response be appended to the Timeline for auditing?
+>
+> **Domain expert:** No. Store them in a Model Call Record correlated with any resulting command and events. The Timeline remains the replayable history of accepted game truth.
+>
+> **Developer:** Can the provider remember earlier turns so the Narrator stays consistent?
+>
+> **Domain expert:** No. Each Model Task receives the relevant Evidence Bundle explicitly. Continuity comes from accepted events and projected game state, not hidden provider memory.
+>
+> **Developer:** Does auditing require every raw provider prompt and response to be saved?
+>
+> **Domain expert:** No. A Model Call Record keeps attributable metadata and validated output. Raw payload capture is an explicit, local diagnostic choice and is never part of an Adventure export.
 >
 > **Developer:** The Player is highly persuasive, so is the witness being a cult member Likely?
 >
