@@ -16,6 +16,7 @@ import {
 } from "./random-source.js";
 
 export { createInMemoryEventStore } from "./in-memory-event-store.js";
+export { createInMemoryTimelineStore } from "./in-memory-timeline-store.js";
 export { createSeededRandomSource } from "./random-source.js";
 export type { RandomSource } from "./random-source.js";
 
@@ -442,6 +443,16 @@ export interface TransitionScene {
   readonly scene: Exclude<Scene, "arrival">;
 }
 
+export interface BranchTimeline {
+  readonly type: "branch-timeline";
+  readonly eventPosition: number;
+}
+
+export interface SelectTimeline {
+  readonly type: "select-timeline";
+  readonly timelineId: string;
+}
+
 export interface SceneTransitionDefinition {
   readonly from: Scene;
   readonly to: Scene;
@@ -462,7 +473,9 @@ export type StructuredPlayInput =
   | RecommendLikelihood
   | ConfirmOracleLikelihood
   | UseFieldKit
-  | TransitionScene;
+  | TransitionScene
+  | BranchTimeline
+  | SelectTimeline;
 
 export interface FreeAction {
   readonly id: string;
@@ -517,12 +530,27 @@ export interface SceneTransitionAction {
   readonly scene: Exclude<Scene, "arrival">;
 }
 
+export interface TimelineBranchAction {
+  readonly id: "branch-timeline";
+  readonly label: "Branch from an accepted event";
+  readonly kind: "Timeline Branch";
+}
+
+export interface TimelineSelectionAction {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: "Timeline Selection";
+  readonly timelineId: string;
+}
+
 export type AvailableAction =
   | FreeAction
   | CheckAction
   | OracleAction
   | RecoveryAction
-  | SceneTransitionAction;
+  | SceneTransitionAction
+  | TimelineBranchAction
+  | TimelineSelectionAction;
 
 export interface CheckActionDefinition extends CheckAction {
   readonly goal: string;
@@ -545,6 +573,7 @@ export interface AcceptedResult {
   readonly message: string;
   readonly state: GameState;
   readonly availableActions: readonly AvailableAction[];
+  readonly timeline: TimelineCollectionView | null;
   readonly appendedEvents: readonly CanonicalEvent[];
 }
 
@@ -565,21 +594,52 @@ export interface RejectedResult {
     | "likelihood-recommendation-unavailable"
     | "field-kit-unavailable"
     | "scene-transition-unavailable"
-    | "action-requires-free-movement";
+    | "action-requires-free-movement"
+    | "timeline-unavailable"
+    | "invalid-timeline-position";
   readonly message: string;
   readonly state: GameState;
   readonly availableActions: readonly AvailableAction[];
+  readonly timeline: TimelineCollectionView | null;
   readonly appendedEvents: readonly [];
 }
 
 export interface ApplicationView {
   readonly state: GameState;
   readonly availableActions: readonly AvailableAction[];
+  readonly timeline: TimelineCollectionView | null;
 }
 
 export interface EventStore {
   readAll(): readonly CanonicalEvent[];
   append(event: CanonicalEvent): void;
+}
+
+export interface TimelineSummary {
+  readonly id: string;
+  readonly parentTimelineId: string | null;
+  readonly branchEventPosition: number | null;
+  readonly eventCount: number;
+  readonly randomPosition: number;
+}
+
+export interface TimelineCollectionView {
+  readonly activeTimelineId: string;
+  readonly activeTimeline: TimelineSummary;
+  readonly timelines: readonly TimelineSummary[];
+  readonly acceptedEvents: readonly TimelineEventSummary[];
+}
+
+export interface TimelineEventSummary {
+  readonly position: number;
+  readonly type: CanonicalEvent["type"];
+}
+
+export interface TimelineStore extends EventStore, RandomSource {
+  view(): TimelineCollectionView;
+  readTimeline(timelineId: string): readonly CanonicalEvent[];
+  branchTimeline(eventPosition: number): TimelineSummary;
+  selectTimeline(timelineId: string): boolean;
 }
 
 export interface StructuredPlayApplication {
@@ -596,6 +656,7 @@ export interface StructuredPlayOptions {
   readonly confrontation?: ConfrontationDefinition;
   readonly freeActions?: readonly FreeActionDefinition[];
   readonly adventureEndings?: readonly AdventureEndingDefinition[];
+  readonly timelineStore?: TimelineStore;
 }
 
 const STARTING_INVENTORY: readonly InventoryItem[] = [
@@ -1359,8 +1420,18 @@ const exceptionalConsequenceFor = (
 export const createStructuredPlayApplication = (
   options: StructuredPlayOptions = {},
 ): StructuredPlayApplication => {
-  const eventStore = options.eventStore ?? createInMemoryEventStore();
-  const randomSource = options.randomSource ?? createSeededRandomSource(Date.now());
+  if (
+    options.timelineStore !== undefined &&
+    (options.eventStore !== undefined || options.randomSource !== undefined)
+  ) {
+    throw new Error(
+      "A Timeline store supplies both event persistence and randomness.",
+    );
+  }
+  const timelineStore = options.timelineStore ?? null;
+  const eventStore = timelineStore ?? options.eventStore ?? createInMemoryEventStore();
+  const randomSource =
+    timelineStore ?? options.randomSource ?? createSeededRandomSource(Date.now());
   const checkActions = options.checkActions ?? DEFAULT_CHECK_ACTIONS;
   const oracleActions = options.oracleActions ?? DEFAULT_ORACLE_ACTIONS;
   const sceneTransitions =
@@ -1397,17 +1468,46 @@ export const createStructuredPlayApplication = (
     }
   }
 
+  const timelineActions = (): readonly AvailableAction[] => {
+    if (timelineStore === null) return [];
+    const timeline = timelineStore.view();
+    if (timeline.activeTimeline.eventCount === 0) return [];
+    return [
+      {
+        id: "branch-timeline",
+        label: "Branch from an accepted event",
+        kind: "Timeline Branch",
+      },
+      ...timeline.timelines
+        .filter((candidate) => candidate.id !== timeline.activeTimelineId)
+        .map((candidate) => ({
+          id: `select-timeline:${candidate.id}`,
+          label: `Select ${candidate.id}`,
+          kind: "Timeline Selection" as const,
+          timelineId: candidate.id,
+        })),
+    ];
+  };
+
+  const currentAvailableActions = (
+    state: GameState,
+  ): readonly AvailableAction[] => [
+    ...availableActionsFor(
+      state,
+      checkActions,
+      oracleActions,
+      sceneTransitions,
+      freeActions,
+    ),
+    ...timelineActions(),
+  ];
+
   const view = (): ApplicationView => {
     const state = project(eventStore.readAll());
     return {
       state,
-      availableActions: availableActionsFor(
-        state,
-        checkActions,
-        oracleActions,
-        sceneTransitions,
-        freeActions,
-      ),
+      availableActions: currentAvailableActions(state),
+      timeline: timelineStore?.view() ?? null,
     };
   };
 
@@ -1420,13 +1520,8 @@ export const createStructuredPlayApplication = (
     code,
     message,
     state,
-    availableActions: availableActionsFor(
-      state,
-      checkActions,
-      oracleActions,
-      sceneTransitions,
-      freeActions,
-    ),
+    availableActions: currentAvailableActions(state),
+    timeline: timelineStore?.view() ?? null,
     appendedEvents: [],
   });
 
@@ -1454,13 +1549,8 @@ export const createStructuredPlayApplication = (
       status: "accepted",
       message,
       state,
-      availableActions: availableActionsFor(
-        state,
-        checkActions,
-        oracleActions,
-        sceneTransitions,
-        freeActions,
-      ),
+      availableActions: currentAvailableActions(state),
+      timeline: timelineStore?.view() ?? null,
       appendedEvents,
     };
   };
@@ -1590,6 +1680,44 @@ export const createStructuredPlayApplication = (
       const events = eventStore.readAll();
       const state = project(events);
       const commandId = randomUUID();
+
+      if (input.type === "branch-timeline") {
+        if (timelineStore === null) {
+          return reject(
+            "timeline-unavailable",
+            "Timeline branching is not available for this Adventure store.",
+            state,
+          );
+        }
+        try {
+          const timeline = timelineStore.branchTimeline(input.eventPosition);
+          return accept(
+            `Created and selected ${timeline.id} from accepted event ${input.eventPosition}.`,
+            [],
+          );
+        } catch (error) {
+          if (!(error instanceof RangeError)) throw error;
+          return reject(
+            "invalid-timeline-position",
+            error.message,
+            state,
+          );
+        }
+      }
+
+      if (input.type === "select-timeline") {
+        if (
+          timelineStore === null ||
+          !timelineStore.selectTimeline(input.timelineId)
+        ) {
+          return reject(
+            "timeline-unavailable",
+            "That Timeline is not available.",
+            state,
+          );
+        }
+        return accept(`Selected ${input.timelineId}.`, []);
+      }
 
       if (input.type === "use-field-kit") {
         const playerCharacter = state.playerCharacter;
