@@ -6,6 +6,10 @@ import {
   createStructuredPlayApplication,
   type EventStore,
 } from "../src/structured-play.js";
+import {
+  projectWorldKnowledge,
+  type WorldKnowledgeActorScope,
+} from "../src/world-knowledge.js";
 import { canonicalV1Fixtures } from "./support/canonical-v1-fixtures.js";
 
 const replay = (eventStore: EventStore): string => {
@@ -25,6 +29,32 @@ test("every canonical v1 fixture rebuilds a byte-equivalent normalized projectio
   for (const fixture of await canonicalV1Fixtures()) {
     await t.test(fixture.name, () => {
       assert.equal(replay(fixture.eventStore), JSON.stringify(fixture.state));
+    });
+  }
+});
+
+test("every canonical v1 fixture rebuilds byte-equivalent World Knowledge", async (t) => {
+  const actorScopes: readonly WorldKnowledgeActorScope[] = [
+    "Player",
+    "Game Master",
+  ];
+  for (const fixture of await canonicalV1Fixtures()) {
+    await t.test(fixture.name, () => {
+      for (const actorScope of actorScopes) {
+        const expected = projectWorldKnowledge({
+          actorScope,
+          events: fixture.eventStore.readAll(),
+        });
+        const rebuilt = projectWorldKnowledge({
+          actorScope,
+          events: structuredClone(fixture.eventStore.readAll()),
+        });
+        assert.equal(JSON.stringify(rebuilt), JSON.stringify(expected));
+        assert.deepEqual(
+          rebuilt.entries.map(({ id, text }) => ({ id, text })),
+          fixture.state.establishedFacts,
+        );
+      }
     });
   }
 });

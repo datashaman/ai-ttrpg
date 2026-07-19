@@ -10,6 +10,7 @@ import type {
   PlayerCharacter,
   Scene,
 } from "./structured-play.js";
+import { projectWorldKnowledge } from "./world-knowledge.js";
 
 export type EvidenceSourceKind =
   | "active-scene"
@@ -69,7 +70,7 @@ export interface InterpretationEvidenceInput {
 export type RulesExplanationEvidenceInput = InterpretationEvidenceInput;
 
 export interface NarrationEvidenceInput {
-  readonly visibleEvidence: readonly EstablishedFact[];
+  readonly acceptedEvents: readonly CanonicalEvent[];
   readonly resolutionTrace: CheckTrace | OracleTrace;
   readonly committedEvents: readonly CanonicalEvent[];
   readonly playerCharacter: PlayerCharacter | null;
@@ -169,16 +170,20 @@ export const assembleInterpretationEvidence = (
       isDirectlyRelevant(input.utterance, condition) ? 0 : 3,
     ),
   );
-  input.view.state.establishedFacts.forEach((fact) =>
+  projectWorldKnowledge({
+    actorScope: "Player",
+    events: input.acceptedEvents,
+  }).entries.forEach((entry) =>
     add(
       {
-        id: `fact:${fact.id}`,
+        id: `fact:${entry.id}`,
         sourceKind: "established-fact",
-        sourceReference: fact.id,
-        content: fact.text,
-        inclusionReason: "This Player-visible Established Fact describes the current situation.",
+        sourceReference: `world-knowledge:${entry.id}`,
+        content: entry.text,
+        inclusionReason:
+          "This Player-visible World Knowledge Entry describes the current situation.",
       },
-      isDirectlyRelevant(input.utterance, fact.id, fact.text) ? 0 : 4,
+      isDirectlyRelevant(input.utterance, entry.id, entry.text) ? 0 : 4,
     ),
   );
   input.view.availableActions.forEach((capability) =>
@@ -446,21 +451,24 @@ export const assembleNarrationEvidence = (
     ...input.committedEvents.map(acceptedEventContent),
     resolutionContent(input.resolutionTrace),
   ].join(" ");
-  input.visibleEvidence
+  projectWorldKnowledge({
+    actorScope: "Player",
+    events: input.acceptedEvents,
+  }).entries
     .filter(
-      (fact) =>
-        committedContent.includes(fact.id) ||
-        committedContent.includes(fact.text),
+      (entry) =>
+        committedContent.includes(entry.id) ||
+        committedContent.includes(entry.text),
     )
-    .forEach((fact) =>
+    .forEach((entry) =>
       add(
         {
-          id: `fact:${fact.id}`,
+          id: `fact:${entry.id}`,
           sourceKind: "established-fact",
-          sourceReference: fact.id,
-          content: fact.text,
+          sourceReference: `world-knowledge:${entry.id}`,
+          content: entry.text,
           inclusionReason:
-            "This Player-visible Established Fact was established by the committed outcome.",
+            "This Player-visible World Knowledge Entry supports the committed outcome.",
         },
         1,
       ),

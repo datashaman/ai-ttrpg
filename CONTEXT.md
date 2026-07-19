@@ -133,8 +133,28 @@ A question about the game world that has no answer yet. It becomes an Establishe
 _Avoid_: secret, hidden fact, unknown fact
 
 **Established Fact**:
-A proposition about the game world whose truth has been determined. In the first Adventure, Established Facts are visible to the Player rather than held as privileged Game Master knowledge.
+A canonical, non-probabilistic proposition about the game world whose truth has been determined. Provenance may describe the reliability of a source or report, but it never weakens or overrides an Established Fact.
 _Avoid_: lore, canon, hidden fact
+
+**World Knowledge Entry**:
+A stable, attributable representation of an Established Fact, carrying its Provenance, Visibility, and Knowledge Scope without becoming a separate source of game truth.
+_Avoid_: lore record, model memory, knowledge-base fact
+
+**Provenance**:
+The attributable origin of a World Knowledge Entry, identifying how its Established Fact entered canonical game truth and the stable source that supports that origin.
+_Avoid_: citation text, confidence, generated explanation
+
+**Visibility**:
+The explicit boundary that determines which application actor scopes may observe a World Knowledge Entry. Visibility is distinct from whether the Established Fact is true and from who knows it within the fiction.
+_Avoid_: permission, secrecy convention, prompt filter
+
+**Knowledge Scope**:
+The in-world boundary describing who knows an Established Fact. It may change through a Reveal without changing the fact's truth or original Provenance.
+_Avoid_: access control, audience, confidence
+
+**Reveal**:
+A canonical change that expands the Knowledge Scope of an existing World Knowledge Entry while preserving its Established Fact and original Provenance. Displaying, narrating, or citing hidden knowledge is not a Reveal.
+_Avoid_: disclosure, narration, new fact
 
 **Evidence Bundle**:
 An immutable, task-specific collection of Player-visible source items supplied to a model, each identified by its source and inclusion reason. An Evidence Bundle may include Established Facts, rules, entities, and accepted events, but is not itself game truth and cannot authorize a state change.

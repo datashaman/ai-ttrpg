@@ -1,0 +1,3 @@
+# Canonical Events Own World Knowledge
+
+World Knowledge is derived exclusively from canonical Adventure events; its entries, Provenance, Visibility, Knowledge Scope, and Reveals are projections rather than a second source of game truth. Every query requires an explicit actor scope, and World Knowledge applies Visibility filtering before retrieval, ranking, budgeting, formatting, Evidence Bundle assembly, or model context construction. This forbids the convenience of an unfiltered shared corpus, but preserves deterministic replay and prevents privileged knowledge from becoming a candidate for Player-facing retrieval or model use.
