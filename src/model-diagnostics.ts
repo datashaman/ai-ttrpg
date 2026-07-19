@@ -26,8 +26,27 @@ const sensitiveKeys = new Set([
 const credentialPattern = /\b(?:sk-[a-z0-9_-]+|bearer\s+[^\s"']+)/gi;
 const redacted = "[REDACTED]";
 
-const isSensitiveKey = (key: string): boolean =>
-  sensitiveKeys.has(key.replace(/[^a-z0-9]/gi, "").toLocaleLowerCase("en"));
+const isSensitiveKey = (key: string): boolean => {
+  const normalized = key
+    .replace(/[^a-z0-9]/gi, "")
+    .toLocaleLowerCase("en");
+  return (
+    sensitiveKeys.has(normalized) ||
+    normalized.endsWith("apikey") ||
+    normalized.endsWith("accesskey") ||
+    normalized.endsWith("accesskeyid") ||
+    normalized.endsWith("token") ||
+    normalized.endsWith("secret") ||
+    normalized.endsWith("credential") ||
+    normalized.endsWith("credentials") ||
+    normalized.endsWith("password") ||
+    normalized.endsWith("passwd") ||
+    normalized.endsWith("privatekey") ||
+    normalized.endsWith("authorization") ||
+    normalized.endsWith("cookie") ||
+    normalized.endsWith("sessionid")
+  );
+};
 
 export const redactModelDiagnosticValue = (value: unknown): unknown => {
   if (typeof value === "string") {
