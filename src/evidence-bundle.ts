@@ -4,6 +4,11 @@ import { immutableSnapshot } from "./model-boundary.js";
 import type {
   ApplicationView,
   CanonicalEvent,
+  CheckTrace,
+  EstablishedFact,
+  OracleTrace,
+  PlayerCharacter,
+  Scene,
 } from "./structured-play.js";
 
 export type EvidenceSourceKind =
@@ -15,6 +20,7 @@ export type EvidenceSourceKind =
   | "capability"
   | "authority-rule"
   | "resolution"
+  | "direct-entity"
   | "accepted-event";
 
 export interface EvidenceItem {
@@ -27,7 +33,10 @@ export interface EvidenceItem {
 
 export interface EvidenceBundle {
   readonly id: string;
-  readonly taskType: "interpret-player-input" | "explain-rules";
+  readonly taskType:
+    | "interpret-player-input"
+    | "explain-rules"
+    | "narrate-committed-outcome";
   readonly items: readonly EvidenceItem[];
 }
 
@@ -58,6 +67,15 @@ export interface InterpretationEvidenceInput {
 }
 
 export type RulesExplanationEvidenceInput = InterpretationEvidenceInput;
+
+export interface NarrationEvidenceInput {
+  readonly visibleEvidence: readonly EstablishedFact[];
+  readonly resolutionTrace: CheckTrace | OracleTrace;
+  readonly committedEvents: readonly CanonicalEvent[];
+  readonly playerCharacter: PlayerCharacter | null;
+  readonly activeScene: Scene | null;
+  readonly maxItems?: number;
+}
 
 const normalized = (value: string): string =>
   value
@@ -227,6 +245,232 @@ export const assembleInterpretationEvidence = (
   return immutableSnapshot({
     id: bundleId(items),
     taskType: "interpret-player-input" as const,
+    items,
+  });
+};
+
+const narrationRule = (
+  trace: CheckTrace | OracleTrace,
+): EvidenceItem =>
+  trace.rule.id === "micro-ruleset.check"
+    ? {
+        id: `rule:${trace.rule.id}@${trace.rule.version}`,
+        sourceKind: "authority-rule",
+        sourceReference: "CONTEXT.md#Check",
+        content:
+          "The resolution of a confirmed Check Proposal with 2d6 plus the relevant Trait, producing a Setback, Success with Cost, or Clean Success.",
+        inclusionReason:
+          "This exact authored rule governs the committed Check outcome.",
+      }
+    : {
+        id: `rule:${trace.rule.id}@${trace.rule.version}`,
+        sourceKind: "authority-rule",
+        sourceReference: "CONTEXT.md#Oracle",
+        content:
+          "The authority that answers an Unresolved Proposition with Yes or No when no human Game Master is present. Its answer is distinct from a Check, which determines whether a character succeeds.",
+        inclusionReason:
+          "This exact authored rule governs the committed Oracle outcome.",
+      };
+
+const directlyInvolvedEntity = (
+  trace: CheckTrace | OracleTrace,
+  committedEvents: readonly CanonicalEvent[],
+): EvidenceItem | null => {
+  if ("proposition" in trace) {
+    return {
+      id: `entity:proposition:${trace.proposition.id}`,
+      sourceKind: "direct-entity",
+      sourceReference: `proposition:${trace.proposition.id}`,
+      content: trace.proposition.text,
+      inclusionReason:
+        "This Unresolved Proposition is the subject of the committed Oracle answer.",
+    };
+  }
+  const checkEvent = committedEvents.find(
+    (event) => event.type === "CheckResolved",
+  );
+  if (checkEvent === undefined) return null;
+  return {
+    id: `entity:action:${checkEvent.payload.actionId}`,
+    sourceKind: "direct-entity",
+    sourceReference: `action:${checkEvent.payload.actionId}`,
+    content: JSON.stringify({
+      actionId: checkEvent.payload.actionId,
+      goal: checkEvent.payload.goal,
+      trait: checkEvent.payload.trait,
+    }),
+    inclusionReason:
+      "This authored action is directly involved in the committed Check outcome.",
+  };
+};
+
+const acceptedEventContent = (event: CanonicalEvent): string => {
+  if (event.type === "CheckResolved") {
+    return JSON.stringify({
+      type: event.type,
+      actionId: event.payload.actionId,
+      goal: event.payload.goal,
+      trait: event.payload.trait,
+      resolveSpent: event.payload.resolveSpent,
+      adjustedTotal: event.payload.adjustedTotal,
+      outcome: event.payload.outcome,
+      committedStake: event.payload.committedStake,
+    });
+  }
+  if (event.type === "OracleAnswered") {
+    return JSON.stringify({
+      type: event.type,
+      proposition: {
+        id: event.payload.trace.proposition.id,
+        text: event.payload.trace.proposition.text,
+      },
+      confirmedLikelihood: event.payload.trace.confirmedLikelihood,
+      recommendationEvidence: event.payload.trace.recommendation.evidence,
+      result: event.payload.trace.result,
+      establishedFact: event.payload.establishedFact,
+    });
+  }
+  if (event.type === "SceneTransitioned") {
+    return JSON.stringify({ type: event.type, ...event.payload });
+  }
+  if (event.type === "ConfrontationStarted") {
+    return JSON.stringify({
+      type: event.type,
+      confrontationId: event.payload.definition.id,
+      resistanceCapacity:
+        event.payload.definition.resistanceClock.capacity,
+      dangerCapacity: event.payload.definition.dangerClock.capacity,
+    });
+  }
+  if (event.type === "ConfrontationEnded") {
+    return JSON.stringify({ type: event.type, ...event.payload });
+  }
+  if (event.type === "AdventureEnded") {
+    return JSON.stringify({ type: event.type, ...event.payload });
+  }
+  return JSON.stringify({ type: event.type });
+};
+
+const resolutionContent = (trace: CheckTrace | OracleTrace): string =>
+  "proposition" in trace
+    ? JSON.stringify({
+        rule: trace.rule,
+        proposition: {
+          id: trace.proposition.id,
+          text: trace.proposition.text,
+        },
+        recommendation: trace.recommendation,
+        confirmedLikelihood: trace.confirmedLikelihood,
+        result: trace.result,
+      })
+    : JSON.stringify({
+        rule: trace.rule,
+        randomInputs: trace.random.inputs,
+        modifiers: trace.modifiers,
+        result: trace.result,
+      });
+
+export const assembleNarrationEvidence = (
+  input: NarrationEvidenceInput,
+): EvidenceBundle => {
+  const candidates: RankedEvidenceItem[] = [];
+  const add = (item: EvidenceItem, priority: number): void => {
+    candidates.push({ item, priority, order: candidates.length });
+  };
+
+  input.committedEvents.forEach((event, index) =>
+    add(
+      {
+        id: `event:committed:${index}`,
+        sourceKind: "accepted-event",
+        sourceReference: `adventure-event:${event.id}`,
+        content: acceptedEventContent(event),
+        inclusionReason:
+          "This accepted event is part of the committed outcome being narrated.",
+      },
+      0,
+    ),
+  );
+  add(
+    {
+      id: "resolution:committed",
+      sourceKind: "resolution",
+      sourceReference: "projected-state:committed-resolution",
+      content: resolutionContent(input.resolutionTrace),
+      inclusionReason:
+        "This Player-visible accepted resolution trace defines the outcome.",
+    },
+    0,
+  );
+  add(narrationRule(input.resolutionTrace), 0);
+
+  const involvedEntity = directlyInvolvedEntity(
+    input.resolutionTrace,
+    input.committedEvents,
+  );
+  if (involvedEntity !== null) add(involvedEntity, 1);
+  if (
+    input.playerCharacter !== null &&
+    input.resolutionTrace.rule.id === "micro-ruleset.check"
+  ) {
+    add(
+      {
+        id: "entity:player-character",
+        sourceKind: "direct-entity",
+        sourceReference: "player-character",
+        content: JSON.stringify({
+          name: input.playerCharacter.name,
+          pronouns: input.playerCharacter.pronouns,
+        }),
+        inclusionReason:
+          "This Player-visible Player Character is directly involved in the committed outcome.",
+      },
+      1,
+    );
+  }
+  if (input.activeScene !== null) {
+    add(
+      {
+        id: `entity:scene:${input.activeScene}`,
+        sourceKind: "direct-entity",
+        sourceReference: `scene:${input.activeScene}`,
+        content: input.activeScene,
+        inclusionReason:
+          "This Player-visible Scene contains the committed outcome.",
+      },
+      1,
+    );
+  }
+
+  const committedContent = [
+    ...input.committedEvents.map(acceptedEventContent),
+    resolutionContent(input.resolutionTrace),
+  ].join(" ");
+  input.visibleEvidence
+    .filter(
+      (fact) =>
+        committedContent.includes(fact.id) ||
+        committedContent.includes(fact.text),
+    )
+    .forEach((fact) =>
+      add(
+        {
+          id: `fact:${fact.id}`,
+          sourceKind: "established-fact",
+          sourceReference: fact.id,
+          content: fact.text,
+          inclusionReason:
+            "This Player-visible Established Fact was established by the committed outcome.",
+        },
+        1,
+      ),
+    );
+
+  const maxItems = Math.max(1, input.maxItems ?? 64);
+  const items = selectRankedEvidence(candidates, maxItems);
+  return immutableSnapshot({
+    id: bundleId(items),
+    taskType: "narrate-committed-outcome" as const,
     items,
   });
 };

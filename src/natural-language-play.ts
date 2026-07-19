@@ -620,6 +620,7 @@ const runThroughStructuredPlay = (
   options: NaturalLanguagePlayOptions,
   eventStore: EventStore,
   io: StructuredPlayIO,
+  modelCallStore: ModelCallRecordStore,
 ): Promise<ApplicationView> =>
   runStructuredPlay({
     io,
@@ -634,6 +635,13 @@ const runThroughStructuredPlay = (
       ? {}
       : { applicationOptions: options.applicationOptions }),
     ...(options.narrator === undefined ? {} : { narrator: options.narrator }),
+    ...(options.modelGateway === undefined
+      ? {}
+      : { modelGateway: options.modelGateway }),
+    modelCallStore,
+    ...(options.evidenceBudget === undefined
+      ? {}
+      : { evidenceBudget: options.evidenceBudget }),
     ...(options.narrationTimeoutMs === undefined
       ? {}
       : { narrationTimeoutMs: options.narrationTimeoutMs }),
@@ -768,6 +776,7 @@ export const runNaturalLanguagePlay = async (
       options,
       eventStore,
       options.io,
+      modelCallStore,
     );
     return withoutInterpretedCommand(completed, modelCallStore);
   }
@@ -940,7 +949,12 @@ export const runNaturalLanguagePlay = async (
     write: (text) => options.io.write(text),
   };
   const eventPositionBeforeCommand = acceptedEventsFor(options, eventStore).length;
-  const completed = await runThroughStructuredPlay(options, eventStore, proxyIO);
+  const completed = await runThroughStructuredPlay(
+    options,
+    eventStore,
+    proxyIO,
+    modelCallStore,
+  );
   if (gatewayExecution !== null) {
     const acceptedEvents = acceptedEventsFor(options, eventStore).slice(
       eventPositionBeforeCommand,

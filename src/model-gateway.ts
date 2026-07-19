@@ -26,7 +26,19 @@ export interface RulesExplanationModelTask {
   readonly evidenceBundle: EvidenceBundle;
 }
 
-export type ModelTask = InterpretationModelTask | RulesExplanationModelTask;
+export interface NarrationModelTask {
+  readonly type: "narrate-committed-outcome";
+  readonly input: {
+    readonly outcomeReference: string;
+    readonly repairOf?: unknown;
+  };
+  readonly evidenceBundle: EvidenceBundle;
+}
+
+export type ModelTask =
+  | InterpretationModelTask
+  | RulesExplanationModelTask
+  | NarrationModelTask;
 
 export interface ModelProvider {
   readonly provider: string;
@@ -96,6 +108,15 @@ export interface ModelGateway {
   ): Promise<ModelGatewayExecution>;
 }
 
+const repairTaskFrom = <Task extends ModelTask>(
+  task: Task,
+  repairOf: unknown,
+): Task =>
+  immutableSnapshot({
+    ...task,
+    input: { ...task.input, repairOf },
+  });
+
 export const createModelGateway = ({
   provider,
   promptVersion,
@@ -109,7 +130,9 @@ export const createModelGateway = ({
       promptVersion ??
       (task.type === "interpret-player-input"
         ? "interpret-player-input-v1"
-        : "explain-rules-v1");
+        : task.type === "explain-rules"
+          ? "explain-rules-v1"
+          : "narrate-committed-outcome-v1");
     const taskSnapshot = immutableSnapshot(task);
     let outcome: ModelGatewayExecution["outcome"];
     let retryCount: 0 | 1 = 0;
@@ -136,13 +159,7 @@ export const createModelGateway = ({
         !options.isStructurallyValid(result.output)
       ) {
         retryCount = 1;
-        const repairTask = immutableSnapshot({
-          ...taskSnapshot,
-          input: {
-            ...taskSnapshot.input,
-            repairOf: result.output,
-          },
-        });
+        const repairTask = repairTaskFrom(taskSnapshot, result.output);
         result = (await invokeWithinTimeout(
           () => provider.invoke(repairTask),
           options.timeoutMs ?? 5_000,
@@ -195,9 +212,12 @@ export const createScriptedModelProvider = ({
     provider: "scripted",
     model,
     invoke: async (task) => {
+      const taskInput =
+        task.type === "narrate-committed-outcome"
+          ? task.input.outcomeReference
+          : task.input.utterance;
       const response =
-        script[`${task.type}:${task.input.utterance}`] ??
-        script[task.input.utterance];
+        script[`${task.type}:${taskInput}`] ?? script[taskInput];
       if (response === undefined) {
         throw new Error("No scripted model response exists for that task input.");
       }
@@ -227,7 +247,8 @@ export interface ModelCallRecord {
   readonly fallbackOutcome:
     | "none"
     | "safe-rejection"
-    | "deterministic-rules";
+    | "deterministic-rules"
+    | "deterministic-narration";
   readonly validation:
     | { readonly status: "accepted" }
     | { readonly status: "rejected"; readonly reason: string };
