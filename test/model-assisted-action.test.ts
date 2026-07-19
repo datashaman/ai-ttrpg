@@ -136,7 +136,7 @@ test("the provider receives one deeply immutable stateless Model Task", async ()
           ],
           arguments: {},
         },
-        usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
+        usage: null,
       };
     },
   };
