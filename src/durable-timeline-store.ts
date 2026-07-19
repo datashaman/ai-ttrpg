@@ -1,0 +1,173 @@
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+
+import type { CanonicalEvent, TimelineStore } from "./structured-play.js";
+import {
+  createTimelineStore,
+  type TimelineSnapshot,
+} from "./timeline-store.js";
+
+interface TimelineMetadata {
+  readonly id: string;
+  readonly parentTimelineId: string | null;
+  readonly branchEventPosition: number | null;
+}
+
+interface TimelineGraph {
+  readonly activeTimelineId: string;
+  readonly timelines: readonly TimelineMetadata[];
+}
+
+const rootTimelineId = "timeline-main";
+const graphFile = "timelines.json";
+const childDirectory = "timelines";
+const isTimelineId = (value: string): boolean =>
+  /^timeline-[a-zA-Z0-9-]+$/.test(value);
+
+const rootGraph = (): TimelineGraph => ({
+  activeTimelineId: rootTimelineId,
+  timelines: [
+    {
+      id: rootTimelineId,
+      parentTimelineId: null,
+      branchEventPosition: null,
+    },
+  ],
+});
+
+const eventFile = (directory: string, timelineId: string): string =>
+  timelineId === rootTimelineId
+    ? join(directory, "events.jsonl")
+    : join(directory, childDirectory, `${timelineId}.events.jsonl`);
+
+const writeGraph = (directory: string, graph: TimelineGraph): void =>
+  writeFileSync(
+    join(directory, graphFile),
+    `${JSON.stringify(graph, null, 2)}\n`,
+    "utf8",
+  );
+
+export const initializeDurableTimelineStorage = (directory: string): void => {
+  mkdirSync(join(directory, childDirectory), { recursive: true });
+  writeGraph(directory, rootGraph());
+};
+
+const isTimelineMetadata = (value: unknown): value is TimelineMetadata =>
+  typeof value === "object" &&
+  value !== null &&
+  typeof Reflect.get(value, "id") === "string" &&
+  isTimelineId(Reflect.get(value, "id") as string) &&
+  (Reflect.get(value, "parentTimelineId") === null ||
+    (typeof Reflect.get(value, "parentTimelineId") === "string" &&
+      isTimelineId(Reflect.get(value, "parentTimelineId") as string))) &&
+  (Reflect.get(value, "branchEventPosition") === null ||
+    (Number.isInteger(Reflect.get(value, "branchEventPosition")) &&
+      (Reflect.get(value, "branchEventPosition") as number) >= 1));
+
+const readGraph = (directory: string): TimelineGraph => {
+  const path = join(directory, graphFile);
+  if (!existsSync(path)) return rootGraph();
+  const value: unknown = JSON.parse(readFileSync(path, "utf8"));
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    typeof Reflect.get(value, "activeTimelineId") !== "string" ||
+    !Array.isArray(Reflect.get(value, "timelines")) ||
+    !(Reflect.get(value, "timelines") as unknown[]).every(isTimelineMetadata)
+  ) {
+    throw new Error("Invalid Timeline graph.");
+  }
+  const graph = value as TimelineGraph;
+  const ids = graph.timelines.map((timeline) => timeline.id);
+  if (
+    new Set(ids).size !== ids.length ||
+    !ids.includes(rootTimelineId) ||
+    !ids.includes(graph.activeTimelineId) ||
+    graph.timelines.some(
+      (timeline) =>
+        timeline.id === rootTimelineId
+          ? timeline.parentTimelineId !== null ||
+            timeline.branchEventPosition !== null
+          : timeline.parentTimelineId === null ||
+            !ids.includes(timeline.parentTimelineId),
+    )
+  ) {
+    throw new Error("Invalid Timeline relationships.");
+  }
+  return graph;
+};
+
+const serializedEvents = (events: readonly CanonicalEvent[]): string =>
+  events.length === 0
+    ? ""
+    : `${events.map((event) => JSON.stringify(event)).join("\n")}\n`;
+
+export const createDurableTimelineStore = ({
+  directory,
+  seed,
+  parseEvents,
+}: {
+  readonly directory: string;
+  readonly seed: number;
+  readonly parseEvents: (serialized: string) => CanonicalEvent[];
+}): TimelineStore => {
+  mkdirSync(join(directory, childDirectory), { recursive: true });
+  const graph = readGraph(directory);
+  const snapshots: TimelineSnapshot[] = graph.timelines.map((metadata) => ({
+    ...metadata,
+    events: parseEvents(
+      readFileSync(eventFile(directory, metadata.id), "utf8"),
+    ),
+  }));
+  const timelines = new Map(snapshots.map((timeline) => [timeline.id, timeline]));
+  for (const timeline of snapshots) {
+    if (timeline.parentTimelineId === null) continue;
+    const parent = timelines.get(timeline.parentTimelineId)!;
+    if (
+      timeline.branchEventPosition! > parent.events.length ||
+      JSON.stringify(timeline.events.slice(0, timeline.branchEventPosition!)) !==
+        JSON.stringify(parent.events.slice(0, timeline.branchEventPosition!))
+    ) {
+      throw new Error("Invalid Timeline branch history.");
+    }
+  }
+  const metadata = (timeline: TimelineSnapshot): TimelineMetadata => ({
+    id: timeline.id,
+    parentTimelineId: timeline.parentTimelineId,
+    branchEventPosition: timeline.branchEventPosition,
+  });
+  return createTimelineStore({
+    seed,
+    activeTimelineId: graph.activeTimelineId,
+    snapshots,
+    persistence: {
+      append: (timelineId, event) =>
+        appendFileSync(
+          eventFile(directory, timelineId),
+          `${JSON.stringify(event)}\n`,
+        ),
+      branch: (timeline, activeTimelineId, timelineSnapshots) => {
+        writeFileSync(
+          eventFile(directory, timeline.id),
+          serializedEvents(timeline.events),
+          "utf8",
+        );
+        writeGraph(directory, {
+          activeTimelineId,
+          timelines: timelineSnapshots.map(metadata),
+        });
+      },
+      select: (activeTimelineId, timelineSnapshots) =>
+        writeGraph(directory, {
+          activeTimelineId,
+          timelines: timelineSnapshots.map(metadata),
+        }),
+    },
+  });
+};
