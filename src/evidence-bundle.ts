@@ -322,6 +322,22 @@ const RELEVANCE_STOP_WORDS = new Set([
     "your",
 ]);
 
+const RESOLUTION_QUERY_TERMS = [
+  "check",
+  "cost",
+  "happen",
+  "happened",
+  "outcome",
+  "resolve",
+  "result",
+  "roll",
+  "setback",
+  "spend",
+  "success",
+  "total",
+  "why",
+] as const;
+
 const relevanceScore = (query: string, item: EvidenceItem): number => {
   const queryTerms = new Set(
     normalized(query)
@@ -339,6 +355,12 @@ export const isRulesEvidenceApplicable = (
 ): boolean => {
   if (item.sourceKind === "authority-rule") return true;
   if (item.sourceKind === "active-scene") return true;
+  if (item.sourceKind === "resolution") {
+    const normalizedQuery = normalized(query);
+    return RESOLUTION_QUERY_TERMS.some((term) =>
+      normalizedQuery.includes(term),
+    );
+  }
   return relevanceScore(query, item) > 0;
 };
 
