@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createInMemoryEventStore } from "./in-memory-event-store.js";
 import {
   DEFAULT_CHECK_ACTIONS,
+  DEFAULT_CONFRONTATION,
   DEFAULT_ORACLE_ACTIONS,
   DEFAULT_SCENE_TRANSITIONS,
   FRESH_FOOTPRINTS,
@@ -23,8 +24,9 @@ export type OracleAnswer = "Yes" | "No";
 export type Health = 0 | 1 | 2 | 3;
 export type Resolve = 0 | 1 | 2 | 3;
 export type Resource = "Health" | "Resolve";
-export type Scene = "arrival" | "discovery" | "confrontation";
+export type Scene = "arrival" | "discovery" | "confrontation" | "consequence";
 export type Condition = "Shaken" | "Restrained";
+export type ClockName = "Resistance" | "Danger";
 export type InventoryItemName =
   | "Lantern"
   | "Lockpick Set"
@@ -126,11 +128,54 @@ export interface RemoveConditionEffect {
   readonly condition: "Restrained";
 }
 
+export interface AdvanceClockEffect {
+  readonly type: "advance-clock";
+  readonly clock: ClockName;
+  readonly amount: 1;
+}
+
 export type MechanicalEffect =
   | LoseHealthEffect
   | RemoveInventoryItemEffect
   | AddConditionEffect
-  | RemoveConditionEffect;
+  | RemoveConditionEffect
+  | AdvanceClockEffect;
+
+export interface Clock {
+  readonly current: number;
+  readonly capacity: number;
+  readonly fillingConsequence: EstablishedFact;
+}
+
+export interface ConfrontationEnding {
+  readonly kind: "victory" | "defeat";
+  readonly reason: "resistance" | "danger" | "health";
+  readonly establishedFact: EstablishedFact;
+}
+
+export interface ConfrontationState {
+  readonly id: string;
+  readonly status: "active" | "victory" | "defeat";
+  readonly resistanceClock: Clock;
+  readonly dangerClock: Clock;
+  readonly healthZeroConsequence: EstablishedFact;
+  readonly defeatEffects: readonly MechanicalEffect[];
+  readonly ending: ConfrontationEnding | null;
+}
+
+export interface ConfrontationDefinition {
+  readonly id: string;
+  readonly resistanceClock: {
+    readonly capacity: number;
+    readonly fillingConsequence: EstablishedFact;
+  };
+  readonly dangerClock: {
+    readonly capacity: number;
+    readonly fillingConsequence: EstablishedFact;
+  };
+  readonly healthZeroConsequence: EstablishedFact;
+  readonly defeatEffects: readonly MechanicalEffect[];
+}
 
 export interface FictionalConsequence {
   readonly type: "establish-fact";
@@ -227,6 +272,7 @@ export interface PendingChoice {
 export interface GameState {
   readonly playerCharacter: PlayerCharacter | null;
   readonly activeScene: Scene | null;
+  readonly confrontation: ConfrontationState | null;
   readonly conditions: readonly Condition[];
   readonly establishedFacts: readonly EstablishedFact[];
   readonly pendingCheckProposal: CheckProposal | null;
@@ -258,6 +304,9 @@ interface EventPayloads {
     readonly from: Scene;
     readonly to: Scene;
   };
+  readonly ConfrontationStarted: {
+    readonly definition: ConfrontationDefinition;
+  };
   readonly FreeActionCompleted: {
     readonly actionId: "survey-manor";
     readonly establishedFact: EstablishedFact;
@@ -271,6 +320,12 @@ interface EventPayloads {
   readonly CheckProposalWithdrawn: { readonly proposalId: string };
   readonly CheckRollRevealed: { readonly pendingChoice: PendingChoice };
   readonly CheckResolved: CheckResolution;
+  readonly ConfrontationEnded: {
+    readonly confrontationId: string;
+    readonly ending: ConfrontationEnding;
+    readonly effects: readonly MechanicalEffect[];
+    readonly nextScene: "consequence" | null;
+  };
   readonly FieldKitUsed: {
     readonly item: "Field Kit";
     readonly removalReason: "consumption";
@@ -432,6 +487,8 @@ export interface CheckActionDefinition extends CheckAction {
   readonly stakes: CheckStakes;
   readonly requiredItem?: InventoryItemName;
   readonly requiresFreeMovement?: boolean;
+  readonly availableInScenes?: readonly Scene[];
+  readonly repeatable?: boolean;
 }
 
 export interface OracleActionDefinition extends OracleAction {
@@ -493,6 +550,7 @@ export interface StructuredPlayOptions {
   readonly checkActions?: readonly CheckActionDefinition[];
   readonly oracleActions?: readonly OracleActionDefinition[];
   readonly sceneTransitions?: readonly SceneTransitionDefinition[];
+  readonly confrontation?: ConfrontationDefinition;
 }
 
 const STARTING_INVENTORY: readonly InventoryItem[] = [
@@ -505,6 +563,7 @@ const STARTING_INVENTORY: readonly InventoryItem[] = [
 const initialState = (): GameState => ({
   playerCharacter: null,
   activeScene: null,
+  confrontation: null,
   conditions: [],
   establishedFacts: [],
   pendingCheckProposal: null,
@@ -616,6 +675,13 @@ const validateOutcomeConsequence = (
       (candidate as Partial<RemoveConditionEffect>).condition === "Restrained"
     );
   }
+  if (candidate.type === "advance-clock") {
+    const effect = candidate as Partial<AdvanceClockEffect>;
+    return (
+      (effect.clock === "Resistance" || effect.clock === "Danger") &&
+      effect.amount === 1
+    );
+  }
   if (candidate.type === "establish-fact") {
     const fact = (candidate as Partial<FictionalConsequence>).fact;
     return (
@@ -644,7 +710,12 @@ const validateCheckAction = (action: CheckActionDefinition): void => {
     (action.requiredItem !== undefined &&
       !isInventoryItemName(action.requiredItem)) ||
     (action.requiresFreeMovement !== undefined &&
-      typeof action.requiresFreeMovement !== "boolean")
+      typeof action.requiresFreeMovement !== "boolean") ||
+    (action.availableInScenes !== undefined &&
+      (action.availableInScenes.length === 0 ||
+        new Set(action.availableInScenes).size !==
+          action.availableInScenes.length)) ||
+    (action.repeatable !== undefined && typeof action.repeatable !== "boolean")
   ) {
     throw new Error(`Invalid Check action permission: ${action.id}.`);
   }
@@ -656,6 +727,13 @@ const validateCheckAction = (action: CheckActionDefinition): void => {
   ];
   for (const outcome of outcomes) {
     const stake = action.stakes?.[outcome];
+    const isConfrontationAction =
+      action.availableInScenes?.includes("confrontation") === true;
+    const hasClockEffect =
+      Array.isArray(stake?.consequences) &&
+      stake.consequences.some(
+        (consequence) => consequence?.type === "advance-clock",
+      );
     if (
       stake === undefined ||
       typeof stake.summary !== "string" ||
@@ -667,12 +745,44 @@ const validateCheckAction = (action: CheckActionDefinition): void => {
           (consequence) =>
             consequence.type === "remove-condition" &&
             consequence.condition === "Restrained",
-        ))
+        )) ||
+      (isConfrontationAction &&
+        !stake.consequences.some(
+          (consequence) => consequence.type !== "establish-fact",
+        )) ||
+      (!isConfrontationAction &&
+        stake.consequences.some(
+          (consequence) => consequence.type === "advance-clock",
+        )) ||
+      (hasClockEffect === true &&
+        (action.availableInScenes?.length !== 1 ||
+          action.availableInScenes[0] !== "confrontation"))
     ) {
       throw new Error(
         `Invalid Outcome Consequence or stake for ${action.id} (${outcome}).`,
       );
     }
+  }
+};
+
+const validateConfrontation = (
+  confrontation: ConfrontationDefinition,
+): void => {
+  const validClock = (clock: ConfrontationDefinition["resistanceClock"]) =>
+    Number.isInteger(clock.capacity) &&
+    clock.capacity > 0 &&
+    validateEstablishedFact(clock.fillingConsequence);
+  if (
+    confrontation.id.trim() === "" ||
+    !validClock(confrontation.resistanceClock) ||
+    !validClock(confrontation.dangerClock) ||
+    !validateEstablishedFact(confrontation.healthZeroConsequence) ||
+    !confrontation.defeatEffects.every(validateOutcomeConsequence) ||
+    confrontation.defeatEffects.some(
+      (effect) => effect.type === "advance-clock",
+    )
+  ) {
+    throw new Error(`Invalid Confrontation definition: ${confrontation.id}.`);
   }
 };
 
@@ -722,7 +832,13 @@ const checkActionRejectionCode = (
   state: GameState,
 ): "action-unavailable" | "action-requires-free-movement" | null => {
   if (
-    state.resolvedCheckActionIds.includes(action.id) ||
+    (state.resolvedCheckActionIds.includes(action.id) &&
+      action.repeatable !== true) ||
+    (state.activeScene === "confrontation" &&
+      action.availableInScenes?.includes("confrontation") !== true) ||
+    (action.availableInScenes !== undefined &&
+      (state.activeScene === null ||
+        !action.availableInScenes.includes(state.activeScene))) ||
     (action.requiredItem !== undefined &&
       !isCarrying(state.playerCharacter, action.requiredItem))
   ) {
@@ -855,6 +971,27 @@ const applyConsequences = (
         ),
       };
     }
+    if (consequence.type === "advance-clock") {
+      const confrontation = nextState.confrontation;
+      if (confrontation === null || confrontation.status !== "active") {
+        return nextState;
+      }
+      const clockKey =
+        consequence.clock === "Resistance"
+          ? "resistanceClock"
+          : "dangerClock";
+      const clock = confrontation[clockKey];
+      return {
+        ...nextState,
+        confrontation: {
+          ...confrontation,
+          [clockKey]: {
+            ...clock,
+            current: Math.min(clock.capacity, clock.current + consequence.amount),
+          },
+        },
+      };
+    }
     const playerCharacter = nextState.playerCharacter;
     if (playerCharacter === null) return nextState;
     if (consequence.type === "remove-inventory-item") {
@@ -889,6 +1026,30 @@ const project = (events: readonly CanonicalEvent[]): GameState =>
           conditions: state.conditions.filter(
             (condition) => condition !== "Shaken",
           ),
+        };
+      case "ConfrontationStarted":
+        return {
+          ...state,
+          confrontation: {
+            id: event.payload.definition.id,
+            status: "active",
+            resistanceClock: {
+              current: 0,
+              capacity: event.payload.definition.resistanceClock.capacity,
+              fillingConsequence:
+                event.payload.definition.resistanceClock.fillingConsequence,
+            },
+            dangerClock: {
+              current: 0,
+              capacity: event.payload.definition.dangerClock.capacity,
+              fillingConsequence:
+                event.payload.definition.dangerClock.fillingConsequence,
+            },
+            healthZeroConsequence:
+              event.payload.definition.healthZeroConsequence,
+            defeatEffects: event.payload.definition.defeatEffects,
+            ending: null,
+          },
         };
       case "FreeActionCompleted":
         return applyConsequences(state, [
@@ -950,6 +1111,34 @@ const project = (events: readonly CanonicalEvent[]): GameState =>
               item.name === "Field Kit" ? { ...item, state: "removed" } : item,
             ),
           },
+        };
+      case "ConfrontationEnded":
+        if (state.confrontation?.id !== event.payload.confrontationId) {
+          return state;
+        }
+        const stateWithEndingEffects = applyConsequences(
+          state,
+          event.payload.effects,
+        );
+        return {
+          ...stateWithEndingEffects,
+          activeScene: event.payload.nextScene,
+          confrontation: {
+            ...state.confrontation,
+            status: event.payload.ending.kind,
+            ending: event.payload.ending,
+          },
+          conditions: stateWithEndingEffects.conditions.filter(
+            (condition) => condition !== "Shaken",
+          ),
+          establishedFacts: stateWithEndingEffects.establishedFacts.some(
+            (fact) => fact.id === event.payload.ending.establishedFact.id,
+          )
+            ? stateWithEndingEffects.establishedFacts
+            : [
+                ...stateWithEndingEffects.establishedFacts,
+                event.payload.ending.establishedFact,
+              ],
         };
       case "NarratorLikelihoodRecommended":
         return {
@@ -1060,9 +1249,11 @@ export const createStructuredPlayApplication = (
   const oracleActions = options.oracleActions ?? DEFAULT_ORACLE_ACTIONS;
   const sceneTransitions =
     options.sceneTransitions ?? DEFAULT_SCENE_TRANSITIONS;
+  const confrontation = options.confrontation ?? DEFAULT_CONFRONTATION;
   checkActions.forEach(validateCheckAction);
   oracleActions.forEach(validateOracleAction);
   sceneTransitions.forEach(validateSceneTransition);
+  validateConfrontation(confrontation);
   const checkEstablishedFactIds = new Set(
     checkActions.flatMap((action) =>
       Object.values(action.stakes).flatMap((stake) =>
@@ -1240,12 +1431,21 @@ export const createStructuredPlayApplication = (
           );
         }
         const from = transition.from;
-        const event = append(
+        const transitioned = append(
           "SceneTransitioned",
           { from, to: input.scene },
           commandId,
         );
-        return accept(`The ${from} Scene ends and ${input.scene} begins.`, [event]);
+        const appendedEvents: CanonicalEvent[] = [transitioned];
+        if (input.scene === "confrontation") {
+          appendedEvents.push(
+            append("ConfrontationStarted", { definition: confrontation }, commandId),
+          );
+        }
+        return accept(
+          `The ${from} Scene ends and ${input.scene} begins.`,
+          appendedEvents,
+        );
       }
 
       if (input.type === "confirm-oracle-likelihood") {
@@ -1408,9 +1608,63 @@ export const createStructuredPlayApplication = (
           },
         };
         const event = append("CheckResolved", resolution, commandId);
+        const appendedEvents: CanonicalEvent[] = [event];
+        const resolvedState = project(eventStore.readAll());
+        const activeConfrontation = resolvedState.confrontation;
+        let confrontationEnding: ConfrontationEnding | null = null;
+        if (
+          activeConfrontation?.status === "active" &&
+          resolvedState.playerCharacter?.health === 0
+        ) {
+          confrontationEnding = {
+            kind: "defeat",
+            reason: "health",
+            establishedFact: activeConfrontation.healthZeroConsequence,
+          };
+        } else if (
+          activeConfrontation?.status === "active" &&
+          activeConfrontation.dangerClock.current >=
+            activeConfrontation.dangerClock.capacity
+        ) {
+          confrontationEnding = {
+            kind: "defeat",
+            reason: "danger",
+            establishedFact:
+              activeConfrontation.dangerClock.fillingConsequence,
+          };
+        } else if (
+          activeConfrontation?.status === "active" &&
+          activeConfrontation.resistanceClock.current >=
+            activeConfrontation.resistanceClock.capacity
+        ) {
+          confrontationEnding = {
+            kind: "victory",
+            reason: "resistance",
+            establishedFact:
+              activeConfrontation.resistanceClock.fillingConsequence,
+          };
+        }
+        if (confrontationEnding !== null && activeConfrontation !== null) {
+          appendedEvents.push(
+            append(
+              "ConfrontationEnded",
+              {
+                confrontationId: activeConfrontation.id,
+                ending: confrontationEnding,
+                effects:
+                  confrontationEnding.kind === "defeat"
+                    ? activeConfrontation.defeatEffects
+                    : [],
+                nextScene:
+                  confrontationEnding.kind === "defeat" ? "consequence" : null,
+              },
+              commandId,
+            ),
+          );
+        }
         return accept(
-          `${outcome} (${adjustedTotal}): ${resolution.committedStake.summary}`,
-          [event],
+          `${outcome} (${adjustedTotal}): ${resolution.committedStake.summary}${confrontationEnding === null ? "" : ` ${confrontationEnding.establishedFact.text}`}`,
+          appendedEvents,
         );
       }
 
