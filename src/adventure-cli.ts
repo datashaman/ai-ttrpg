@@ -19,6 +19,7 @@ import {
 export interface AdventureCliOptions {
   readonly runToAdventureEnd?: boolean;
   readonly modelGateway?: ModelGateway;
+  readonly modelTimeoutMs?: number;
 }
 
 const usage =
@@ -65,6 +66,7 @@ const runModeSession = async (
   io: StructuredPlayIO,
   initialMode: InputMode,
   modelGateway: ModelGateway | undefined,
+  modelTimeoutMs: number,
 ): Promise<void> => {
   let mode = initialMode;
   let structuredChoice: string | undefined;
@@ -87,6 +89,8 @@ const runModeSession = async (
           modelGateway,
           modelCallStore,
           timelineStore: adventure.timelineStore,
+          interpretationTimeoutMs: modelTimeoutMs,
+          narrationTimeoutMs: modelTimeoutMs,
         });
       }
     } else {
@@ -126,6 +130,7 @@ const playAdventure = async (
   runToAdventureEnd: boolean,
   explicitMode: InputMode | null,
   modelGateway: ModelGateway | undefined,
+  modelTimeoutMs: number,
 ): Promise<void> => {
   try {
     const retainedNarration = retainedNarrationText(
@@ -140,7 +145,13 @@ const playAdventure = async (
       io.write("\n");
     }
     if (explicitMode !== null) {
-      await runModeSession(adventure, io, explicitMode, modelGateway);
+      await runModeSession(
+        adventure,
+        io,
+        explicitMode,
+        modelGateway,
+        modelTimeoutMs,
+      );
       return;
     }
     await runStructuredPlay({
@@ -148,6 +159,7 @@ const playAdventure = async (
       timelineStore: adventure.timelineStore,
       modelCallStore: adventure.modelCallStore,
       runToAdventureEnd,
+      narrationTimeoutMs: modelTimeoutMs,
     });
   } finally {
     adventure.close();
@@ -161,6 +173,7 @@ export const runAdventureCli = async (
   {
     runToAdventureEnd = true,
     modelGateway,
+    modelTimeoutMs = 5_000,
   }: AdventureCliOptions = {},
 ): Promise<void> => {
   const explicitMode: InputMode | null =
@@ -204,6 +217,7 @@ export const runAdventureCli = async (
       runToAdventureEnd,
       explicitMode,
       modelGateway,
+      modelTimeoutMs,
     );
     return;
   }
@@ -217,6 +231,7 @@ export const runAdventureCli = async (
       runToAdventureEnd,
       explicitMode,
       modelGateway,
+      modelTimeoutMs,
     );
     return;
   }

@@ -9,6 +9,7 @@
   "scripts": {
     "start": "tsx src/cli.ts",
     "test": "tsx --test test/**/*.test.ts",
+    "test:openai-smoke": "node --env-file-if-exists=.env.local --import tsx --test test/openai-smoke.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
