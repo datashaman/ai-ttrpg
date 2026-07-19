@@ -5,23 +5,94 @@ import type {
   OpenAdventure,
 } from "./adventure-repository.js";
 import {
+  createInMemoryModelCallRecordStore,
+  type ModelGateway,
+} from "./model-gateway.js";
+import { runNaturalLanguagePlay } from "./natural-language-play.js";
+import { createStructuredPlayApplication } from "./structured-play.js";
+import {
   runStructuredPlay,
   type StructuredPlayIO,
 } from "./structured-play-runner.js";
 
 export interface AdventureCliOptions {
   readonly runToAdventureEnd?: boolean;
+  readonly modelGateway?: ModelGateway;
 }
 
 const usage =
-  "Usage: npm start -- <create <name>|list|open <id>|export <id> <path>|import <path>>\n";
+  "Usage: npm start -- [--mode <structured|natural-language>] <create <name>|list|open <id>|export <id> <path>|import <path>>\n";
+
+type InputMode = "structured" | "natural-language";
+
+const readInputMode = async (io: StructuredPlayIO): Promise<InputMode | null> => {
+  while (true) {
+    const choice = (
+      await io.read(
+        "Input mode: Structured Play (s), Natural Language Play (n), or stop (x): ",
+      )
+    )
+      .trim()
+      .toLowerCase();
+    if (choice === "s") return "structured";
+    if (choice === "n") return "natural-language";
+    if (choice === "x") return null;
+    io.write("Choose Structured Play (s), Natural Language Play (n), or stop (x).\n");
+  }
+};
+
+const runModeSession = async (
+  adventure: OpenAdventure,
+  io: StructuredPlayIO,
+  initialMode: InputMode,
+  modelGateway: ModelGateway | undefined,
+): Promise<void> => {
+  let mode = initialMode;
+  const modelCallStore = createInMemoryModelCallRecordStore();
+  while (true) {
+    if (mode === "natural-language") {
+      if (modelGateway === undefined) {
+        io.write(
+          "Natural Language Play is unavailable because no model provider is configured. Structured Play remains available.\n",
+        );
+      } else {
+        await runNaturalLanguagePlay({
+          io,
+          modelGateway,
+          modelCallStore,
+          timelineStore: adventure.timelineStore,
+        });
+      }
+    } else {
+      await runStructuredPlay({
+        io,
+        timelineStore: adventure.timelineStore,
+      });
+    }
+
+    const view = createStructuredPlayApplication({
+      timelineStore: adventure.timelineStore,
+    }).view();
+    if (view.state.adventureEnding !== null) return;
+    const selectedMode = await readInputMode(io);
+    if (selectedMode === null) return;
+    mode = selectedMode;
+    io.write("\n");
+  }
+};
 
 const playAdventure = async (
   adventure: OpenAdventure,
   io: StructuredPlayIO,
   runToAdventureEnd: boolean,
+  explicitMode: InputMode | null,
+  modelGateway: ModelGateway | undefined,
 ): Promise<void> => {
   try {
+    if (explicitMode !== null) {
+      await runModeSession(adventure, io, explicitMode, modelGateway);
+      return;
+    }
     await runStructuredPlay({
       io,
       timelineStore: adventure.timelineStore,
@@ -36,9 +107,22 @@ export const runAdventureCli = async (
   args: readonly string[],
   io: StructuredPlayIO,
   repository: AdventureRepository,
-  { runToAdventureEnd = true }: AdventureCliOptions = {},
+  {
+    runToAdventureEnd = true,
+    modelGateway,
+  }: AdventureCliOptions = {},
 ): Promise<void> => {
-  const [command, ...values] = args;
+  const explicitMode: InputMode | null =
+    args[0] === "--mode" &&
+    (args[1] === "structured" || args[1] === "natural-language")
+      ? args[1]
+      : null;
+  if (args[0] === "--mode" && explicitMode === null) {
+    io.write(usage);
+    return;
+  }
+  const runtimeArgs = explicitMode === null ? args : args.slice(2);
+  const [command, ...values] = runtimeArgs;
 
   if (command === "list" && values.length === 0) {
     const adventures = repository.list();
@@ -63,14 +147,26 @@ export const runAdventureCli = async (
     }
     const adventure = repository.create(name);
     io.write(`Created Adventure "${adventure.name}" (${adventure.id}).\n\n`);
-    await playAdventure(adventure, io, runToAdventureEnd);
+    await playAdventure(
+      adventure,
+      io,
+      runToAdventureEnd,
+      explicitMode,
+      modelGateway,
+    );
     return;
   }
 
   if (command === "open" && values.length === 1) {
     const adventure = repository.open(values[0]!);
     io.write(`Opened Adventure "${adventure.name}" (${adventure.id}).\n\n`);
-    await playAdventure(adventure, io, runToAdventureEnd);
+    await playAdventure(
+      adventure,
+      io,
+      runToAdventureEnd,
+      explicitMode,
+      modelGateway,
+    );
     return;
   }
 

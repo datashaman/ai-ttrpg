@@ -6,6 +6,7 @@ import {
   createInMemoryModelCallRecordStore,
   createModelGateway,
   createScriptedModelProvider,
+  ModelProviderError,
   type ModelProvider,
 } from "../src/model-gateway.js";
 import { runNaturalLanguagePlay } from "../src/natural-language-play.js";
@@ -330,6 +331,173 @@ test("provider failure creates a normalized Model Call Record without changing t
   assert.ok(record.evidenceReferences.length > 0);
   assert.equal(record.command, null);
   assert.deepEqual(record.acceptedEventIds, []);
+});
+
+test("malformed structured output receives one repair attempt", async () => {
+  const { eventStore } = beginAdventureFixture();
+  let attempts = 0;
+  const provider: ModelProvider = {
+    provider: "repair-script",
+    model: "repair-v1",
+    invoke: async (task) => {
+      attempts += 1;
+      if (attempts === 1) {
+        assert.equal("repairOf" in task.input, false);
+      } else {
+        assert.deepEqual(task.input.repairOf, { unexpected: "shape" });
+      }
+      return {
+        output:
+          attempts === 1
+            ? { unexpected: "shape" }
+            : {
+                status: "interpreted",
+                classification: "player-action",
+                capabilityId: "survey-manor",
+                referencedEntityIds: ["scene:arrival"],
+                evidenceItemIds: [
+                  "entity:scene:arrival",
+                  "capability:survey-manor",
+                ],
+                arguments: {},
+              },
+        usage: null,
+      };
+    },
+  };
+
+  const result = await runNaturalLanguagePlay({
+    io: scriptedIO(["I survey the manor grounds."]).io,
+    modelGateway: createModelGateway({ provider }),
+    eventStore,
+  });
+
+  assert.equal(attempts, 2);
+  assert.deepEqual(result.interpretedCommands, [
+    { type: "choose-action", actionId: "survey-manor" },
+  ]);
+  assert.equal(result.modelCallRecords[0]?.retryCount, 1);
+});
+
+test("a failed repair stops after one attempt and leaves gameplay unchanged", async () => {
+  const { eventStore } = beginAdventureFixture();
+  const before = eventStore.readAll();
+  let attempts = 0;
+  const provider: ModelProvider = {
+    provider: "failed-repair-script",
+    model: "failed-repair-v1",
+    invoke: async () => {
+      attempts += 1;
+      return { output: { malformed: attempts }, usage: null };
+    },
+  };
+  const script = scriptedIO(["I open the door."]);
+
+  const result = await runNaturalLanguagePlay({
+    io: script.io,
+    modelGateway: createModelGateway({ provider }),
+    eventStore,
+  });
+
+  assert.equal(attempts, 2);
+  assert.deepEqual(eventStore.readAll(), before);
+  assert.deepEqual(result.interpretedCommands, []);
+  assert.equal(result.modelCallRecords[0]?.retryCount, 1);
+  assert.match(script.output.join(""), /Structured Play choices:/);
+});
+
+test("ambiguous valid output asks once and does not retry", async () => {
+  const { eventStore } = beginAdventureFixture();
+  const before = eventStore.readAll();
+  let attempts = 0;
+  const provider: ModelProvider = {
+    provider: "ambiguity-script",
+    model: "ambiguity-v1",
+    invoke: async () => {
+      attempts += 1;
+      return {
+        output: {
+          status: "ambiguous",
+          candidateCapabilityIds: ["inspect-dark-entryway", "force-side-door"],
+        },
+        usage: null,
+      };
+    },
+  };
+  const script = scriptedIO(["I deal with the door."]);
+
+  await runNaturalLanguagePlay({
+    io: script.io,
+    modelGateway: createModelGateway({ provider }),
+    eventStore,
+  });
+
+  assert.equal(attempts, 1);
+  assert.deepEqual(eventStore.readAll(), before);
+  assert.match(script.output.join(""), /Clarification needed:/);
+  assert.match(script.output.join(""), /Structured Play choices:/);
+});
+
+for (const failure of [
+  { code: "unavailable", message: "The model provider is unavailable." },
+  { code: "unauthenticated", message: "Model authentication failed." },
+  { code: "rate-limited", message: "The model provider rate limit was reached." },
+  { code: "over-budget", message: "The Model Task exceeded its budget." },
+] as const) {
+  test(`${failure.code} interpretation continues with Structured Play choices without retrying`, async () => {
+    const { eventStore } = beginAdventureFixture();
+    const before = eventStore.readAll();
+    let attempts = 0;
+    const provider: ModelProvider = {
+      provider: "failure-script",
+      model: "failure-v1",
+      invoke: async () => {
+        attempts += 1;
+        throw new ModelProviderError(failure.code, failure.message);
+      },
+    };
+    const script = scriptedIO(["I open the door."]);
+
+    const result = await runNaturalLanguagePlay({
+      io: script.io,
+      modelGateway: createModelGateway({ provider }),
+      eventStore,
+    });
+
+    assert.equal(attempts, 1);
+    assert.deepEqual(eventStore.readAll(), before);
+    assert.deepEqual(result.interpretedCommands, []);
+    assert.match(script.output.join(""), new RegExp(failure.message, "i"));
+    assert.match(script.output.join(""), /Structured Play choices:/);
+    assert.match(script.output.join(""), /Inspect the dark entryway/);
+  });
+}
+
+test("timed-out interpretation continues with Structured Play choices without retrying", async () => {
+  const { eventStore } = beginAdventureFixture();
+  const before = eventStore.readAll();
+  let attempts = 0;
+  const provider: ModelProvider = {
+    provider: "timeout-script",
+    model: "timeout-v1",
+    invoke: () => {
+      attempts += 1;
+      return new Promise(() => undefined);
+    },
+  };
+  const script = scriptedIO(["I open the door."]);
+
+  await runNaturalLanguagePlay({
+    io: script.io,
+    modelGateway: createModelGateway({ provider }),
+    eventStore,
+    interpretationTimeoutMs: 5,
+  });
+
+  assert.equal(attempts, 1);
+  assert.deepEqual(eventStore.readAll(), before);
+  assert.match(script.output.join(""), /Model interpretation timed out/i);
+  assert.match(script.output.join(""), /Structured Play choices:/);
 });
 
 test("authority rejection cannot be recorded or reported as an interpreted command", async () => {

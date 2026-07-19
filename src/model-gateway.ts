@@ -1,13 +1,18 @@
 import { randomUUID } from "node:crypto";
 
 import type { EvidenceBundle } from "./evidence-bundle.js";
-import { immutableSnapshot, invokeWithinTimeout } from "./model-boundary.js";
+import {
+  immutableSnapshot,
+  invokeWithinTimeout,
+  ModelTimeoutError,
+} from "./model-boundary.js";
 import type { CanonicalEvent, StructuredPlayInput } from "./structured-play.js";
 
 export interface InterpretationModelTask {
   readonly type: "interpret-player-input";
   readonly input: {
     readonly utterance: string;
+    readonly repairOf?: unknown;
   };
   readonly evidenceBundle: EvidenceBundle;
 }
@@ -31,6 +36,23 @@ export interface ModelProviderResult {
   readonly usage: ModelUsage | null;
 }
 
+export type ModelFailureCode =
+  | "unavailable"
+  | "timeout"
+  | "unauthenticated"
+  | "rate-limited"
+  | "over-budget";
+
+export class ModelProviderError extends Error {
+  constructor(
+    readonly code: Exclude<ModelFailureCode, "timeout">,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ModelProviderError";
+  }
+}
+
 export interface ModelGatewayExecution {
   readonly callId: string;
   readonly provider: string;
@@ -46,17 +68,21 @@ export interface ModelGatewayExecution {
         readonly output: unknown;
         readonly usage: ModelUsage | null;
       }
-    | {
+      | {
         readonly status: "failed";
+        readonly code: ModelFailureCode;
         readonly reason: string;
       };
-  readonly retryCount: 0;
+  readonly retryCount: 0 | 1;
 }
 
 export interface ModelGateway {
   execute(
     task: ModelTask,
-    options?: { readonly timeoutMs?: number },
+    options?: {
+      readonly timeoutMs?: number;
+      readonly isStructurallyValid?: (output: unknown) => boolean;
+    },
   ): Promise<ModelGatewayExecution>;
 }
 
@@ -71,11 +97,29 @@ export const createModelGateway = ({
     const started = Date.now();
     const taskSnapshot = immutableSnapshot(task);
     let outcome: ModelGatewayExecution["outcome"];
+    let retryCount: 0 | 1 = 0;
     try {
-      const result = (await invokeWithinTimeout(
+      let result = (await invokeWithinTimeout(
         () => provider.invoke(taskSnapshot),
         options?.timeoutMs ?? 5_000,
       )) as ModelProviderResult;
+      if (
+        options?.isStructurallyValid !== undefined &&
+        !options.isStructurallyValid(result.output)
+      ) {
+        retryCount = 1;
+        const repairTask = immutableSnapshot({
+          ...taskSnapshot,
+          input: {
+            ...taskSnapshot.input,
+            repairOf: result.output,
+          },
+        });
+        result = (await invokeWithinTimeout(
+          () => provider.invoke(repairTask),
+          options.timeoutMs ?? 5_000,
+        )) as ModelProviderResult;
+      }
       outcome = {
         status: "succeeded",
         output: result.output,
@@ -84,6 +128,12 @@ export const createModelGateway = ({
     } catch (error) {
       outcome = {
         status: "failed",
+        code:
+          error instanceof ModelProviderError
+            ? error.code
+            : error instanceof ModelTimeoutError
+              ? "timeout"
+              : "unavailable",
         reason: error instanceof Error ? error.message : "Model invocation failed.",
       };
     }
@@ -98,7 +148,7 @@ export const createModelGateway = ({
       durationMs: Math.max(0, completed - started),
       task: taskSnapshot,
       outcome,
-      retryCount: 0 as const,
+      retryCount,
     });
   },
 });

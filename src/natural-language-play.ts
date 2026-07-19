@@ -26,6 +26,7 @@ import {
   type ModelCallRecordStore,
   type ModelGateway,
   type ModelGatewayExecution,
+  type ModelFailureCode,
 } from "./model-gateway.js";
 import { completePlayerCharacterSetup } from "./player-character-setup.js";
 import {
@@ -331,6 +332,67 @@ const clarificationFrom = (
   return `Did you mean one of: ${labels.map((label) => `"${label}"`).join(", ")}?`;
 };
 
+const isStructurallyValidInterpretation = (interpretation: unknown): boolean => {
+  if (!isRecord(interpretation) || typeof interpretation.status !== "string") {
+    return false;
+  }
+  if (interpretation.status === "ambiguous") {
+    return (
+      hasExactKeys(interpretation, ["status", "candidateCapabilityIds"]) &&
+      Array.isArray(interpretation.candidateCapabilityIds) &&
+      interpretation.candidateCapabilityIds.every((id) => typeof id === "string")
+    );
+  }
+  if (interpretation.status !== "interpreted") return false;
+  const classification = interpretation.classification;
+  if (
+    classification === "player-action" ||
+    classification === "in-character-speech"
+  ) {
+    return (
+      hasExactKeys(interpretation, [
+        "status",
+        "classification",
+        "capabilityId",
+        "referencedEntityIds",
+        "evidenceItemIds",
+        "arguments",
+      ]) &&
+      (typeof interpretation.capabilityId === "string" ||
+        interpretation.capabilityId === null) &&
+      Array.isArray(interpretation.referencedEntityIds) &&
+      Array.isArray(interpretation.evidenceItemIds) &&
+      isRecord(interpretation.arguments)
+    );
+  }
+  if (classification === "rules-query") {
+    return hasExactKeys(interpretation, [
+      "status",
+      "classification",
+      "referencedEntityIds",
+    ]);
+  }
+  if (
+    classification === "out-of-character-request" ||
+    classification === "table-chat"
+  ) {
+    return hasExactKeys(interpretation, [
+      "status",
+      "classification",
+      "referencedEntityIds",
+    ]);
+  }
+  return (
+    classification === "system-command" &&
+    hasExactKeys(interpretation, [
+      "status",
+      "classification",
+      "command",
+      "referencedEntityIds",
+    ])
+  );
+};
+
 const writeNonGameplayResponse = (
   io: StructuredPlayIO,
   classification: NonGameplayClassification,
@@ -387,6 +449,37 @@ const writeRulesEvidence = (
   } else {
     view.state.establishedFacts.forEach((fact) => io.write(`- ${fact.text}\n`));
   }
+};
+
+const writeStructuredPlayChoices = (
+  io: StructuredPlayIO,
+  view: ApplicationView,
+): void => {
+  io.write("Structured Play choices:\n");
+  view.availableActions.forEach((action, index) =>
+    io.write(`${index + 1}. ${action.label} [${action.kind}]\n`),
+  );
+};
+
+const modelFailureExplanation = (
+  code: ModelFailureCode,
+  reason: string,
+): string => {
+  if (code === "timeout") return "Model interpretation timed out.";
+  if (code === "unauthenticated") return "Model authentication failed.";
+  if (code === "rate-limited") return "The model provider rate limit was reached.";
+  if (code === "over-budget") return "The Model Task exceeded its budget.";
+  if (code === "unavailable") return "The model provider is unavailable.";
+  return reason;
+};
+
+const writeSafeFailure = (
+  io: StructuredPlayIO,
+  view: ApplicationView,
+  explanation: string,
+): void => {
+  io.write(`${explanation} No gameplay action was taken.\n`);
+  writeStructuredPlayChoices(io, view);
 };
 
 const createApplication = (
@@ -525,7 +618,10 @@ export const runNaturalLanguagePlay = async (
           input: { utterance },
           evidenceBundle,
         }),
-        { timeoutMs: options.interpretationTimeoutMs ?? 5_000 },
+        {
+          timeoutMs: options.interpretationTimeoutMs ?? 5_000,
+          isStructurallyValid: isStructurallyValidInterpretation,
+        },
       );
       if (gatewayExecution.outcome.status === "failed") {
         appendUncorrelatedModelCall(
@@ -538,8 +634,13 @@ export const runNaturalLanguagePlay = async (
           null,
           "safe-rejection",
         );
-        options.io.write(
-          "I could not safely map that input to an available capability. Please clarify.\n",
+        writeSafeFailure(
+          options.io,
+          view,
+          modelFailureExplanation(
+            gatewayExecution.outcome.code,
+            gatewayExecution.outcome.reason,
+          ),
         );
         return withoutInterpretedCommand(view, modelCallStore);
       }
@@ -553,8 +654,10 @@ export const runNaturalLanguagePlay = async (
       throw new Error("Natural Language Play requires a model gateway.");
     }
   } catch {
-    options.io.write(
-      "I could not safely map that input to an available capability. Please clarify.\n",
+    writeSafeFailure(
+      options.io,
+      view,
+      "I could not safely map that input to an available capability.",
     );
     return withoutInterpretedCommand(view, modelCallStore);
   }
@@ -570,6 +673,7 @@ export const runNaturalLanguagePlay = async (
       );
     }
     options.io.write(`Clarification needed: ${clarification}\n`);
+    writeStructuredPlayChoices(options.io, view);
     return withoutInterpretedCommand(view, modelCallStore);
   }
   if (isRulesQuery(interpretation, request)) {
@@ -618,8 +722,10 @@ export const runNaturalLanguagePlay = async (
         "safe-rejection",
       );
     }
-    options.io.write(
-      "I could not safely map that input to an available capability. Please clarify.\n",
+    writeSafeFailure(
+      options.io,
+      view,
+      "I could not safely map that input to an available capability.",
     );
     return withoutInterpretedCommand(view, modelCallStore);
   }
