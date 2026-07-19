@@ -152,6 +152,22 @@ test("a committed Check receives original Narration from attributable evidence",
       .filter((event) => event.type === "CheckResolved")
       .map((event) => event.id),
   );
+  assert.ok(
+    record.evidenceReferences.every((reference) =>
+      /^[0-9a-f]{64}$/.test(reference.contentHash),
+    ),
+  );
+  assert.deepEqual(
+    record.correlationIds,
+    [
+      ...new Set(
+        eventStore
+          .readAll()
+          .filter((event) => event.type === "CheckResolved")
+          .map((event) => event.correlationId),
+      ),
+    ],
+  );
   assert.equal(
     eventStore.readAll().some((event) => event.id === record.id),
     false,

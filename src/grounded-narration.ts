@@ -56,6 +56,29 @@ const hasGroundedNarrationShape = (
   value.segments.length > 0 &&
   value.segments.every(isNarrationSegment);
 
+export const retainedNarrationText = (
+  modelCallStore: ModelCallRecordStore,
+  acceptedEvents: readonly CanonicalEvent[],
+): readonly string[] => {
+  const acceptedEventIds = new Set(acceptedEvents.map((event) => event.id));
+  return modelCallStore.readAll().flatMap((record) => {
+    if (
+      record.taskType !== "narrate-committed-outcome" ||
+      record.validation.status !== "accepted" ||
+      record.acceptedEventIds.length === 0 ||
+      !record.acceptedEventIds.every((id) => acceptedEventIds.has(id)) ||
+      !hasGroundedNarrationShape(record.validatedOutput)
+    ) {
+      return [];
+    }
+    return [
+      record.validatedOutput.segments
+        .map((segment) => segment.text)
+        .join(" "),
+    ];
+  });
+};
+
 const normalizedTokens = (value: string): readonly string[] =>
   value.toLocaleLowerCase("en").match(/[a-z0-9]+/g) ?? [];
 

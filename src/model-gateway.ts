@@ -1,6 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import type { EvidenceBundle } from "./evidence-bundle.js";
+import {
+  redactModelDiagnosticValue,
+  type ModelDiagnosticCapture,
+} from "./model-diagnostics.js";
 import {
   immutableSnapshot,
   invokeWithinTimeout,
@@ -120,9 +124,11 @@ const repairTaskFrom = <Task extends ModelTask>(
 export const createModelGateway = ({
   provider,
   promptVersion,
+  diagnosticCapture,
 }: {
   readonly provider: ModelProvider;
   readonly promptVersion?: string;
+  readonly diagnosticCapture?: ModelDiagnosticCapture;
 }): ModelGateway => ({
   execute: async (task, options) => {
     const started = Date.now();
@@ -134,6 +140,34 @@ export const createModelGateway = ({
           ? "explain-rules-v1"
           : "narrate-committed-outcome-v1");
     const taskSnapshot = immutableSnapshot(task);
+    const capture = (value: unknown): void => {
+      try {
+        diagnosticCapture?.capture(value);
+      } catch {}
+    };
+    const invokeProvider = async (providerTask: ModelTask) => {
+      try {
+        const result = (await invokeWithinTimeout(
+          () => provider.invoke(providerTask),
+          options?.timeoutMs ?? 5_000,
+        )) as ModelProviderResult;
+        capture({
+          provider: provider.provider,
+          model: provider.model,
+          request: providerTask,
+          response: result,
+        });
+        return result;
+      } catch (error) {
+        capture({
+          provider: provider.provider,
+          model: provider.model,
+          request: providerTask,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    };
     let outcome: ModelGatewayExecution["outcome"];
     let retryCount: 0 | 1 = 0;
     let usage: ModelUsage | null = null;
@@ -149,10 +183,7 @@ export const createModelGateway = ({
             };
     };
     try {
-      let result = (await invokeWithinTimeout(
-        () => provider.invoke(taskSnapshot),
-        options?.timeoutMs ?? 5_000,
-      )) as ModelProviderResult;
+      let result = await invokeProvider(taskSnapshot);
       addUsage(result.usage);
       if (
         options?.isStructurallyValid !== undefined &&
@@ -160,10 +191,7 @@ export const createModelGateway = ({
       ) {
         retryCount = 1;
         const repairTask = repairTaskFrom(taskSnapshot, result.output);
-        result = (await invokeWithinTimeout(
-          () => provider.invoke(repairTask),
-          options.timeoutMs ?? 5_000,
-        )) as ModelProviderResult;
+        result = await invokeProvider(repairTask);
         addUsage(result.usage);
       }
       outcome = {
@@ -180,7 +208,13 @@ export const createModelGateway = ({
             : error instanceof ModelTimeoutError
               ? "timeout"
               : "unavailable",
-        reason: error instanceof Error ? error.message : "Model invocation failed.",
+        reason: String(
+          redactModelDiagnosticValue(
+            error instanceof Error
+              ? error.message
+              : "Model invocation failed.",
+          ),
+        ),
         usage,
       };
     }
@@ -238,6 +272,7 @@ export interface ModelCallRecord {
     readonly itemId: string;
     readonly sourceKind: EvidenceBundle["items"][number]["sourceKind"];
     readonly sourceReference: string;
+    readonly contentHash: string;
   }[];
   readonly startedAt: string;
   readonly completedAt: string;
@@ -255,6 +290,7 @@ export interface ModelCallRecord {
   readonly validatedOutput: unknown | null;
   readonly command: StructuredPlayInput | null;
   readonly acceptedEventIds: readonly CanonicalEvent["id"][];
+  readonly correlationIds: readonly CanonicalEvent["correlationId"][];
 }
 
 export interface ModelCallRecordStore {
@@ -297,6 +333,7 @@ export const modelCallRecordFrom = ({
       itemId: item.id,
       sourceKind: item.sourceKind,
       sourceReference: item.sourceReference,
+      contentHash: createHash("sha256").update(item.content).digest("hex"),
     })),
     startedAt: execution.startedAt,
     completedAt: execution.completedAt,
@@ -308,4 +345,7 @@ export const modelCallRecordFrom = ({
     validatedOutput,
     command,
     acceptedEventIds: acceptedEvents.map((event) => event.id),
+    correlationIds: [
+      ...new Set(acceptedEvents.map((event) => event.correlationId)),
+    ],
   });

@@ -4,10 +4,8 @@ import type {
   AdventureRepository,
   OpenAdventure,
 } from "./adventure-repository.js";
-import {
-  createInMemoryModelCallRecordStore,
-  type ModelGateway,
-} from "./model-gateway.js";
+import { retainedNarrationText } from "./grounded-narration.js";
+import type { ModelGateway } from "./model-gateway.js";
 import {
   runNaturalLanguagePlay,
   writeStructuredPlayChoices,
@@ -70,7 +68,7 @@ const runModeSession = async (
 ): Promise<void> => {
   let mode = initialMode;
   let structuredChoice: string | undefined;
-  const modelCallStore = createInMemoryModelCallRecordStore();
+  const modelCallStore = adventure.modelCallStore;
   while (true) {
     if (mode === "natural-language") {
       if (modelGateway === undefined) {
@@ -130,6 +128,17 @@ const playAdventure = async (
   modelGateway: ModelGateway | undefined,
 ): Promise<void> => {
   try {
+    const retainedNarration = retainedNarrationText(
+      adventure.modelCallStore,
+      adventure.timelineStore.readTimeline(
+        adventure.timelineStore.view().activeTimelineId,
+      ),
+    );
+    if (retainedNarration.length > 0) {
+      io.write("Historical Narration\n");
+      retainedNarration.forEach((text) => io.write(`${text}\n`));
+      io.write("\n");
+    }
     if (explicitMode !== null) {
       await runModeSession(adventure, io, explicitMode, modelGateway);
       return;
@@ -137,6 +146,7 @@ const playAdventure = async (
     await runStructuredPlay({
       io,
       timelineStore: adventure.timelineStore,
+      modelCallStore: adventure.modelCallStore,
       runToAdventureEnd,
     });
   } finally {

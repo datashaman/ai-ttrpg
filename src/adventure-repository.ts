@@ -30,6 +30,14 @@ import {
   type PortableAdventureRecord,
 } from "./adventure-archive.js";
 import { isCanonicalEventEnvelope } from "./canonical-event-validation.js";
+import {
+  createDurableModelCallRecordStore,
+  initializeDurableModelCallRecordStorage,
+} from "./model-call-record-store.js";
+import {
+  createInMemoryModelCallRecordStore,
+  type ModelCallRecordStore,
+} from "./model-gateway.js";
 
 export interface AdventureIdentity {
   readonly id: string;
@@ -44,6 +52,7 @@ export interface OpenAdventure extends AdventureIdentity {
   readonly eventStore: BatchEventStore;
   readonly randomSource: RandomSource;
   readonly timelineStore: TimelineStore;
+  readonly modelCallStore: ModelCallRecordStore;
   close(): void;
 }
 
@@ -58,6 +67,7 @@ export interface AdventureRepository {
 interface InMemoryAdventureRecord extends AdventureIdentity {
   readonly randomSeed: number;
   readonly timelineStore: TimelineStore;
+  readonly modelCallStore: ModelCallRecordStore;
 }
 
 interface AdventureMetadata extends AdventureIdentity {
@@ -79,6 +89,7 @@ const adventureName = (name: string): string => {
 const openAdventure = (
   identity: AdventureIdentity,
   store: TimelineStore,
+  modelCallStore: ModelCallRecordStore,
 ): OpenAdventure => {
   let closed = false;
   const ensureOpen = (): void => {
@@ -132,6 +143,16 @@ const openAdventure = (
     eventStore: timelineStore,
     randomSource: timelineStore,
     timelineStore,
+    modelCallStore: {
+      append: (record) => {
+        ensureOpen();
+        modelCallStore.append(record);
+      },
+      readAll: () => {
+        ensureOpen();
+        return modelCallStore.readAll();
+      },
+    },
     close: () => {
       closed = true;
     },
@@ -166,7 +187,7 @@ export const createInMemoryAdventureRepository = (): AdventureRepository => {
     if (record === undefined) {
       throw new Error(`Adventure "${id}" is unavailable.`);
     }
-    return openAdventure(record, record.timelineStore);
+    return openAdventure(record, record.timelineStore, record.modelCallStore);
   };
 
   return {
@@ -179,6 +200,7 @@ export const createInMemoryAdventureRepository = (): AdventureRepository => {
         timelineStore: createInMemoryTimelineStore({
           seed: randomSeed,
         }),
+        modelCallStore: createInMemoryModelCallRecordStore(),
       };
       records.set(record.id, record);
       return open(record.id);
@@ -215,6 +237,7 @@ export const createInMemoryAdventureRepository = (): AdventureRepository => {
           activeTimelineId: archive.activeTimelineId,
           snapshots: archive.timelines,
         }),
+        modelCallStore: createInMemoryModelCallRecordStore(),
       };
       records.set(record.id, record);
       return open(record.id);
@@ -224,6 +247,7 @@ export const createInMemoryAdventureRepository = (): AdventureRepository => {
 
 const metadataFile = "adventure.json";
 const eventsFile = "events.jsonl";
+const modelCallsFile = "model-calls.jsonl";
 
 const isMetadata = (value: unknown): value is AdventureMetadata =>
   typeof value === "object" &&
@@ -307,7 +331,11 @@ export const createLocalAdventureRepository = (
         seed: record.randomSeed,
         parseEvents,
       });
-      return openAdventure(record, timelineStore);
+      return openAdventure(
+        record,
+        timelineStore,
+        createDurableModelCallRecordStore(join(directory, modelCallsFile)),
+      );
     } catch {
       throw new Error(`Adventure "${id}" could not be read.`);
     }
@@ -328,6 +356,7 @@ export const createLocalAdventureRepository = (
         "utf8",
       );
       writeFileSync(join(directory, eventsFile), "", "utf8");
+      initializeDurableModelCallRecordStorage(join(directory, modelCallsFile));
       initializeDurableTimelineStorage(directory);
       return open(metadata.id);
     },
@@ -389,6 +418,9 @@ export const createLocalAdventureRepository = (
           temporaryDirectory,
           archive.activeTimelineId,
           archive.timelines,
+        );
+        initializeDurableModelCallRecordStorage(
+          join(temporaryDirectory, modelCallsFile),
         );
         renameSync(temporaryDirectory, directory);
       } catch (error) {
