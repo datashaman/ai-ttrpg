@@ -10,6 +10,7 @@ import {
 import { assembleRulesExplanationEvidence } from "../src/evidence-bundle.js";
 import { runNaturalLanguagePlay } from "../src/natural-language-play.js";
 import { createStructuredPlayApplication } from "../src/structured-play.js";
+import { DEFAULT_PLAYER_ACTOR_SCOPE } from "../src/world-knowledge.js";
 import { beginAdventureFixture } from "./support/adventure-fixture.js";
 import {
   assertLockedManorHiddenKnowledgeAbsent,
@@ -168,6 +169,7 @@ test("rules evidence budgeting preserves the exact rule before older events", ()
   const { app, eventStore } = beginAdventureFixture();
 
   const bundle = assembleRulesExplanationEvidence({
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     utterance: LOCKPICK_QUERY,
     view: app.view(),
     acceptedEvents: eventStore.readAll(),

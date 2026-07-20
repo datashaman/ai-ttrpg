@@ -41,6 +41,10 @@ import {
 } from "./model-gateway.js";
 import { completePlayerCharacterSetup } from "./player-character-setup.js";
 import {
+  DEFAULT_PLAYER_ACTOR_SCOPE,
+  type PlayerWorldKnowledgeActorScope,
+} from "./world-knowledge.js";
+import {
   runStructuredPlay,
   type PresentationModel,
   type StructuredPlayIO,
@@ -72,6 +76,7 @@ export interface InterpretationModel {
 }
 
 export interface NaturalLanguagePlayOptions {
+  readonly actorScope?: PlayerWorldKnowledgeActorScope;
   readonly io: StructuredPlayIO;
   readonly interpreter?: InterpretationModel;
   readonly modelGateway?: ModelGateway;
@@ -620,6 +625,9 @@ const applicationOptionsWithConversation = (
   options: NaturalLanguagePlayOptions,
 ): Omit<StructuredPlayOptions, "eventStore" | "randomSource" | "timelineStore"> => ({
   ...options.applicationOptions,
+  ...(options.actorScope === undefined
+    ? {}
+    : { actorScope: options.actorScope }),
   ...(options.conversationStore === undefined
     ? {}
     : { conversationStore: options.conversationStore }),
@@ -632,6 +640,9 @@ const runThroughStructuredPlay = (
   modelCallStore: ModelCallRecordStore,
 ): Promise<ApplicationView> =>
   runStructuredPlay({
+    ...(options.actorScope === undefined
+      ? {}
+      : { actorScope: options.actorScope }),
     io,
     eventStore,
     ...(options.timelineStore === undefined
@@ -727,6 +738,7 @@ const explainRulesQuery = async ({
     return;
   }
   const evidenceBundle = assembleRulesExplanationEvidence({
+    actorScope: options.actorScope ?? DEFAULT_PLAYER_ACTOR_SCOPE,
     utterance,
     view,
     acceptedEvents: acceptedEventsFor(options, eventStore),
@@ -828,6 +840,7 @@ export const runNaturalLanguagePlay = async (
     visibleEvidence: view.state.establishedFacts,
   });
   const evidenceBundle = assembleInterpretationEvidence({
+    actorScope: options.actorScope ?? DEFAULT_PLAYER_ACTOR_SCOPE,
     utterance,
     view,
     acceptedEvents: acceptedEventsFor(options, eventStore),

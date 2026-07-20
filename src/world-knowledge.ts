@@ -1,8 +1,49 @@
 import type { CanonicalEvent, EstablishedFact } from "./structured-play.js";
 
-export type WorldKnowledgeActorScope = "Player" | "Game Master";
+export const DEFAULT_PLAYER_CHARACTER_ID = "player-character:primary";
+
+export interface PlayerWorldKnowledgeActorScope {
+  readonly kind: "Player";
+  readonly playerCharacterId: string;
+}
+
+export interface GameMasterWorldKnowledgeActorScope {
+  readonly kind: "Game Master";
+}
+
+export interface UnauthenticatedWorldKnowledgeActorScope {
+  readonly kind: "Unauthenticated";
+}
+
+export type WorldKnowledgeActorScope =
+  | PlayerWorldKnowledgeActorScope
+  | GameMasterWorldKnowledgeActorScope
+  | UnauthenticatedWorldKnowledgeActorScope;
+
+export const playerWorldKnowledgeActorScope = (
+  playerCharacterId: string,
+): PlayerWorldKnowledgeActorScope =>
+  Object.freeze({ kind: "Player", playerCharacterId });
+
+export const DEFAULT_PLAYER_ACTOR_SCOPE =
+  playerWorldKnowledgeActorScope(DEFAULT_PLAYER_CHARACTER_ID);
+
+export const GAME_MASTER_ACTOR_SCOPE: GameMasterWorldKnowledgeActorScope =
+  Object.freeze({ kind: "Game Master" });
+
+export const UNAUTHENTICATED_ACTOR_SCOPE: UnauthenticatedWorldKnowledgeActorScope =
+  Object.freeze({ kind: "Unauthenticated" });
 export type WorldKnowledgeVisibility = "Player-visible" | "Game Master-only";
-export type KnowledgeScope = "Player Character" | "Game Master";
+export interface PlayerCharacterKnowledgeScope {
+  readonly kind: "Player Character";
+  readonly playerCharacterId: string;
+}
+
+/** Format-v1 shorthand retained for the primary Player Character. */
+export type KnowledgeScope =
+  | PlayerCharacterKnowledgeScope
+  | "Player Character"
+  | "Game Master";
 export type ProvenanceOriginKind =
   | "authored-content"
   | "imported-content"
@@ -153,10 +194,22 @@ const PROVENANCE_ORIGIN_KINDS: readonly ProvenanceOriginKind[] = [
   "rule-outcome",
   "validated-model-proposal",
 ];
-const KNOWLEDGE_SCOPES: readonly KnowledgeScope[] = [
-  "Player Character",
-  "Game Master",
-];
+const isPlayerCharacterKnowledgeScope = (
+  value: unknown,
+): value is PlayerCharacterKnowledgeScope =>
+  isRecord(value) &&
+  value.kind === "Player Character" &&
+  isNonEmptyString(value.playerCharacterId);
+
+const isKnowledgeScopeItem = (value: unknown): value is KnowledgeScope =>
+  value === "Player Character" ||
+  value === "Game Master" ||
+  isPlayerCharacterKnowledgeScope(value);
+
+const knowledgeScopeKey = (scope: KnowledgeScope): string =>
+  typeof scope === "string"
+    ? scope
+    : `${scope.kind}:${scope.playerCharacterId}`;
 
 const isProvenanceDefinition = (
   value: unknown,
@@ -177,16 +230,36 @@ const isKnowledgeScope = (
 ): value is readonly KnowledgeScope[] =>
   Array.isArray(value) &&
   value.length > 0 &&
-  value.every((scope) => KNOWLEDGE_SCOPES.includes(scope as KnowledgeScope)) &&
-  new Set(value).size === value.length;
+  value.every(isKnowledgeScopeItem) &&
+  new Set(value.map(knowledgeScopeKey)).size === value.length;
+
+const hasPlayerCharacterKnowledgeScope = (
+  knowledgeScope: readonly KnowledgeScope[],
+): boolean =>
+  knowledgeScope.some(
+    (scope) =>
+      scope === "Player Character" || isPlayerCharacterKnowledgeScope(scope),
+  );
+
+const isKnownByPlayerCharacter = (
+  knowledgeScope: readonly KnowledgeScope[],
+  playerCharacterId: string,
+): boolean =>
+  knowledgeScope.some(
+    (scope) =>
+      (scope === "Player Character" &&
+        playerCharacterId === DEFAULT_PLAYER_CHARACTER_ID) ||
+      (isPlayerCharacterKnowledgeScope(scope) &&
+        scope.playerCharacterId === playerCharacterId),
+  );
 
 const isVisibilityCompatibleWithKnowledgeScope = (
   visibility: WorldKnowledgeVisibility,
   knowledgeScope: readonly KnowledgeScope[],
 ): boolean =>
   visibility === "Player-visible"
-    ? knowledgeScope.includes("Player Character")
-    : !knowledgeScope.includes("Player Character");
+    ? hasPlayerCharacterKnowledgeScope(knowledgeScope)
+    : !hasPlayerCharacterKnowledgeScope(knowledgeScope);
 
 const isWorldKnowledgeFactEstablishedPayload = (
   value: unknown,
@@ -259,11 +332,15 @@ export const isWorldKnowledgeRelationshipEstablishedPayload = (
 
 export const isPlayerCharacterRevealScope = (
   value: unknown,
-): value is readonly ["Game Master", "Player Character"] =>
+): value is readonly [
+  "Game Master",
+  PlayerCharacterKnowledgeScope | "Player Character",
+] =>
   Array.isArray(value) &&
   value.length === 2 &&
   value[0] === "Game Master" &&
-  value[1] === "Player Character";
+  (value[1] === "Player Character" ||
+    isPlayerCharacterKnowledgeScope(value[1]));
 
 const authoredFactEstablishedBy = (
   payload: WorldKnowledgeFactEstablishedPayload,
@@ -528,7 +605,13 @@ const isVisibleTo = (
   entry: WorldKnowledgeEntry,
   actorScope: WorldKnowledgeActorScope,
 ): boolean =>
-  actorScope === "Game Master" || entry.visibility === "Player-visible";
+  actorScope.kind === "Game Master" ||
+  (actorScope.kind === "Player" &&
+    entry.visibility === "Player-visible" &&
+    isKnownByPlayerCharacter(
+      entry.knowledgeScope,
+      actorScope.playerCharacterId,
+    ));
 
 export const validateWorldKnowledgeAppend = (
   input: WorldKnowledgeAppendValidation,
@@ -543,35 +626,103 @@ export const projectWorldKnowledge = (
   query: WorldKnowledgeQuery,
 ): WorldKnowledgeProjection => {
   assertWorldKnowledgeActorScope(query.actorScope);
-  const entries = replayWorldKnowledgeEntries(query.events).filter((entry) =>
-    isVisibleTo(entry, query.actorScope),
-  );
+  const entries = replayWorldKnowledgeEntries(
+    filterCanonicalEventsForActor(query, true),
+  ).filter((entry) => isVisibleTo(entry, query.actorScope));
   return immutableSnapshot({ actorScope: query.actorScope, entries });
 };
 
 const assertWorldKnowledgeActorScope = (
   actorScope: WorldKnowledgeActorScope,
 ): void => {
-  if (actorScope === "Player" || actorScope === "Game Master") return;
+  if (
+    isRecord(actorScope) &&
+    (actorScope.kind === "Game Master" ||
+      actorScope.kind === "Unauthenticated" ||
+      (actorScope.kind === "Player" &&
+        isNonEmptyString(actorScope.playerCharacterId)))
+  ) {
+    return;
+  }
   throw new WorldKnowledgeError(
     "INVALID_ACTOR_SCOPE",
-    "World Knowledge requires an explicit Player or Game Master actor scope.",
+    "World Knowledge requires an explicit actor scope and Player Character identity for a Player.",
   );
 };
 
-export const filterCanonicalEventsVisibleTo = (
+const filterCanonicalEventsForActor = (
   query: WorldKnowledgeQuery,
+  includeRevealedSources: boolean,
 ): readonly CanonicalEvent[] => {
   assertWorldKnowledgeActorScope(query.actorScope);
-  if (query.actorScope === "Game Master") return query.events;
+  if (query.actorScope.kind === "Game Master") return query.events;
+  if (query.actorScope.kind === "Unauthenticated") return [];
+  const playerCharacterId = query.actorScope.playerCharacterId;
+  const revealedIds = new Set(
+    includeRevealedSources
+      ? query.events.flatMap((event) =>
+          event.type === "WorldKnowledgeRevealed" &&
+          isKnownByPlayerCharacter(
+            event.payload.knowledgeScope,
+            playerCharacterId,
+          )
+            ? [event.payload.worldKnowledgeId]
+            : [],
+        )
+      : [],
+  );
+  const revealedRelationshipEndpointIds = new Set(
+    query.events.flatMap((event) =>
+      event.type === "WorldKnowledgeEstablished"
+        ? (event.payload.relationships ?? []).flatMap(({ relationship }) =>
+            revealedIds.has(relationship.id)
+              ? [relationship.sourceId, relationship.targetId]
+              : [],
+          )
+        : [],
+    ),
+  );
+  const payloadIsVisible = (
+    payload: WorldKnowledgeFactEstablishedPayload,
+  ): boolean =>
+    (payload.visibility === "Player-visible" &&
+      isKnownByPlayerCharacter(
+        payload.knowledgeScope,
+        playerCharacterId,
+      )) ||
+    revealedIds.has(payload.fact.id) ||
+    revealedRelationshipEndpointIds.has(payload.fact.id);
   return query.events.reduce<CanonicalEvent[]>((visibleEvents, event) => {
-    if (event.type !== "WorldKnowledgeEstablished") {
-      visibleEvents.push(event);
+    if (event.type === "WorldKnowledgeRevealed") {
+      if (
+        isKnownByPlayerCharacter(
+          event.payload.knowledgeScope,
+          playerCharacterId,
+        )
+      ) {
+        visibleEvents.push(event);
+      }
       return visibleEvents;
     }
-    if (event.payload.visibility !== "Player-visible") return visibleEvents;
+    if (event.type !== "WorldKnowledgeEstablished") {
+      if (playerCharacterId === DEFAULT_PLAYER_CHARACTER_ID) {
+        visibleEvents.push(event);
+      }
+      return visibleEvents;
+    }
+    if (
+      !payloadIsVisible(event.payload)
+    ) {
+      return visibleEvents;
+    }
     const visibleRelationships = (event.payload.relationships ?? []).filter(
-      (relationship) => relationship.visibility === "Player-visible",
+      (relationship) =>
+        (relationship.visibility === "Player-visible" &&
+          isKnownByPlayerCharacter(
+            relationship.knowledgeScope,
+            playerCharacterId,
+          )) ||
+        revealedIds.has(relationship.relationship.id),
     );
     visibleEvents.push(
       ({
@@ -582,7 +733,8 @@ export const filterCanonicalEventsVisibleTo = (
             ? {}
             : {
                 endpointFacts: event.payload.endpointFacts.filter(
-                  (fact) => fact.visibility === "Player-visible",
+                  (fact) =>
+                    payloadIsVisible(fact),
                 ),
               }),
           ...(event.payload.relationships === undefined
@@ -594,3 +746,7 @@ export const filterCanonicalEventsVisibleTo = (
     return visibleEvents;
   }, []);
 };
+
+export const filterCanonicalEventsVisibleTo = (
+  query: WorldKnowledgeQuery,
+): readonly CanonicalEvent[] => filterCanonicalEventsForActor(query, false);

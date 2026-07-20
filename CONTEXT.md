@@ -153,7 +153,7 @@ The explicit boundary that determines which application actor scopes may observe
 _Avoid_: permission, secrecy convention, prompt filter
 
 **Knowledge Scope**:
-The in-world boundary describing who knows an Established Fact or World Knowledge Relationship. It may change through a Reveal without changing the represented truth or original Provenance.
+The in-world boundary describing who knows an Established Fact or World Knowledge Relationship. Player Character-scoped knowledge carries that Player Character's stable identity, so it cannot enter another character's context. It may change through a Reveal without changing the represented truth or original Provenance.
 _Avoid_: access control, audience, confidence
 
 **Reveal**:

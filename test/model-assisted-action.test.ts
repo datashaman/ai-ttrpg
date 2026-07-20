@@ -16,6 +16,7 @@ import {
   createStructuredPlayApplication,
   type EventStore,
 } from "../src/structured-play.js";
+import { DEFAULT_PLAYER_ACTOR_SCOPE } from "../src/world-knowledge.js";
 import { beginAdventureFixture } from "./support/adventure-fixture.js";
 import {
   assertLockedManorHiddenKnowledgeAbsent,
@@ -91,6 +92,7 @@ test("a scripted provider selects one evidenced action through Structured Play a
 test("evidence ordering is deterministic and budgets authority before old context", () => {
   const { app, eventStore } = beginAdventureFixture();
   const input = {
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     utterance: "I survey the grounds.",
     view: app.view(),
     acceptedEvents: eventStore.readAll(),
