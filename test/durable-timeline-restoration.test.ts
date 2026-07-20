@@ -45,7 +45,7 @@ test("a fresh repository instance restores the complete Timeline graph and activ
     reopened.timelineStore.view().activeTimeline.parentTimelineId,
     sourceTimelineId,
   );
-  assert.equal(reopened.timelineStore.view().activeTimeline.branchEventPosition, 2);
+  assert.equal(reopened.timelineStore.view().activeTimeline.branchEventPosition, 3);
   reopened.close();
 });
 
@@ -146,7 +146,7 @@ test("durable Timeline selection isolates appends and rejects invalid changes", 
   const sourceAfter = reopened.timelineStore.readTimeline(sourceTimelineId);
   const childBefore = reopened.timelineStore.readTimeline(childTimelineId);
   assert.equal(sourceAfter.at(-1)?.type, "CheckProposalCreated");
-  assert.equal(childBefore.length, 2);
+  assert.equal(childBefore.length, 3);
 
   resumed.submit({ type: "select-timeline", timelineId: childTimelineId });
   resumed.submit({ type: "choose-action", actionId: "survey-manor" });

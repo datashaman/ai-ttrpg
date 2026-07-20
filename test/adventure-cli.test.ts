@@ -38,7 +38,7 @@ test("CLI creates, lists, and opens a durable Adventure without a model or stora
   const [summary] = firstProcess.list();
   assert.ok(summary);
   assert.equal(summary.name, "The Locked Manor");
-  assert.equal(summary.eventCount, 3);
+  assert.equal(summary.eventCount, 4);
   assert.match(creation.output.join(""), /Created Adventure "The Locked Manor"/);
 
   const listing = scriptedIO([]);
@@ -91,7 +91,7 @@ test("explicit Natural Language mode offers Structured Play when no provider is 
   assert.match(transcript, /Structured Play choices:/);
   assert.match(transcript, /a Structured Play choice number/);
   assert.match(transcript, /AI TTRPG — Structured Play/);
-  assert.equal(repository.list()[0]?.eventCount, 3);
+  assert.equal(repository.list()[0]?.eventCount, 4);
 });
 
 test("configured model deadline reaches Natural Language Play through the CLI", async () => {
@@ -179,7 +179,7 @@ test("Player switches from ambiguous Natural Language Play to Structured Play wi
   const transcript = script.output.join("");
   assert.match(transcript, /Clarification needed:/);
   assert.match(transcript, /Structured Play choices:/);
-  assert.equal(repository.list()[0]?.eventCount, 3);
+  assert.equal(repository.list()[0]?.eventCount, 4);
 });
 
 test("CLI reports usage without creating an unnamed Adventure", async () => {
@@ -235,7 +235,7 @@ test("CLI exports and imports a portable Adventure without entering play", async
   );
 
   assert.deepEqual(importedRepository.list(), [
-    { id: source.id, name: source.name, eventCount: 2 },
+    { id: source.id, name: source.name, eventCount: 3 },
   ]);
   assert.match(importing.output.join(""), /Imported Adventure/);
   source.close();

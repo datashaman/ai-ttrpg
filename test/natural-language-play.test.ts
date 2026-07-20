@@ -155,7 +155,12 @@ test("natural-language Player action selects a currently available capability", 
   ]);
   assert.deepEqual(
     eventStore.readAll().map((event) => event.type),
-    ["PlayerCharacterConfigured", "SceneStarted", "FreeActionCompleted"],
+    [
+      "PlayerCharacterConfigured",
+      "WorldKnowledgeEstablished",
+      "SceneStarted",
+      "FreeActionCompleted",
+    ],
   );
   assert.match(script.output.join(""), /Fresh footprints lead from the manor gate/);
 });

@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { assembleInterpretationEvidence } from "../src/evidence-bundle.js";
+import {
+  assembleInterpretationEvidence,
+  assembleNarrationEvidence,
+  assembleRulesExplanationEvidence,
+  type NarrationEvidenceInput,
+} from "../src/evidence-bundle.js";
 import {
   createInMemoryEventStore,
+  createInMemoryTimelineStore,
+  createSeededRandomSource,
   createStructuredPlayApplication,
   type FreeActionDefinition,
 } from "../src/structured-play.js";
@@ -38,6 +45,10 @@ test("Player projects attributable World Knowledge from canonical history", () =
     actorScope: "Game Master",
     events: eventStore.readAll(),
   });
+  const establishedEvent = eventStore
+    .readAll()
+    .find((event) => event.type === "FreeActionCompleted");
+  assert.ok(establishedEvent);
 
   assert.deepEqual(knowledge, {
     actorScope: "Player",
@@ -50,7 +61,7 @@ test("Player projects attributable World Knowledge from canonical history", () =
         provenance: {
           originKind: "authored-content",
           sourceReference: "free-action:survey-manor",
-          establishedByEventId: eventStore.readAll()[2]!.id,
+          establishedByEventId: establishedEvent.id,
         },
         visibility: "Player-visible",
         knowledgeScope: ["Player Character"],
@@ -62,10 +73,58 @@ test("Player projects attributable World Knowledge from canonical history", () =
   assert.equal(Object.isFrozen(knowledge.entries[0]), true);
   assert.equal(Object.isFrozen(knowledge.entries[0]!.provenance), true);
   assert.equal(Object.isFrozen(knowledge.entries[0]!.knowledgeScope), true);
-  assert.deepEqual(gameMasterKnowledge, {
-    ...knowledge,
-    actorScope: "Game Master",
+  assert.deepEqual(
+    gameMasterKnowledge.entries.filter(
+      (entry) => entry.visibility === "Player-visible",
+    ),
+    knowledge.entries,
+  );
+});
+
+test("authored locked-manor knowledge is visible only to the Game Master", () => {
+  const { eventStore } = beginAdventureFixture();
+
+  const playerKnowledge = projectWorldKnowledge({
+    actorScope: "Player",
+    events: eventStore.readAll(),
   });
+  const gameMasterKnowledge = projectWorldKnowledge({
+    actorScope: "Game Master",
+    events: eventStore.readAll(),
+  });
+  const authoredEvent = eventStore
+    .readAll()
+    .find((event) => event.type === "WorldKnowledgeEstablished");
+  assert.ok(authoredEvent);
+
+  assert.deepEqual(playerKnowledge.entries, []);
+  assert.deepEqual(gameMasterKnowledge.entries, [
+    {
+      id: "cellar-guardian-identity",
+      kind: "Established Fact",
+      text: "The manor's housekeeper is the cellar guardian in disguise.",
+      provenance: {
+        originKind: "authored-content",
+        sourceReference: "locked-manor:cellar-guardian",
+        establishedByEventId: authoredEvent.id,
+      },
+      visibility: "Game Master-only",
+      knowledgeScope: ["Game Master"],
+    },
+  ]);
+  assert.equal(Object.isFrozen(playerKnowledge), true);
+  assert.equal(Object.isFrozen(playerKnowledge.entries), true);
+  assert.equal(Object.isFrozen(gameMasterKnowledge), true);
+  assert.equal(Object.isFrozen(gameMasterKnowledge.entries), true);
+  assert.equal(Object.isFrozen(gameMasterKnowledge.entries[0]), true);
+  assert.equal(
+    Object.isFrozen(gameMasterKnowledge.entries[0]!.provenance),
+    true,
+  );
+  assert.equal(
+    Object.isFrozen(gameMasterKnowledge.entries[0]!.knowledgeScope),
+    true,
+  );
 });
 
 test("World Knowledge rejects a missing or unknown actor scope", () => {
@@ -190,7 +249,10 @@ test("contradictory World Knowledge text is rejected before an event commits", (
 
   assert.equal(contradiction.status, "rejected");
   assert.equal(contradiction.code, "invalid-world-knowledge");
-  assert.match(contradiction.message, /contradictory Established Fact text/);
+  assert.equal(
+    contradiction.message,
+    "World Knowledge could not be established.",
+  );
   assert.deepEqual(contradiction.appendedEvents, []);
   assert.deepEqual(eventStore.readAll(), beforeEvents);
   assert.deepEqual(
@@ -227,4 +289,251 @@ test("Player-visible World Knowledge enters attributable interpretation evidence
   assert.equal(Object.isFrozen(evidence), true);
   assert.equal(Object.isFrozen(evidence.items), true);
   assert.equal(Object.isFrozen(evidence.items[0]), true);
+});
+
+test("hidden knowledge is filtered before direct references and evidence budgets", () => {
+  const similarVisibleFact: FreeActionDefinition = {
+    id: "record-cellar-guardian-rumor",
+    label: "Record a cellar guardian rumor",
+    kind: "Free Action",
+    establishedFact: {
+      id: "cellar-guardian-identity-rumor",
+      text: "A cellar guardian rumor is written in the visitor book.",
+    },
+    availableInScenes: ["arrival"],
+    requiredFactIds: [],
+  };
+  const { app, eventStore } = beginWithFreeActions([similarVisibleFact]);
+  app.submit({ type: "choose-action", actionId: similarVisibleFact.id });
+  const events = eventStore.readAll();
+  const playerEvents = events.filter(
+    (event) => event.type !== "WorldKnowledgeEstablished",
+  );
+
+  for (const maxItems of [1, 2, 64]) {
+    const input = {
+      utterance: "world-knowledge:cellar-guardian-identity",
+      view: app.view(),
+      maxItems,
+    };
+    const withHiddenHistory = assembleInterpretationEvidence({
+      ...input,
+      acceptedEvents: events,
+    });
+    const withoutHiddenHistory = assembleInterpretationEvidence({
+      ...input,
+      acceptedEvents: playerEvents,
+    });
+
+    assert.deepEqual(withHiddenHistory, withoutHiddenHistory);
+    assert.equal(
+      withHiddenHistory.items.some(
+        (item) =>
+          item.id === "fact:cellar-guardian-identity" ||
+          item.sourceReference ===
+            "world-knowledge:cellar-guardian-identity" ||
+          item.content.includes(
+            "The manor's housekeeper is the cellar guardian in disguise.",
+          ),
+      ),
+      false,
+    );
+  }
+
+  const tightEvidence = assembleInterpretationEvidence({
+    utterance: "world-knowledge:cellar-guardian-identity",
+    view: app.view(),
+    acceptedEvents: events,
+    maxItems: 2,
+  });
+  assert.equal(
+    tightEvidence.items.some(
+      (item) => item.id === "fact:cellar-guardian-identity-rumor",
+    ),
+    false,
+  );
+});
+
+test("Player application surfaces and safe failures exclude authored hidden knowledge", () => {
+  const eventStore = createInMemoryTimelineStore({ seed: 56 });
+  const app = createStructuredPlayApplication({ timelineStore: eventStore });
+  app.submit({
+    type: "configure-player-character",
+    name: "Mara Vey",
+    pronouns: "she/her",
+    motivation: "Find her missing sister",
+    traits: { Might: 0, Wits: 2, Presence: 1 },
+  });
+  const begun = app.submit({ type: "begin-adventure" });
+  assert.equal(begun.status, "accepted");
+  assert.deepEqual(
+    begun.appendedEvents.map((event) => event.type),
+    ["SceneStarted"],
+  );
+  assert.deepEqual(app.view().timeline?.acceptedEvents, [
+    { position: 1, type: "PlayerCharacterConfigured" },
+    { position: 2, type: "SceneStarted" },
+  ]);
+  assert.equal(app.view().timeline?.activeTimeline.eventCount, 2);
+
+  const before = structuredClone(eventStore.readAll());
+  const unavailable = app.submit({
+    type: "choose-action",
+    actionId: "cellar-guardian-identity",
+  });
+  const playerSurface = JSON.stringify({
+    view: app.view(),
+    begun,
+    unavailable,
+  });
+
+  assert.equal(unavailable.status, "rejected");
+  assert.equal(unavailable.code, "action-unavailable");
+  assert.equal(
+    unavailable.message,
+    "That action is not available in the current Scene.",
+  );
+  assert.deepEqual(unavailable.appendedEvents, []);
+  assert.deepEqual(eventStore.readAll(), before);
+  assert.doesNotMatch(
+    playerSurface,
+    /cellar-guardian-identity|housekeeper is the cellar guardian|locked-manor:cellar-guardian/i,
+  );
+});
+
+test("knowledge collisions with a hidden ID fail without disclosing or appending it", () => {
+  for (const establishedFact of [
+    {
+      id: "cellar-guardian-identity",
+      text: "The manor's housekeeper is the cellar guardian in disguise.",
+    },
+    {
+      id: "cellar-guardian-identity",
+      text: "The cellar guardian is someone else.",
+    },
+  ]) {
+    const action: FreeActionDefinition = {
+      id: "record-guardian-identity",
+      label: "Record the guardian's identity",
+      kind: "Free Action",
+      establishedFact,
+      availableInScenes: ["arrival"],
+      requiredFactIds: [],
+    };
+    const { app, eventStore } = beginWithFreeActions([action]);
+    const before = structuredClone(eventStore.readAll());
+
+    const rejected = app.submit({ type: "choose-action", actionId: action.id });
+
+    assert.equal(rejected.status, "rejected");
+    assert.equal(rejected.code, "invalid-world-knowledge");
+    assert.equal(rejected.message, "World Knowledge could not be established.");
+    assert.deepEqual(rejected.appendedEvents, []);
+    assert.deepEqual(eventStore.readAll(), before);
+    assert.doesNotMatch(
+      JSON.stringify(rejected),
+      /cellar-guardian-identity|housekeeper is the cellar guardian|someone else/i,
+    );
+  }
+});
+
+test("invalid authored knowledge metadata appends no event", () => {
+  const eventStore = createInMemoryEventStore();
+  const app = createStructuredPlayApplication({
+    eventStore,
+    authoredWorldKnowledge: [
+      {
+        fact: { id: "invalid-secret", text: "Invalid secret text." },
+        provenance: {
+          originKind: "authored-content",
+          sourceReference: "",
+        },
+        visibility: "private" as never,
+        knowledgeScope: [],
+      },
+    ],
+  });
+  app.submit({
+    type: "configure-player-character",
+    name: "Mara Vey",
+    pronouns: "she/her",
+    motivation: "Find her missing sister",
+    traits: { Might: 0, Wits: 2, Presence: 1 },
+  });
+  const before = structuredClone(eventStore.readAll());
+
+  const rejected = app.submit({ type: "begin-adventure" });
+
+  assert.equal(rejected.status, "rejected");
+  assert.equal(rejected.code, "invalid-world-knowledge");
+  assert.equal(rejected.message, "World Knowledge could not be established.");
+  assert.deepEqual(rejected.appendedEvents, []);
+  assert.deepEqual(eventStore.readAll(), before);
+  assert.doesNotMatch(JSON.stringify(rejected), /invalid-secret|Invalid secret/);
+});
+
+test("rules and Narration evidence exclude hidden history before budgeting", () => {
+  const { app, eventStore } = beginAdventureFixture({
+    traits: { Might: 2, Wits: 1, Presence: 0 },
+    randomSource: createSeededRandomSource(690),
+  });
+  const proposed = app.submit({
+    type: "choose-action",
+    actionId: "force-side-door",
+  });
+  assert.ok(proposed.state.pendingCheckProposal);
+  const rolled = app.submit({
+    type: "confirm-check-proposal",
+    proposalId: proposed.state.pendingCheckProposal.id,
+  });
+  assert.ok(rolled.state.pendingChoice);
+  const resolved = app.submit({
+    type: "resolve-pending-check",
+    pendingChoiceId: rolled.state.pendingChoice.id,
+    choice: "decline",
+  });
+  assert.equal(resolved.status, "accepted");
+  assert.ok(resolved.state.lastCheckResolution);
+
+  const events = eventStore.readAll();
+  const hiddenEvent = events.find(
+    (event) => event.type === "WorldKnowledgeEstablished",
+  );
+  assert.ok(hiddenEvent);
+  const playerEvents = events.filter((event) => event !== hiddenEvent);
+  for (const maxItems of [1, 2, 64]) {
+    const rulesInput = {
+      utterance: "Explain world-knowledge:cellar-guardian-identity",
+      view: app.view(),
+      maxItems,
+    };
+    assert.deepEqual(
+      assembleRulesExplanationEvidence({
+        ...rulesInput,
+        acceptedEvents: events,
+      }),
+      assembleRulesExplanationEvidence({
+        ...rulesInput,
+        acceptedEvents: playerEvents,
+      }),
+    );
+
+    const narrationInput: Omit<NarrationEvidenceInput, "committedEvents"> = {
+      acceptedEvents: events,
+      resolutionTrace: resolved.state.lastCheckResolution.trace,
+      playerCharacter: resolved.state.playerCharacter,
+      activeScene: resolved.state.activeScene,
+      maxItems,
+    };
+    assert.deepEqual(
+      assembleNarrationEvidence({
+        ...narrationInput,
+        committedEvents: [hiddenEvent, ...resolved.appendedEvents],
+      }),
+      assembleNarrationEvidence({
+        ...narrationInput,
+        committedEvents: resolved.appendedEvents,
+      }),
+    );
+  }
 });

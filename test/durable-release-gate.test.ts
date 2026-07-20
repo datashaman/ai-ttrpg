@@ -512,9 +512,9 @@ test("a 10,000-event durable fixture replays repeatedly without projection diver
   begin(app);
 
   const events: CanonicalEvent[] = Array.from(
-    { length: 9_998 },
+    { length: 9_997 },
     (_, index): CanonicalEvent => {
-      const sequence = index + 3;
+      const sequence = index + 4;
       return {
         id: `large-fixture-event-${sequence}`,
         streamId: "adventure",
@@ -536,7 +536,7 @@ test("a 10,000-event durable fixture replays repeatedly without projection diver
     },
   );
   const appended = adventure.eventStore.appendBatch({
-    expectedPosition: 2,
+    expectedPosition: 3,
     idempotencyKey: "large-fixture",
     events,
   });

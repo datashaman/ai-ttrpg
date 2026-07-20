@@ -10,6 +10,22 @@ import type {
   OracleActionDefinition,
   SceneTransitionDefinition,
 } from "./structured-play.js";
+import type { WorldKnowledgeEstablishedPayload } from "./world-knowledge.js";
+
+export const DEFAULT_AUTHORED_WORLD_KNOWLEDGE: readonly WorldKnowledgeEstablishedPayload[] = [
+  {
+    fact: {
+      id: "cellar-guardian-identity",
+      text: "The manor's housekeeper is the cellar guardian in disguise.",
+    },
+    provenance: {
+      originKind: "authored-content",
+      sourceReference: "locked-manor:cellar-guardian",
+    },
+    visibility: "Game Master-only",
+    knowledgeScope: ["Game Master"],
+  },
+];
 
 export const FRESH_FOOTPRINTS: EstablishedFact = {
   id: "fresh-footprints",

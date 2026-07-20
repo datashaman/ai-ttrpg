@@ -50,10 +50,12 @@ test("every canonical v1 fixture rebuilds byte-equivalent World Knowledge", asyn
           events: structuredClone(fixture.eventStore.readAll()),
         });
         assert.equal(JSON.stringify(rebuilt), JSON.stringify(expected));
-        assert.deepEqual(
-          rebuilt.entries.map(({ id, text }) => ({ id, text })),
-          fixture.state.establishedFacts,
-        );
+        if (actorScope === "Player") {
+          assert.deepEqual(
+            rebuilt.entries.map(({ id, text }) => ({ id, text })),
+            fixture.state.establishedFacts,
+          );
+        }
       }
     });
   }

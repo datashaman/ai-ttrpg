@@ -10,7 +10,10 @@ import type {
   PlayerCharacter,
   Scene,
 } from "./structured-play.js";
-import { projectWorldKnowledge } from "./world-knowledge.js";
+import {
+  filterCanonicalEventsVisibleTo,
+  projectWorldKnowledge,
+} from "./world-knowledge.js";
 
 export type EvidenceSourceKind =
   | "active-scene"
@@ -100,6 +103,13 @@ const isDirectlyRelevant = (
   });
 };
 
+const directWorldKnowledgeReferences = (utterance: string): ReadonlySet<string> =>
+  new Set(
+    [...utterance.matchAll(/(?:^|\s)world-knowledge:([a-z0-9._-]+)/gi)].map(
+      (match) => match[1]!,
+    ),
+  );
+
 const bundleId = (items: readonly EvidenceItem[]): string =>
   `evidence:${createHash("sha256").update(JSON.stringify(items)).digest("hex")}`;
 
@@ -112,6 +122,9 @@ export const assembleInterpretationEvidence = (
   };
   const playerCharacter = input.view.state.playerCharacter;
   const activeScene = input.view.state.activeScene;
+  const directKnowledgeReferences = directWorldKnowledgeReferences(
+    input.utterance,
+  );
 
   if (activeScene !== null) {
     add(
@@ -183,7 +196,13 @@ export const assembleInterpretationEvidence = (
         inclusionReason:
           "This Player-visible World Knowledge Entry describes the current situation.",
       },
-      isDirectlyRelevant(input.utterance, entry.id, entry.text) ? 0 : 4,
+      directKnowledgeReferences.size > 0
+        ? directKnowledgeReferences.has(entry.id)
+          ? 0
+          : 4
+        : isDirectlyRelevant(input.utterance, entry.id, entry.text)
+          ? 0
+          : 4,
     ),
   );
   input.view.availableActions.forEach((capability) =>
@@ -229,7 +248,10 @@ export const assembleInterpretationEvidence = (
     );
   }
 
-  [...input.acceptedEvents]
+  [...filterCanonicalEventsVisibleTo({
+    actorScope: "Player",
+    events: input.acceptedEvents,
+  })]
     .reverse()
     .slice(0, 8)
     .forEach((event, newestFirstIndex) =>
@@ -383,7 +405,11 @@ export const assembleNarrationEvidence = (
     candidates.push({ item, priority, order: candidates.length });
   };
 
-  input.committedEvents.forEach((event, index) =>
+  const committedEvents = filterCanonicalEventsVisibleTo({
+    actorScope: "Player",
+    events: input.committedEvents,
+  });
+  committedEvents.forEach((event, index) =>
     add(
       {
         id: `event:committed:${index}`,
@@ -411,7 +437,7 @@ export const assembleNarrationEvidence = (
 
   const involvedEntity = directlyInvolvedEntity(
     input.resolutionTrace,
-    input.committedEvents,
+    committedEvents,
   );
   if (involvedEntity !== null) add(involvedEntity, 1);
   if (
@@ -448,7 +474,7 @@ export const assembleNarrationEvidence = (
   }
 
   const committedContent = [
-    ...input.committedEvents.map(acceptedEventContent),
+    ...committedEvents.map(acceptedEventContent),
     resolutionContent(input.resolutionTrace),
   ].join(" ");
   projectWorldKnowledge({
