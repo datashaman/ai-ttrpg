@@ -29,6 +29,68 @@ export const modelProviderContractCases: readonly {
   },
   {
     task: {
+      type: "classify-discourse",
+      input: { utterance: "I inspect the entryway." },
+      evidenceBundle: evidenceBundle("classify-discourse"),
+    },
+    expectedOutput: { classification: "player-action" },
+  },
+  {
+    task: {
+      type: "extract-intent",
+      input: { utterance: "I inspect the entryway." },
+      evidenceBundle: evidenceBundle("extract-intent"),
+    },
+    expectedOutput: {
+      capabilityId: "inspect-door",
+      referencedEntityIds: ["scene:arrival"],
+      evidenceItemIds: ["capability:inspect-door", "entity:scene:arrival"],
+    },
+  },
+  {
+    task: {
+      type: "suggest-rule-match",
+      input: { utterance: "Is this a Check?" },
+      evidenceBundle: evidenceBundle("suggest-rule-match"),
+    },
+    expectedOutput: {
+      status: "needs-adjudication",
+      candidateRuleIds: ["rule:checks", "rule:free-actions"],
+    },
+  },
+  {
+    task: {
+      type: "propose-state-change",
+      input: {
+        utterance: "I inspect the entryway.",
+        intent: {
+          capabilityId: "inspect-door",
+          referencedEntityIds: ["scene:arrival"],
+          evidenceItemIds: ["capability:inspect-door", "entity:scene:arrival"],
+        },
+        rulesetVersion: "1.0.0",
+      },
+      evidenceBundle: evidenceBundle("propose-state-change"),
+    },
+    expectedOutput: {
+      status: "proposed",
+      capabilityId: "inspect-door",
+      referencedEntityIds: ["scene:arrival"],
+      evidenceItemIds: [
+        "capability:inspect-door",
+        "entity:scene:arrival",
+        "rule:checks",
+        "intent:contract",
+      ],
+      intentEvidenceItemId: "intent:contract",
+      ruleEvidenceItemIds: ["rule:checks"],
+      stateEvidenceItemIds: ["entity:scene:arrival"],
+      rulesetVersion: "1.0.0",
+      command: { type: "choose-action", actionId: "inspect-door" },
+    },
+  },
+  {
+    task: {
       type: "explain-rules",
       input: { utterance: "How do Checks work?" },
       evidenceBundle: evidenceBundle("explain-rules"),

@@ -72,6 +72,7 @@ export interface ActorScopedEvidenceItem extends EvidenceItem {
 
 export interface ActorScopedEvidenceBundle
   extends Omit<EvidenceBundle, "items"> {
+  readonly scope: RetrievalScope;
   readonly items: readonly ActorScopedEvidenceItem[];
 }
 
@@ -533,6 +534,7 @@ export const assembleActorScopedEvidence = (
   return immutableSnapshot({
     id: evidenceBundleId(items),
     taskType: input.scope.taskType,
+    scope: input.scope,
     items,
   });
 };

@@ -36,8 +36,54 @@ export interface NarrationModelTask {
   readonly evidenceBundle: EvidenceBundle;
 }
 
+export interface DiscourseClassificationModelTask {
+  readonly type: "classify-discourse";
+  readonly input: {
+    readonly utterance: string;
+    readonly repairOf?: unknown;
+  };
+  readonly evidenceBundle: EvidenceBundle;
+}
+
+export interface IntentExtractionModelTask {
+  readonly type: "extract-intent";
+  readonly input: {
+    readonly utterance: string;
+    readonly repairOf?: unknown;
+  };
+  readonly evidenceBundle: EvidenceBundle;
+}
+
+export interface RuleMatchModelTask {
+  readonly type: "suggest-rule-match";
+  readonly input: {
+    readonly utterance: string;
+    readonly repairOf?: unknown;
+  };
+  readonly evidenceBundle: EvidenceBundle;
+}
+
+export interface StateProposalModelTask {
+  readonly type: "propose-state-change";
+  readonly input: {
+    readonly utterance: string;
+    readonly intent: {
+      readonly capabilityId: string;
+      readonly referencedEntityIds: readonly string[];
+      readonly evidenceItemIds: readonly string[];
+    };
+    readonly rulesetVersion: string;
+    readonly repairOf?: unknown;
+  };
+  readonly evidenceBundle: EvidenceBundle;
+}
+
 export type ModelTask =
   | InterpretationModelTask
+  | DiscourseClassificationModelTask
+  | IntentExtractionModelTask
+  | RuleMatchModelTask
+  | StateProposalModelTask
   | RulesExplanationModelTask
   | NarrationModelTask;
 
@@ -130,6 +176,16 @@ const repairTaskFrom = <Task extends ModelTask>(
     input: { ...task.input, repairOf },
   });
 
+const DEFAULT_PROMPT_VERSIONS: Readonly<Record<ModelTask["type"], string>> = {
+  "interpret-player-input": "interpret-player-input-v1",
+  "classify-discourse": "classify-discourse-v1",
+  "extract-intent": "extract-intent-v1",
+  "suggest-rule-match": "suggest-rule-match-v1",
+  "propose-state-change": "propose-state-change-v1",
+  "explain-rules": "explain-rules-v1",
+  "narrate-committed-outcome": "narrate-committed-outcome-v1",
+};
+
 export const createModelGateway = ({
   provider,
   promptVersion,
@@ -141,13 +197,7 @@ export const createModelGateway = ({
 }): ModelGateway => ({
   execute: async (task, options) => {
     const started = Date.now();
-    const taskPromptVersion =
-      promptVersion ??
-      (task.type === "interpret-player-input"
-        ? "interpret-player-input-v1"
-        : task.type === "explain-rules"
-          ? "explain-rules-v1"
-          : "narrate-committed-outcome-v1");
+    const taskPromptVersion = promptVersion ?? DEFAULT_PROMPT_VERSIONS[task.type];
     const taskSnapshot = immutableSnapshot(task);
     const capture = (value: unknown): void => {
       try {

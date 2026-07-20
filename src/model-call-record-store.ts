@@ -8,6 +8,10 @@ import type {
 
 const taskTypes = new Set([
   "interpret-player-input",
+  "classify-discourse",
+  "extract-intent",
+  "suggest-rule-match",
+  "propose-state-change",
   "explain-rules",
   "narrate-committed-outcome",
 ]);

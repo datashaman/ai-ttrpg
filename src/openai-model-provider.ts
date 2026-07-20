@@ -102,6 +102,62 @@ const attributedSegmentsSchema: JsonSchema = exactObject({
   },
 });
 
+const discourseClassificationSchema: JsonSchema = exactObject({
+  classification: {
+    type: "string",
+    enum: [
+      "player-action",
+      "in-character-speech",
+      "rules-query",
+      "out-of-character-request",
+      "table-chat",
+      "system-command",
+    ],
+  },
+});
+
+const intentExtractionSchema: JsonSchema = exactObject({
+  capabilityId: { type: "string", minLength: 1 },
+  referencedEntityIds: { ...stringArraySchema, minItems: 1 },
+  evidenceItemIds: { ...stringArraySchema, minItems: 1 },
+});
+
+const ruleMatchResultSchema: JsonSchema = {
+  anyOf: [
+    exactObject({
+      status: { type: "string", enum: ["matched"] },
+      ruleId: { type: "string", minLength: 1 },
+      evidenceItemIds: { ...stringArraySchema, minItems: 1 },
+    }),
+    exactObject({
+      status: { type: "string", enum: ["no-rule"] },
+    }),
+    exactObject({
+      status: { type: "string", enum: ["needs-adjudication"] },
+      candidateRuleIds: { ...stringArraySchema, minItems: 2 },
+    }),
+  ],
+};
+
+const ruleMatchSchema: JsonSchema = exactObject({
+  result: ruleMatchResultSchema,
+});
+
+const stateProposalSchema: JsonSchema = exactObject({
+  status: { type: "string", enum: ["proposed"] },
+  capabilityId: { type: "string", minLength: 1 },
+  referencedEntityIds: { ...stringArraySchema, minItems: 1 },
+  evidenceItemIds: { ...stringArraySchema, minItems: 1 },
+  intentEvidenceItemId: { type: "string", minLength: 1 },
+  ruleEvidenceItemIds: { ...stringArraySchema, minItems: 1 },
+  stateEvidenceItemIds: { ...stringArraySchema, minItems: 1 },
+  rulesetVersion: { type: "string", minLength: 1 },
+  command: exactObject({
+    type: { type: "string", enum: ["choose-action"] },
+    actionId: { type: "string", minLength: 1 },
+  }),
+});
+
 interface ModelTaskDefinition {
   readonly name: string;
   readonly schema: JsonSchema;
@@ -111,6 +167,13 @@ interface ModelTaskDefinition {
 
 const unchangedOutput = (output: unknown): unknown => output;
 
+const normalizedResultOutput = (output: unknown): unknown =>
+  isRecord(output) &&
+  Object.keys(output).length === 1 &&
+  "result" in output
+    ? output.result
+    : output;
+
 const modelTaskDefinitions: Readonly<
   Record<ModelTask["type"], ModelTaskDefinition>
 > = {
@@ -119,12 +182,35 @@ const modelTaskDefinitions: Readonly<
     schema: interpretationSchema,
     instructions:
       "Classify the Player's utterance using only the supplied Model Task and Evidence Bundle. Select only an available capability, cite supplied evidence item IDs, and never invent game truth or Mechanical Effects. Return the interpretation in the result field using JSON matching the supplied schema.",
-    normalizeOutput: (output) =>
-      isRecord(output) &&
-      Object.keys(output).length === 1 &&
-      "result" in output
-        ? output.result
-        : output,
+    normalizeOutput: normalizedResultOutput,
+  },
+  "classify-discourse": {
+    name: "classify_discourse",
+    schema: discourseClassificationSchema,
+    instructions:
+      "Classify the Player's utterance into exactly one supplied discourse class. Do not infer a command, rule, or state change. Return JSON matching the supplied schema.",
+    normalizeOutput: unchangedOutput,
+  },
+  "extract-intent": {
+    name: "extract_intent",
+    schema: intentExtractionSchema,
+    instructions:
+      "Extract one intent using only capability, entity, and evidence IDs present in the supplied actor-scoped Evidence Bundle. Return JSON matching the supplied schema.",
+    normalizeOutput: unchangedOutput,
+  },
+  "suggest-rule-match": {
+    name: "suggest_rule_match",
+    schema: ruleMatchSchema,
+    instructions:
+      "Suggest only approved rules present in the supplied actor-scoped Evidence Bundle. Return matched, no-rule, or needs-adjudication in the result field; never choose between ambiguous rules. Return JSON matching the supplied schema.",
+    normalizeOutput: normalizedResultOutput,
+  },
+  "propose-state-change": {
+    name: "propose_state_change",
+    schema: stateProposalSchema,
+    instructions:
+      "Propose one candidate command using only the supplied validated intent, exact ruleset version, entities, capabilities, and evidence. Do not apply a Mechanical Effect or append an event. Return JSON matching the supplied schema.",
+    normalizeOutput: unchangedOutput,
   },
   "explain-rules": {
     name: "explain_rules",

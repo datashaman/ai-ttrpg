@@ -32,6 +32,7 @@ export type EvidenceSourceKind =
   | "resolution"
   | "direct-entity"
   | "retrieved-entity"
+  | "validated-intent"
   | "accepted-event";
 
 export interface EvidenceItem {
@@ -46,6 +47,10 @@ export interface EvidenceBundle {
   readonly id: string;
   readonly taskType:
     | "interpret-player-input"
+    | "classify-discourse"
+    | "extract-intent"
+    | "suggest-rule-match"
+    | "propose-state-change"
     | "explain-rules"
     | "narrate-committed-outcome";
   readonly items: readonly EvidenceItem[];
