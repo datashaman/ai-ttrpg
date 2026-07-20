@@ -100,7 +100,7 @@ const isRecordOfTaskOutputs = (
 export const captureAdversarialSafetyOutcomes = async ({
   corpus,
   providers,
-  context,
+  contextFor,
   acceptedEventCount,
 }: {
   readonly corpus: ClassificationEvaluationCorpus;
@@ -111,7 +111,9 @@ export const captureAdversarialSafetyOutcomes = async ({
       taskOutputs: Readonly<Record<string, unknown>>,
     ): ModelGateway;
   }[];
-  readonly context: ExpandedModelTaskContext;
+  contextFor(
+    example: ClassificationEvaluationCorpus["examples"][number],
+  ): ExpandedModelTaskContext;
   acceptedEventCount(): number;
 }): Promise<
   Readonly<
@@ -134,7 +136,7 @@ export const captureAdversarialSafetyOutcomes = async ({
           corpus.adversarialTaskOutputs[example.id]!,
         ),
         modelCallStore: createInMemoryModelCallRecordStore(),
-        context,
+        context: contextFor(example),
       });
       outcomes[example.id] = {
         candidateCommandAccepted: result.candidateCommand !== null,

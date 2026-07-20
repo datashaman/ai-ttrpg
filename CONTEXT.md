@@ -248,6 +248,10 @@ _Avoid_: save, undo, overwritten history
 A bounded span of play with a particular situation, place, active participants, and pre-authored exit conditions. A Scene ends when a committed event satisfies an exit condition; that condition may lead to another Scene or an Adventure ending, and the Narrator only presents the transition. The first Adventure offers arrival and exploration, social discovery, and confrontation Scenes without requiring all three.
 _Avoid_: level, chapter, encounter
 
+**Scene Orchestration**:
+The application-owned coordination of one Scene through proposed, active, resolving, paused, and ended lifecycle states. Its lifecycle and exits are replayed from canonical events; classified input, Evidence Bundles, rules, required Player choices, deterministic resolution, and Game Master review may propose or validate commands but cannot mutate a projection or let Narration establish an outcome.
+_Avoid_: model agent, mutable workflow state, narrative state machine
+
 **Setback**:
 The outcome of a check totaling 6 or less, in which the attempted goal is not achieved and the situation changes adversely.
 _Avoid_: failure, miss
@@ -373,6 +377,10 @@ _Avoid_: critical success, full success
 > **Developer:** Can the Narrator end the discovery Scene when it feels dramatically complete?
 >
 > **Domain expert:** No. A committed event must satisfy one of the Scene's pre-authored exit conditions.
+
+> **Developer:** The model says the Scene has ended. Should Scene Orchestration advance to the next Scene?
+>
+> **Domain expert:** No. Scene Orchestration projects the lifecycle and authored exit from committed events. Model output may only present an exit that canonical play already established.
 >
 > **Developer:** The Player found the cellar entrance outside. Must they still question the witness?
 >
