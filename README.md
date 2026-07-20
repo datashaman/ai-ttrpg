@@ -66,6 +66,17 @@ Narration, model calls, diagnostics, replay, and portable archives retain the
 same boundary. Format-v1 knowledge that used the original generic `Player
 Character` scope remains assigned to the primary Player Character.
 
+Campaign-scale actor-scoped retrieval enters through one Retrieval Boundary with explicit
+Player actor, Player Character, campaign, Model Task, and ruleset-version
+scope. It deterministically links stable IDs, names, aliases, pronouns,
+locations, active participants, and recent referents; traverses only visible
+typed World Knowledge Relationships; selects only matching approved rule
+packages at the requested version; and includes only causally relevant or
+bounded-recent accepted events. Forbidden candidates are removed before
+deduplication, ranking, and item budgeting. Every selected item retains its
+stable ID, source, `Player-visible` Visibility, inclusion reason, and exact
+source citation when applicable.
+
 Integrations may render an actor-scoped World Knowledge projection as Adventure
 Markdown: structured JSON frontmatter for machine review followed by derived,
 descriptive prose for people. Rereading an unchanged document is a no-op. An
