@@ -17,8 +17,8 @@ and exact rule passage or canonical source citation when applicable.
 
 This keeps ADR-0005's security ordering inside one deep module and makes
 retrieval reproducible without adding a second source of game truth. Semantic
-fallback is deliberately absent here; issue #80 must justify and specify it
-from measured retrieval gaps before it can enter this boundary. The existing
+fallback is deliberately absent here; the issue #80 evaluation measured lexical
+threshold gaps and ADR-0012 defines the constraints for adding one. The existing
 task-specific locked-manor assemblers remain compatibility paths until the
 expanded Model Task migration in issue #81; they share deterministic selection
 primitives but must not become a second campaign-scale retrieval boundary.

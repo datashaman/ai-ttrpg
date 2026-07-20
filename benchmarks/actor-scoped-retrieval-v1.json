@@ -1,0 +1,204 @@
+{
+  "id": "actor-scoped-retrieval-v1",
+  "schemaVersion": 1,
+  "k": 5,
+  "corpusScale": {
+    "entities": 46,
+    "visibleRelationships": 13,
+    "forbiddenRelationships": 1,
+    "approvedRulePackages": 10,
+    "acceptedEventDistractors": 30
+  },
+  "semanticFallbackDecision": "accept",
+  "expectedDeterministicBaselineFailures": [
+    "relationship precision@5 0.2857 < 0.9000",
+    "relationship recall@5 0.5000 < 0.9000",
+    "relationship mean reciprocal rank 0.5357 < 0.9000",
+    "rule recall@5 0.6667 < 0.9000",
+    "rule mean reciprocal rank 0.6667 < 0.9000",
+    "event precision@5 0.8000 < 0.9000",
+    "unambiguous entity-link accuracy 0.8750 < 0.9500"
+  ],
+  "thresholds": {
+    "minimumPrecisionAtK": 0.9,
+    "minimumRecallAtK": 0.9,
+    "minimumMeanReciprocalRank": 0.9,
+    "minimumUnambiguousEntityLinkAccuracy": 0.95,
+    "maximumForbiddenDataLeakage": 0
+  },
+  "cases": [
+    {
+      "id": "entity-explicit-id",
+      "coverage": "unambiguous-reference",
+      "retrievalKind": "entity",
+      "referenceKind": "unambiguous",
+      "expectedUnambiguousEntityId": "entity:character:mara-vey",
+      "utterance": "Ask character:mara-vey about the weather.",
+      "expectedItemIds": ["entity:character:mara-vey"],
+      "forbiddenItemIds": ["entity:character:hidden-cultist"]
+    },
+    {
+      "id": "entity-name",
+      "coverage": "unambiguous-reference",
+      "retrievalKind": "entity",
+      "referenceKind": "unambiguous",
+      "expectedUnambiguousEntityId": "entity:character:groundskeeper",
+      "utterance": "Ask Elias Thorn about the rain.",
+      "expectedItemIds": ["entity:character:groundskeeper"],
+      "forbiddenItemIds": ["entity:character:hidden-cultist"]
+    },
+    {
+      "id": "entity-alias",
+      "coverage": "unambiguous-reference",
+      "retrievalKind": "entity",
+      "referenceKind": "unambiguous",
+      "expectedUnambiguousEntityId": "entity:character:curator",
+      "utterance": "Speak with the curator.",
+      "expectedItemIds": ["entity:character:curator"],
+      "forbiddenItemIds": ["entity:character:hidden-cultist"]
+    },
+    {
+      "id": "entity-location-expansion",
+      "coverage": "unambiguous-reference",
+      "retrievalKind": "entity",
+      "referenceKind": "unambiguous",
+      "expectedUnambiguousEntityId": "entity:location:archive-hall",
+      "utterance": "Who is at the archive hall?",
+      "expectedItemIds": ["entity:character:curator", "entity:location:archive-hall"],
+      "forbiddenItemIds": ["entity:character:hidden-cultist"]
+    },
+    {
+      "id": "entity-pronoun",
+      "coverage": "unambiguous-reference",
+      "retrievalKind": "entity",
+      "referenceKind": "unambiguous",
+      "expectedUnambiguousEntityId": "entity:character:groundskeeper",
+      "utterance": "What did he see?",
+      "expectedItemIds": ["entity:character:groundskeeper"],
+      "forbiddenItemIds": ["entity:character:hidden-cultist"]
+    },
+    {
+      "id": "entity-location-name",
+      "coverage": "unambiguous-reference",
+      "retrievalKind": "entity",
+      "referenceKind": "unambiguous",
+      "expectedUnambiguousEntityId": "entity:location:manor-gate",
+      "utterance": "Return to Manor Gate.",
+      "expectedItemIds": ["entity:location:manor-gate", "entity:character:mara-vey", "entity:character:groundskeeper"],
+      "forbiddenItemIds": ["entity:character:hidden-cultist"]
+    },
+    {
+      "id": "entity-ambiguous-pronoun",
+      "coverage": "ambiguous-reference",
+      "retrievalKind": "entity",
+      "referenceKind": "ambiguous",
+      "utterance": "What did she say?",
+      "expectedItemIds": ["entity:character:mara-vey", "entity:character:curator"],
+      "forbiddenItemIds": ["entity:character:hidden-cultist"]
+    },
+    {
+      "id": "entity-forbidden-prefilter",
+      "coverage": "forbidden-knowledge",
+      "retrievalKind": "entity",
+      "utterance": "Ask Elias Thorn and the hidden cultist.",
+      "expectedItemIds": ["entity:character:groundskeeper"],
+      "forbiddenItemIds": ["entity:character:hidden-cultist"]
+    },
+    {
+      "id": "entity-confusable-numbered-resident",
+      "coverage": "confusable-ranking",
+      "retrievalKind": "entity",
+      "referenceKind": "unambiguous",
+      "expectedUnambiguousEntityId": "entity:character:resident-11",
+      "utterance": "Ask Resident 11 for the catalogue.",
+      "expectedItemIds": ["entity:character:resident-11"],
+      "forbiddenItemIds": ["entity:character:hidden-cultist"]
+    },
+    {
+      "id": "entity-nonlexical-role",
+      "coverage": "semantic-gap",
+      "retrievalKind": "entity",
+      "referenceKind": "unambiguous",
+      "expectedUnambiguousEntityId": "entity:character:groundskeeper",
+      "utterance": "Ask whoever maintains the estate whether the weather changed.",
+      "expectedItemIds": ["entity:character:groundskeeper"],
+      "forbiddenItemIds": ["entity:character:hidden-cultist"]
+    },
+    {
+      "id": "relationship-direct",
+      "coverage": "relationship",
+      "retrievalKind": "relationship",
+      "utterance": "What unlocks the iron archive hatch?",
+      "expectedItemIds": ["relationship:archive-key-unlocks-hatch"],
+      "forbiddenItemIds": ["relationship:cultist-controls-hatch"]
+    },
+    {
+      "id": "relationship-budget-pressure",
+      "coverage": "budget-pressure",
+      "retrievalKind": "relationship",
+      "utterance": "Explain the iron archive hatch relationship.",
+      "maxItems": 1,
+      "expectedItemIds": ["relationship:archive-key-unlocks-hatch"],
+      "forbiddenItemIds": ["relationship:cultist-controls-hatch"]
+    },
+    {
+      "id": "relationship-confusable-numbered-case",
+      "coverage": "confusable-ranking",
+      "retrievalKind": "relationship",
+      "utterance": "What opens display case 07?",
+      "expectedItemIds": ["relationship:gallery-token-opens-case-07"],
+      "forbiddenItemIds": ["relationship:cultist-controls-hatch"]
+    },
+    {
+      "id": "relationship-nonlexical-paraphrase",
+      "coverage": "semantic-gap",
+      "retrievalKind": "relationship",
+      "utterance": "Which object lets us get through the sealed records entrance?",
+      "expectedItemIds": ["relationship:archive-key-unlocks-hatch"],
+      "forbiddenItemIds": ["relationship:cultist-controls-hatch"]
+    },
+    {
+      "id": "rule-name",
+      "coverage": "rule",
+      "retrievalKind": "rule",
+      "taskType": "explain-rules",
+      "utterance": "Explain the Check rule.",
+      "expectedItemIds": ["rule:micro-ruleset.check@1.0.0"],
+      "forbiddenItemIds": ["rule:micro-ruleset.check@0.9.0"]
+    },
+    {
+      "id": "rule-procedure",
+      "coverage": "rule",
+      "retrievalKind": "rule",
+      "taskType": "explain-rules",
+      "utterance": "When do I roll 2d6?",
+      "expectedItemIds": ["rule:micro-ruleset.check@1.0.0"],
+      "forbiddenItemIds": ["rule:micro-ruleset.check@0.9.0"]
+    },
+    {
+      "id": "rule-nonlexical-paraphrase",
+      "coverage": "semantic-gap",
+      "retrievalKind": "rule",
+      "taskType": "explain-rules",
+      "utterance": "How do I determine whether my risky attempt works?",
+      "expectedItemIds": ["rule:micro-ruleset.check@1.0.0"],
+      "forbiddenItemIds": ["rule:micro-ruleset.check@0.9.0"]
+    },
+    {
+      "id": "event-causal-chain",
+      "coverage": "causal-event",
+      "retrievalKind": "event",
+      "utterance": "What resulted from archive-lantern?",
+      "expectedItemIds": ["event:event:archive-lantern-action", "event:event:archive-lantern-consequence"],
+      "forbiddenItemIds": ["event:event:hidden-cultist-plan"]
+    },
+    {
+      "id": "event-nonlexical-paraphrase",
+      "coverage": "semantic-gap",
+      "retrievalKind": "event",
+      "utterance": "What happened after I illuminated the records room?",
+      "expectedItemIds": ["event:event:archive-lantern-action", "event:event:archive-lantern-consequence"],
+      "forbiddenItemIds": ["event:event:hidden-cultist-plan"]
+    }
+  ]
+}

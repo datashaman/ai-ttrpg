@@ -229,9 +229,9 @@ test("location and Scene context expand to visible participants without naming t
       .filter((item) => item.sourceKind === "retrieved-entity")
       .map((item) => item.id),
     [
+      "entity:location:manor-gate",
       "entity:character:mara-vey",
       "entity:character:groundskeeper",
-      "entity:location:manor-gate",
     ],
   );
 
