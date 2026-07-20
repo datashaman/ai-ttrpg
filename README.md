@@ -84,6 +84,17 @@ passages or carry an Authored Interpretation with reviewer identity. Ingestion
 cannot approve, register, publish, or execute the candidate; those remain
 explicit later application boundaries.
 
+A Rule Review correlates that exact candidate version with its source,
+extracted fields, normalized rule, validation findings, and generated
+conformance examples. A reviewer records an explicit approved, rejected, or
+superseded decision. Only a valid, version-matched approval can produce the
+versioned Executable Ruleset Package, whose manifest, licensing metadata,
+field citations, and checksum are immutable. When supplied to Structured Play,
+the package governs the existing deterministic Check runtime; the committed
+trace and Player-facing rules answer identify both the package rule and exact
+source passages. A candidate or tampered package is rejected before play and
+cannot append an event.
+
 The locked manor is a non-linear graph rather than a mandatory sequence. Visible Oracle answers and Established Facts can route the Player from arrival into social discovery or directly to the Confrontation. Social discovery can reveal the cellar route or resolve the mystery without a Confrontation. The Player may also withdraw with the mystery unresolved, while Confrontation victory and Defeat lead to favourable and adverse endings. Scene transitions and Adventure endings occur only when committed events satisfy pre-authored exit conditions; the Narrator cannot end either one. The Structured Play path completes every route with no language-model calls.
 
 Structured Play also exposes Timeline controls after the first accepted event. The Player can branch from any accepted event position to explore another choice without deleting or rewriting the source Timeline, and can select any existing Timeline to inspect or resume it. Each Timeline appends and projects independently. A child inherits the parent's random-stream position at its branch point, so repeating identical confirmed play reproduces the same Check and Oracle rolls rather than granting a reroll. Both repository adapters share this contract, and the local durable repository preserves every Timeline history, relationship, active selection, and random position across process restarts.

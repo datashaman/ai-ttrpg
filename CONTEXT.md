@@ -188,6 +188,18 @@ _Avoid_: executable ruleset, prompt text, unanchored document
 An immutable, non-executable normalized rule proposed from a Rule Source. Every field carries exact source-passage citations or an Authored Interpretation with reviewer identity; only a later explicit review may approve it for publication.
 _Avoid_: approved rule, runtime rule, extracted code
 
+**Rule Review**:
+An immutable comparison of one exact Rule Candidate version with its Rule Source, extracted fields, normalized content, validation findings, and generated conformance examples. A Rule Review informs a decision but does not itself make a rule executable.
+_Avoid_: approval, editable draft, runtime registration
+
+**Rule Approval**:
+A reviewer-attributed decision about one exact Rule Candidate version, recording the decision time and every Authored Interpretation. Only an approved, valid, version-matched candidate may be published.
+_Avoid_: ingestion success, review completion, implicit consent
+
+**Executable Ruleset Package**:
+A versioned, checksummed rules manifest containing approved deterministic rule data, licensing metadata, and field-level source citations or reviewer-attributed Authored Interpretations. Gameplay traces identify the exact package rule and source passages that governed resolution.
+_Avoid_: Rule Candidate, source document, model output
+
 **Authored Interpretation**:
 A reviewer-attributed Rule Candidate field whose normalized meaning is not stated exactly by a source passage. It records deliberate human authorship and cannot substitute for approval.
 _Avoid_: model inference, uncited field, automatic normalization

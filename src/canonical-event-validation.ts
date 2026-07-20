@@ -1,4 +1,5 @@
 import type { CanonicalEvent } from "./structured-play.js";
+import { checkOutcomeFor } from "./check-rule.js";
 import {
   isWorldKnowledgeEstablishedPayload,
   isWorldKnowledgeRevealedPayload,
@@ -137,10 +138,36 @@ const isCheckRandom = (value: unknown): boolean =>
   value.inputs.length === 2 &&
   value.inputs.every((input) => isInteger(input, 1, 6));
 
-const isCheckRule = (value: unknown): boolean =>
+const isPublishedSourcePassage = (value: unknown): boolean =>
   isObject(value) &&
-  value.id === "micro-ruleset.check" &&
-  value.version === "1.0.0";
+  isString(value.documentId) &&
+  isString(value.documentVersion) &&
+  isString(value.sectionAnchor) &&
+  isString(value.passageAnchor) &&
+  isString(value.text) &&
+  isObject(value.layout) &&
+  isInteger(value.layout.page, 1, Number.MAX_SAFE_INTEGER) &&
+  isInteger(value.layout.order, 1, Number.MAX_SAFE_INTEGER);
+
+const isCheckRule = (value: unknown): boolean => {
+  if (
+    !isObject(value) ||
+    value.id !== "micro-ruleset.check" ||
+    !isString(value.version)
+  ) {
+    return false;
+  }
+  if (value.packageChecksum === undefined && value.sourcePassages === undefined) {
+    return value.version === "1.0.0";
+  }
+  return (
+    typeof value.packageChecksum === "string" &&
+    /^[0-9a-f]{64}$/.test(value.packageChecksum) &&
+    Array.isArray(value.sourcePassages) &&
+    value.sourcePassages.length > 0 &&
+    value.sourcePassages.every(isPublishedSourcePassage)
+  );
+};
 
 const isTraitModifier = (value: unknown): boolean =>
   isObject(value) &&
@@ -202,12 +229,7 @@ const isCheckTrace = (value: unknown): boolean => {
   }
   const inputs = (value.random as ValueObject).inputs as number[];
   const traitModifier = value.modifiers[0] as ValueObject;
-  const expectedOutcome =
-    (value.result.total as number) <= 6
-      ? "Setback"
-      : (value.result.total as number) <= 9
-        ? "Success with Cost"
-        : "Clean Success";
+  const expectedOutcome = checkOutcomeFor(value.result.total as number);
   return (
     value.result.diceTotal === inputs[0]! + inputs[1]! &&
     value.result.originalTotal ===
