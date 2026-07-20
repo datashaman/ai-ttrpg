@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { canonicalHistoryRevision } from "./canonical-history-revision.js";
 import { createInMemoryEventStore } from "./in-memory-event-store.js";
 import {
   DEFAULT_ADVENTURE_ENDINGS,
@@ -493,6 +494,16 @@ export interface SelectTimeline {
   readonly timelineId: string;
 }
 
+export interface ReviewWorldKnowledgeReveal {
+  readonly type: "review-world-knowledge-reveal";
+  readonly reviewerScope: { readonly kind: "Game Master" };
+  readonly worldKnowledgeId: string;
+  readonly knowledgeScope: readonly KnowledgeScope[];
+  readonly sourceRevision: string;
+  readonly expectedEventCount: number;
+  readonly expectedHistoryRevision: string;
+}
+
 export interface SceneTransitionDefinition {
   readonly from: Scene;
   readonly to: Scene;
@@ -515,7 +526,8 @@ export type StructuredPlayInput =
   | UseFieldKit
   | TransitionScene
   | BranchTimeline
-  | SelectTimeline;
+  | SelectTimeline
+  | ReviewWorldKnowledgeReveal;
 
 export interface FreeAction {
   readonly id: string;
@@ -1967,6 +1979,48 @@ export const createStructuredPlayApplication = (
       commandStartPosition = events.length;
       const state = project(events);
       const commandId = randomUUID();
+
+      if (input.type === "review-world-knowledge-reveal") {
+        if (
+          input.expectedEventCount !== events.length ||
+          input.expectedHistoryRevision !== canonicalHistoryRevision(events)
+        ) {
+          return reject(
+            "write-conflict",
+            "The reviewed Adventure Markdown is stale.",
+            state,
+          );
+        }
+        const target = projectWorldKnowledge({
+          actorScope: GAME_MASTER_ACTOR_SCOPE,
+          events,
+        }).entries.find((entry) => entry.id === input.worldKnowledgeId);
+        if (
+          input.reviewerScope.kind !== "Game Master" ||
+          !/^[0-9a-f]{64}$/.test(input.sourceRevision) ||
+          !isPlayerCharacterRevealScope(input.knowledgeScope) ||
+          target === undefined ||
+          target.kind !== "Established Fact" ||
+          target.visibility !== "Game Master-only"
+        ) {
+          return reject(
+            "invalid-world-knowledge",
+            "The reviewed World Knowledge edit is not valid.",
+            state,
+          );
+        }
+        const event = append(
+          "WorldKnowledgeRevealed",
+          {
+            worldKnowledgeId: input.worldKnowledgeId,
+            knowledgeScope: input.knowledgeScope,
+          },
+          commandId,
+        );
+        return commitPendingEvents("The reviewed Reveal was committed.", [
+          event,
+        ]);
+      }
 
       if (input.type === "branch-timeline") {
         if (timelineStore === null) {

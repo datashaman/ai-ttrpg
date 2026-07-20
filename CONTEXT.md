@@ -140,6 +140,14 @@ _Avoid_: lore, canon, hidden fact
 A stable, attributable projection item representing either an Established Fact or a World Knowledge Relationship, carrying its Provenance, Visibility, and Knowledge Scope without becoming a separate source of game truth.
 _Avoid_: lore record, model memory, knowledge-base fact
 
+**Adventure Markdown**:
+An actor-scoped, revision-marked rendering of bounded Adventure state with structured frontmatter and derived descriptive prose. External edits are review input only: an unchanged reread is a no-op, a supported edit may produce a validated command, and the document never becomes canonical history or directly changes a projection.
+_Avoid_: campaign file, canonical document, editable event log
+
+**Review Conflict**:
+A deterministic refusal to translate an external Adventure Markdown edit into a command because it is stale, simultaneous with canonical change, contradictory, malformed, or unauthorized. A Review Conflict appends no canonical event and changes no projection.
+_Avoid_: merge conflict, partial import, automatic repair
+
 **World Knowledge Relationship**:
 A stable, typed connection between two Established Fact entry IDs, carrying its own Provenance, Visibility, and Knowledge Scope while remaining a projection of canonical game truth. A relationship is attributable knowledge about how established subjects connect; it is not a separate Established Fact or source of truth. Its canonical Reveal also reveals its endpoint entries so the relationship never exceeds their Visibility.
 _Avoid_: inferred link, model association, knowledge-graph truth
