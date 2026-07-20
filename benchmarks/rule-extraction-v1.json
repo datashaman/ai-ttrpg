@@ -1,0 +1,128 @@
+{
+  "id": "rule-extraction-v1",
+  "schemaVersion": 1,
+  "source": {
+    "format": "ai-ttrpg-rule-source-v1",
+    "document": {
+      "id": "micro-ruleset",
+      "title": "AI TTRPG Micro-ruleset",
+      "version": "1.0.0"
+    },
+    "sections": [
+      {
+        "anchor": "checks",
+        "heading": "Checks",
+        "layout": { "page": 3, "order": 1 },
+        "passages": [
+          {
+            "anchor": "checks.definition",
+            "kind": "definition",
+            "text": "A Check resolves an uncertain Player Character action.",
+            "layout": { "page": 3, "order": 1 }
+          },
+          {
+            "anchor": "checks.trigger",
+            "kind": "definition",
+            "text": "Use a Check when the action is uncertain and has meaningful consequences.",
+            "layout": { "page": 3, "order": 2 }
+          },
+          {
+            "anchor": "checks.prerequisites",
+            "kind": "definition",
+            "text": "Confirm the attempted goal and relevant Trait before resolving the Check.",
+            "layout": { "page": 3, "order": 3 }
+          },
+          {
+            "anchor": "checks.procedure",
+            "kind": "procedure",
+            "text": "Roll 2d6 and add the relevant Trait.",
+            "layout": { "page": 3, "order": 4 }
+          },
+          {
+            "anchor": "checks.outcomes",
+            "kind": "outcome",
+            "text": "6 or less is a Setback; 7-9 is Success with Cost; 10 or more is a Clean Success.",
+            "layout": { "page": 3, "order": 5 }
+          },
+          {
+            "anchor": "checks.exception",
+            "kind": "exception",
+            "text": "A Free Action proceeds without a Check.",
+            "layout": { "page": 3, "order": 6 }
+          },
+          {
+            "anchor": "checks.table",
+            "kind": "table",
+            "text": "Setback | 6-; Success with Cost | 7-9; Clean Success | 10+",
+            "layout": {
+              "page": 3,
+              "order": 7,
+              "table": { "columns": 2, "row": 1 }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "scriptedExtraction": {
+    "ruleId": "micro-ruleset.check",
+    "name": {
+      "value": "Check",
+      "attribution": {
+        "kind": "source-citation",
+        "passageAnchors": ["checks.definition"]
+      }
+    },
+    "trigger": {
+      "value": "An uncertain Player Character action has meaningful consequences.",
+      "attribution": {
+        "kind": "source-citation",
+        "passageAnchors": ["checks.trigger", "checks.exception"]
+      }
+    },
+    "prerequisites": {
+      "value": ["The attempted goal and relevant Trait are confirmed."],
+      "attribution": {
+        "kind": "source-citation",
+        "passageAnchors": ["checks.prerequisites"]
+      }
+    },
+    "inputs": {
+      "value": ["2d6", "relevant Trait"],
+      "attribution": {
+        "kind": "source-citation",
+        "passageAnchors": ["checks.procedure"]
+      }
+    },
+    "procedure": {
+      "value": "Roll 2d6 and add the relevant Trait.",
+      "attribution": {
+        "kind": "source-citation",
+        "passageAnchors": ["checks.procedure"]
+      }
+    },
+    "outcomes": {
+      "value": [
+        { "name": "Setback", "range": "6 or less" },
+        { "name": "Success with Cost", "range": "7-9" },
+        { "name": "Clean Success", "range": "10 or more" }
+      ],
+      "attribution": {
+        "kind": "source-citation",
+        "passageAnchors": ["checks.outcomes", "checks.table"]
+      }
+    }
+  },
+  "thresholds": {
+    "minimumPrecision": 1,
+    "minimumRecall": 1
+  },
+  "labels": {
+    "trigger": ["checks.trigger", "checks.exception"],
+    "prerequisites": ["checks.prerequisites"],
+    "procedure": ["checks.procedure"],
+    "outcomes": ["checks.outcomes", "checks.table"],
+    "tables": ["checks.table"],
+    "exceptions": ["checks.exception"]
+  }
+}

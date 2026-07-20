@@ -93,6 +93,10 @@ export interface ExtractedRuleDraft {
   readonly outcomes: ExtractedRuleField<readonly RuleOutcomeDraft[]>;
 }
 
+export interface RuleExtractor {
+  extract(source: AnchoredRuleSourceDocument): Promise<unknown>;
+}
+
 export interface StableRuleSourcePassage {
   readonly documentId: string;
   readonly documentVersion: string;
@@ -504,4 +508,16 @@ export const ingestAnchoredRuleSource = (input: {
     .update(canonicalJson(candidateWithoutVersion))
     .digest("hex");
   return immutableSnapshot({ ...candidateWithoutVersion, version });
+};
+
+export const extractRuleCandidate = async (input: {
+  readonly source: AnchoredRuleSourceDocument;
+  readonly extractor: RuleExtractor;
+}): Promise<CitedRuleCandidate> => {
+  const source = immutableSnapshot(input.source);
+  const extraction = await input.extractor.extract(source);
+  return ingestAnchoredRuleSource({
+    source,
+    extraction: extraction as ExtractedRuleDraft,
+  });
 };
