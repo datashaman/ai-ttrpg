@@ -12,10 +12,12 @@ import {
   createInMemoryTimelineStore,
   createSeededRandomSource,
   createStructuredPlayApplication,
+  type EventStore,
   type FreeActionDefinition,
 } from "../src/structured-play.js";
 import { projectWorldKnowledge } from "../src/world-knowledge.js";
 import { beginAdventureFixture } from "./support/adventure-fixture.js";
+import { reachLockedManorDiscovery } from "./support/world-knowledge-fixture.js";
 
 const beginWithFreeActions = (
   actions: readonly FreeActionDefinition[],
@@ -125,6 +127,225 @@ test("authored locked-manor knowledge is visible only to the Game Master", () =>
     Object.isFrozen(gameMasterKnowledge.entries[0]!.knowledgeScope),
     true,
   );
+});
+
+test("Structured Play canonically reveals authored knowledge after its discovery preconditions", () => {
+  const { app, eventStore } = reachLockedManorDiscovery();
+
+  const beforeEvents = structuredClone(eventStore.readAll());
+  const beforePlayer = projectWorldKnowledge({
+    actorScope: "Player",
+    events: beforeEvents,
+  });
+  const beforeGameMaster = projectWorldKnowledge({
+    actorScope: "Game Master",
+    events: beforeEvents,
+  });
+  assert.equal(
+    beforePlayer.entries.some(
+      (entry) => entry.id === "cellar-guardian-identity",
+    ),
+    false,
+  );
+  const hiddenEntry = beforeGameMaster.entries.find(
+    (entry) => entry.id === "cellar-guardian-identity",
+  );
+  assert.ok(hiddenEntry);
+  assert.ok(
+    app.view().availableActions.some(
+      (action) => action.id === "examine-housekeeper-insignia",
+    ),
+  );
+
+  const revealed = app.submit({
+    type: "choose-action",
+    actionId: "examine-housekeeper-insignia",
+  });
+
+  assert.equal(revealed.status, "accepted");
+  assert.deepEqual(revealed.appendedEvents.map((event) => event.type), [
+    "WorldKnowledgeRevealed",
+  ]);
+  const revealEvent = eventStore.readAll().at(-1);
+  assert.equal(revealEvent?.type, "WorldKnowledgeRevealed");
+  if (revealEvent?.type !== "WorldKnowledgeRevealed") return;
+  assert.deepEqual(revealEvent.payload, {
+    worldKnowledgeId: "cellar-guardian-identity",
+    knowledgeScope: ["Game Master", "Player Character"],
+  });
+  const afterPlayer = projectWorldKnowledge({
+    actorScope: "Player",
+    events: eventStore.readAll(),
+  });
+  assert.deepEqual(
+    afterPlayer.entries.find(
+      (entry) => entry.id === "cellar-guardian-identity",
+    ),
+    {
+      ...hiddenEntry,
+      visibility: "Player-visible",
+      knowledgeScope: ["Game Master", "Player Character"],
+    },
+  );
+  assert.deepEqual(
+    afterPlayer.entries.find(
+      (entry) => entry.id === "cellar-guardian-identity",
+    )?.provenance,
+    hiddenEntry.provenance,
+  );
+});
+
+test("a committed Reveal enters attributable evidence and survives reopening", () => {
+  const { app, eventStore } = reachLockedManorDiscovery();
+  app.submit({
+    type: "choose-action",
+    actionId: "examine-housekeeper-insignia",
+  });
+
+  const evidence = assembleInterpretationEvidence({
+    utterance: "I confront the cellar guardian.",
+    view: app.view(),
+    acceptedEvents: eventStore.readAll(),
+  });
+  assert.deepEqual(
+    evidence.items.find(
+      (item) => item.id === "fact:cellar-guardian-identity",
+    ),
+    {
+      id: "fact:cellar-guardian-identity",
+      sourceKind: "established-fact",
+      sourceReference: "world-knowledge:cellar-guardian-identity",
+      content: "The manor's housekeeper is the cellar guardian in disguise.",
+      inclusionReason:
+        "This Player-visible World Knowledge Entry describes the current situation.",
+    },
+  );
+
+  const reopened = createStructuredPlayApplication({ eventStore });
+  const reopenedKnowledge = projectWorldKnowledge({
+    actorScope: "Player",
+    events: eventStore.readAll(),
+  });
+  assert.equal(
+    reopenedKnowledge.entries.some(
+      (entry) => entry.id === "cellar-guardian-identity",
+    ),
+    true,
+  );
+  assert.equal(
+    reopened.view().availableActions.some(
+      (action) => action.id === "examine-housekeeper-insignia",
+    ),
+    false,
+  );
+});
+
+test("a rejected Reveal commit leaves hidden knowledge unprojected and undisclosed", () => {
+  const { eventStore } = reachLockedManorDiscovery();
+  const rejectingStore: EventStore = {
+    readAll: () => eventStore.readAll(),
+    append: () => assert.fail("Reveal should use the batch boundary"),
+    appendBatch: (request) => ({
+      status: "rejected",
+      code: "persistence-failed",
+      message: "The canonical event batch could not be persisted.",
+      expectedPosition: request.expectedPosition,
+      actualPosition: eventStore.readAll().length,
+    }),
+  };
+  const app = createStructuredPlayApplication({ eventStore: rejectingStore });
+  const before = structuredClone(eventStore.readAll());
+
+  const rejected = app.submit({
+    type: "choose-action",
+    actionId: "examine-housekeeper-insignia",
+  });
+
+  assert.equal(rejected.status, "rejected");
+  assert.equal(rejected.code, "persistence-failed");
+  assert.deepEqual(rejected.appendedEvents, []);
+  assert.deepEqual(eventStore.readAll(), before);
+  assert.equal(
+    projectWorldKnowledge({
+      actorScope: "Player",
+      events: eventStore.readAll(),
+    }).entries.some((entry) => entry.id === "cellar-guardian-identity"),
+    false,
+  );
+  assert.doesNotMatch(
+    JSON.stringify(rejected),
+    /cellar-guardian-identity|housekeeper is the cellar guardian/i,
+  );
+});
+
+test("unavailable, stale, duplicate, and unmatched Reveal attempts append no event", () => {
+  const { app, eventStore } = beginAdventureFixture();
+  for (const actionId of [
+    "examine-housekeeper-insignia",
+    "cellar-guardian-identity",
+    "reveal-unknown-knowledge",
+  ]) {
+    const before = structuredClone(eventStore.readAll());
+    const rejected = app.submit({ type: "choose-action", actionId });
+    assert.equal(rejected.status, "rejected");
+    assert.equal(rejected.code, "action-unavailable");
+    assert.deepEqual(rejected.appendedEvents, []);
+    assert.deepEqual(eventStore.readAll(), before);
+  }
+
+  const unavailableTargets = reachLockedManorDiscovery({
+    reveals: [
+      {
+        id: "reveal-missing-entry",
+        label: "Inspect an empty clue",
+        kind: "Reveal",
+        worldKnowledgeId: "missing-entry",
+        availableInScenes: ["discovery"],
+        requiredFactIds: ["side-door-open"],
+        knowledgeScope: ["Game Master", "Player Character"],
+      },
+      {
+        id: "reveal-already-visible-entry",
+        label: "Inspect a known clue",
+        kind: "Reveal",
+        worldKnowledgeId: "side-door-open",
+        availableInScenes: ["discovery"],
+        requiredFactIds: ["side-door-open"],
+        knowledgeScope: ["Game Master", "Player Character"],
+      },
+    ],
+  });
+  for (const actionId of [
+    "reveal-missing-entry",
+    "reveal-already-visible-entry",
+  ]) {
+    const before = structuredClone(unavailableTargets.eventStore.readAll());
+    const rejected = unavailableTargets.app.submit({
+      type: "choose-action",
+      actionId,
+    });
+    assert.equal(rejected.status, "rejected");
+    assert.equal(rejected.code, "action-unavailable");
+    assert.deepEqual(rejected.appendedEvents, []);
+    assert.deepEqual(unavailableTargets.eventStore.readAll(), before);
+  }
+
+  const ready = reachLockedManorDiscovery();
+  const accepted = ready.app.submit({
+    type: "choose-action",
+    actionId: "examine-housekeeper-insignia",
+  });
+  assert.equal(accepted.status, "accepted");
+  const afterReveal = structuredClone(ready.eventStore.readAll());
+
+  const duplicate = ready.app.submit({
+    type: "choose-action",
+    actionId: "examine-housekeeper-insignia",
+  });
+  assert.equal(duplicate.status, "rejected");
+  assert.equal(duplicate.code, "action-unavailable");
+  assert.deepEqual(duplicate.appendedEvents, []);
+  assert.deepEqual(ready.eventStore.readAll(), afterReveal);
 });
 
 test("World Knowledge rejects a missing or unknown actor scope", () => {

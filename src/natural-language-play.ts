@@ -129,6 +129,7 @@ const actionCommand = (
   action: AvailableAction,
 ): StructuredPlayInput | null =>
   action.kind === "Free Action" ||
+  action.kind === "Reveal" ||
   action.kind === "Check" ||
   action.kind === "Oracle"
     ? { type: "choose-action", actionId: action.id }

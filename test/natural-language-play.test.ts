@@ -16,6 +16,7 @@ import {
 import { runStructuredPlay } from "../src/structured-play-runner.js";
 import { beginAdventureFixture } from "./support/adventure-fixture.js";
 import { scriptedIO } from "./support/scripted-io.js";
+import { reachLockedManorDiscovery } from "./support/world-knowledge-fixture.js";
 
 const startedAdventure = (
   traits: {
@@ -163,6 +164,31 @@ test("natural-language Player action selects a currently available capability", 
     ],
   );
   assert.match(script.output.join(""), /Fresh footprints lead from the manor gate/);
+});
+
+test("natural-language play selects the authored Reveal through Structured Play authority", async () => {
+  const { eventStore } = reachLockedManorDiscovery();
+  const before = structuredClone(eventStore.readAll());
+  const script = scriptedIO(["I study the housekeeper's concealed insignia."]);
+
+  const result = await runNaturalLanguagePlay({
+    io: script.io,
+    interpreter: capabilitySequence(["examine-housekeeper-insignia"]),
+    eventStore,
+  });
+
+  assert.deepEqual(result.interpretedCommands, [
+    {
+      type: "choose-action",
+      actionId: "examine-housekeeper-insignia",
+    },
+  ]);
+  assert.deepEqual(eventStore.readAll().slice(0, -1), before);
+  assert.equal(eventStore.readAll().at(-1)?.type, "WorldKnowledgeRevealed");
+  assert.match(
+    script.output.join(""),
+    /housekeeper is the cellar guardian in disguise/i,
+  );
 });
 
 test("natural-language play lets a new Player recover from invalid setup", async () => {
