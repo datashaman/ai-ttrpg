@@ -17,6 +17,11 @@ import {
   type EventStore,
 } from "../src/structured-play.js";
 import { beginAdventureFixture } from "./support/adventure-fixture.js";
+import {
+  assertLockedManorHiddenKnowledgeAbsent,
+  LOCKED_MANOR_HIDDEN_KNOWLEDGE_ID,
+  LOCKED_MANOR_HIDDEN_KNOWLEDGE_TEXT,
+} from "./support/hidden-world-knowledge.js";
 import { scriptedIO } from "./support/scripted-io.js";
 
 test("a scripted provider selects one evidenced action through Structured Play authority", async () => {
@@ -150,7 +155,7 @@ test("the provider receives one deeply immutable stateless Model Task", async ()
   assert.equal(observedTask, true);
 });
 
-test("unknown entity references are rejected and recorded without events", async () => {
+test("hidden World Knowledge references are rejected and recorded without events", async () => {
   const { eventStore } = beginAdventureFixture();
   const before = eventStore.readAll();
   const modelCallStore = createInMemoryModelCallRecordStore();
@@ -161,10 +166,12 @@ test("unknown entity references are rejected and recorded without events", async
         status: "interpreted",
         classification: "player-action",
         capabilityId: "survey-manor",
-        referencedEntityIds: ["secret:cult-master-location"],
+        referencedEntityIds: [
+          `world-knowledge:${LOCKED_MANOR_HIDDEN_KNOWLEDGE_ID}`,
+        ],
         evidenceItemIds: [
           "capability:survey-manor",
-          "fact:secret:cult-master-location",
+          `fact:${LOCKED_MANOR_HIDDEN_KNOWLEDGE_ID}`,
         ],
         arguments: {},
       },
@@ -183,8 +190,10 @@ test("unknown entity references are rejected and recorded without events", async
   const [record] = modelCallStore.readAll();
   assert.ok(record);
   assert.equal(record.validation.status, "rejected");
+  assert.equal(record.validatedOutput, null);
   assert.equal(record.command, null);
   assert.deepEqual(record.acceptedEventIds, []);
+  assertLockedManorHiddenKnowledgeAbsent(result);
 });
 
 test("provider output cannot append an event or apply a Mechanical Effect", async () => {
@@ -222,6 +231,47 @@ test("provider output cannot append an event or apply a Mechanical Effect", asyn
   assert.deepEqual(eventStore.readAll(), before);
   assert.deepEqual(result.interpretedCommands, []);
   assert.equal(result.modelCallRecords[0]?.validation.status, "rejected");
+});
+
+test("provider-authored hidden content cannot become a clarification or Established Fact", async () => {
+  const { eventStore } = beginAdventureFixture();
+  const before = eventStore.readAll();
+  const provider = createScriptedModelProvider({
+    model: "hidden-clarification-v1",
+    responses: {
+      "Tell me what is really happening here.": {
+        status: "ambiguous",
+        candidateCapabilityIds: [
+          "survey-manor",
+          "inspect-dark-entryway",
+        ],
+        clarification: LOCKED_MANOR_HIDDEN_KNOWLEDGE_TEXT,
+        establishedFact: {
+          id: LOCKED_MANOR_HIDDEN_KNOWLEDGE_ID,
+          text: LOCKED_MANOR_HIDDEN_KNOWLEDGE_TEXT,
+        },
+      },
+    },
+  });
+  const script = scriptedIO(["Tell me what is really happening here."]);
+
+  const result = await runNaturalLanguagePlay({
+    io: script.io,
+    modelGateway: createModelGateway({ provider }),
+    eventStore,
+  });
+
+  assert.deepEqual(eventStore.readAll(), before);
+  assert.deepEqual(result.interpretedCommands, []);
+  assert.equal(result.modelCallRecords[0]?.retryCount, 1);
+  assert.equal(result.modelCallRecords[0]?.validation.status, "rejected");
+  assert.equal(result.modelCallRecords[0]?.validatedOutput, null);
+  const playerVisibleResult = JSON.stringify({
+    output: script.output,
+    records: result.modelCallRecords,
+  });
+  assert.doesNotMatch(playerVisibleResult, /Clarification needed/);
+  assertLockedManorHiddenKnowledgeAbsent(playerVisibleResult);
 });
 
 test("a capability without an exact entity reference cannot become a command", async () => {
@@ -344,6 +394,39 @@ test("provider failure creates a normalized Model Call Record without changing t
   assert.ok(record.evidenceReferences.length > 0);
   assert.equal(record.command, null);
   assert.deepEqual(record.acceptedEventIds, []);
+});
+
+test("provider failure details cannot expose hidden World Knowledge", async () => {
+  const { eventStore } = beginAdventureFixture();
+  const before = eventStore.readAll();
+  const provider: ModelProvider = {
+    provider: "malicious-failure-script",
+    model: "hidden-error-v1",
+    invoke: async (task) => {
+      const serializedTask = JSON.stringify(task);
+      assertLockedManorHiddenKnowledgeAbsent(serializedTask);
+      throw new Error(
+        `${LOCKED_MANOR_HIDDEN_KNOWLEDGE_ID}: ${LOCKED_MANOR_HIDDEN_KNOWLEDGE_TEXT}`,
+      );
+    },
+  };
+  const script = scriptedIO(["I survey the manor grounds."]);
+
+  const result = await runNaturalLanguagePlay({
+    io: script.io,
+    modelGateway: createModelGateway({ provider }),
+    eventStore,
+  });
+
+  assert.deepEqual(eventStore.readAll(), before);
+  assert.deepEqual(result.interpretedCommands, []);
+  assert.equal(result.modelCallRecords[0]?.validation.status, "rejected");
+  assert.equal(result.modelCallRecords[0]?.fallbackOutcome, "safe-rejection");
+  const playerVisibleResult = JSON.stringify({
+    output: script.output,
+    records: result.modelCallRecords,
+  });
+  assertLockedManorHiddenKnowledgeAbsent(playerVisibleResult);
 });
 
 test("malformed structured output receives one repair attempt", async () => {

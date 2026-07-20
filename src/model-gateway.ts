@@ -1,10 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import type { EvidenceBundle } from "./evidence-bundle.js";
-import {
-  redactModelDiagnosticValue,
-  type ModelDiagnosticCapture,
-} from "./model-diagnostics.js";
+import type { ModelDiagnosticCapture } from "./model-diagnostics.js";
 import {
   immutableSnapshot,
   invokeWithinTimeout,
@@ -67,6 +64,18 @@ export type ModelFailureCode =
   | "unauthenticated"
   | "rate-limited"
   | "over-budget";
+
+export const applicationOwnedModelFailureReason = (
+  code: ModelFailureCode,
+): string => {
+  if (code === "timeout") return "The Model Task timed out.";
+  if (code === "unauthenticated") return "Model authentication failed.";
+  if (code === "rate-limited") {
+    return "The model provider rate limit was reached.";
+  }
+  if (code === "over-budget") return "The Model Task exceeded its budget.";
+  return "The model provider is unavailable.";
+};
 
 export class ModelProviderError extends Error {
   constructor(
@@ -200,21 +209,16 @@ export const createModelGateway = ({
         usage,
       };
     } catch (error) {
+      const code =
+        error instanceof ModelProviderError
+          ? error.code
+          : error instanceof ModelTimeoutError
+            ? "timeout"
+            : "unavailable";
       outcome = {
         status: "failed",
-        code:
-          error instanceof ModelProviderError
-            ? error.code
-            : error instanceof ModelTimeoutError
-              ? "timeout"
-              : "unavailable",
-        reason: String(
-          redactModelDiagnosticValue(
-            error instanceof Error
-              ? error.message
-              : "Model invocation failed.",
-          ),
-        ),
+        code,
+        reason: applicationOwnedModelFailureReason(code),
         usage,
       };
     }

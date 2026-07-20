@@ -14,6 +14,11 @@ import {
   type EventStore,
 } from "../src/structured-play.js";
 import { runStructuredPlay } from "../src/structured-play-runner.js";
+import {
+  assertLockedManorHiddenKnowledgeAbsent,
+  LOCKED_MANOR_HIDDEN_KNOWLEDGE_ID,
+  LOCKED_MANOR_HIDDEN_KNOWLEDGE_TEXT,
+} from "./support/hidden-world-knowledge.js";
 import { scriptedIO } from "./support/scripted-io.js";
 
 const pendingCheckStore = (): EventStore => {
@@ -262,6 +267,77 @@ test("unknown Narration citations select deterministic presentation", async () =
   assert.equal(record.validation.status, "rejected");
   assert.equal(record.fallbackOutcome, "deterministic-narration");
 });
+
+for (const [kind, hiddenClaim] of [
+  ["exact hidden content", LOCKED_MANOR_HIDDEN_KNOWLEDGE_TEXT],
+  [
+    "a hidden relationship paraphrase",
+    "The housekeeper secretly guards the cellar.",
+  ],
+] as const) {
+  test(`${kind} cannot become Narration`, async () => {
+    const eventStore = pendingCheckStore();
+    const modelCallStore = createInMemoryModelCallRecordStore();
+    const scriptedProvider = createScriptedModelProvider({
+      model: "hidden-narration-v1",
+      responses: {
+        "narrate-committed-outcome:micro-ruleset.check@1.0.0:Clean Success": {
+          segments: [
+            {
+              text: `${hiddenClaim} The door opens quietly.`,
+              evidenceItemIds: [
+                "event:committed:0",
+                `fact:${LOCKED_MANOR_HIDDEN_KNOWLEDGE_ID}`,
+              ],
+            },
+          ],
+        },
+      },
+    });
+    const provider: ModelProvider = {
+      ...scriptedProvider,
+      invoke: async (task) => {
+        assertLockedManorHiddenKnowledgeAbsent(task);
+        return scriptedProvider.invoke(task);
+      },
+    };
+    const script = scriptedIO(["d"]);
+
+    const view = await runStructuredPlay({
+      io: script.io,
+      eventStore,
+      modelGateway: createModelGateway({ provider }),
+      modelCallStore,
+    });
+
+    assert.match(
+      script.output.join(""),
+      /Narration \(deterministic fallback\)\nClean Success \(10\): The door opens quietly\./,
+    );
+    assert.equal(view.state.playerCharacter?.health, 3);
+    assert.deepEqual(
+      view.state.establishedFacts.map((fact) => fact.id),
+      ["side-door-open"],
+    );
+    const [record] = modelCallStore.readAll();
+    assert.ok(record);
+    assert.equal(record.validation.status, "rejected");
+    assert.equal(record.validatedOutput, null);
+    assert.equal(record.fallbackOutcome, "deterministic-narration");
+    assert.deepEqual(
+      record.acceptedEventIds,
+      eventStore
+        .readAll()
+        .filter((event) => event.type === "CheckResolved")
+        .map((event) => event.id),
+    );
+    const playerVisibleResult = JSON.stringify({
+      output: script.output,
+      record,
+    });
+    assertLockedManorHiddenKnowledgeAbsent(playerVisibleResult);
+  });
+}
 
 test("cited outcome terms cannot be recombined into a different outcome", async () => {
   const eventStore = pendingCheckStore();

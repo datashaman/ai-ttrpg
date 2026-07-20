@@ -22,6 +22,7 @@ import {
   type EvidenceBundle,
 } from "./evidence-bundle.js";
 import {
+  applicationOwnedModelFailureReason,
   createInMemoryModelCallRecordStore,
   modelCallRecordFrom,
   type ModelCallRecord,
@@ -579,16 +580,9 @@ export const writeStructuredPlayChoices = (
   );
 };
 
-const modelFailureExplanation = (
-  code: ModelFailureCode,
-  reason: string,
-): string => {
+const modelFailureExplanation = (code: ModelFailureCode): string => {
   if (code === "timeout") return "Model interpretation timed out.";
-  if (code === "unauthenticated") return "Model authentication failed.";
-  if (code === "rate-limited") return "The model provider rate limit was reached.";
-  if (code === "over-budget") return "The Model Task exceeded its budget.";
-  if (code === "unavailable") return "The model provider is unavailable.";
-  return reason;
+  return applicationOwnedModelFailureReason(code);
 };
 
 const writeSafeFailure = (
@@ -834,7 +828,6 @@ export const runNaturalLanguagePlay = async (
           view,
           modelFailureExplanation(
             gatewayExecution.outcome.code,
-            gatewayExecution.outcome.reason,
           ),
         );
         return withoutInterpretedCommand(view, modelCallStore);
