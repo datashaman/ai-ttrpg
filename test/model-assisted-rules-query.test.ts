@@ -11,6 +11,11 @@ import { assembleRulesExplanationEvidence } from "../src/evidence-bundle.js";
 import { runNaturalLanguagePlay } from "../src/natural-language-play.js";
 import { createStructuredPlayApplication } from "../src/structured-play.js";
 import { beginAdventureFixture } from "./support/adventure-fixture.js";
+import {
+  assertLockedManorHiddenKnowledgeAbsent,
+  LOCKED_MANOR_HIDDEN_KNOWLEDGE_ID,
+  LOCKED_MANOR_HIDDEN_KNOWLEDGE_TEXT,
+} from "./support/hidden-world-knowledge.js";
 import { scriptedIO } from "./support/scripted-io.js";
 
 const LOCKPICK_QUERY = "Can I use my Lockpick Set to open the side door?";
@@ -24,7 +29,7 @@ test("a scripted provider answers a locked-manor rules question from attributabl
     createStructuredPlayApplication({ eventStore }).view().state,
   );
   const modelCallStore = createInMemoryModelCallRecordStore();
-  const provider = createScriptedModelProvider({
+  const scriptedProvider = createScriptedModelProvider({
     model: "locked-manor-rules-v1",
     responses: {
       [`interpret-player-input:${LOCKPICK_QUERY}`]: {
@@ -49,6 +54,13 @@ test("a scripted provider answers a locked-manor rules question from attributabl
       },
     },
   });
+  const provider: ModelProvider = {
+    ...scriptedProvider,
+    invoke: async (task) => {
+      assertLockedManorHiddenKnowledgeAbsent(task);
+      return scriptedProvider.invoke(task);
+    },
+  };
   const script = scriptedIO([LOCKPICK_QUERY]);
 
   const result = await runNaturalLanguagePlay({
@@ -241,6 +253,51 @@ for (const [kind, explanation] of [
     );
   });
 }
+
+test("hidden World Knowledge cannot become a rules answer or citation", async () => {
+  const { eventStore } = beginAdventureFixture();
+  const before = eventStore.readAll();
+  const provider = createScriptedModelProvider({
+    model: "hidden-rules-answer-v1",
+    responses: {
+      [`interpret-player-input:${LOCKPICK_QUERY}`]: {
+        status: "interpreted",
+        classification: "rules-query",
+        referencedEntityIds: ["inventory:Lockpick Set"],
+      },
+      [`explain-rules:${LOCKPICK_QUERY}`]: {
+        segments: [
+          {
+            text: LOCKED_MANOR_HIDDEN_KNOWLEDGE_TEXT,
+            evidenceItemIds: [
+              `fact:${LOCKED_MANOR_HIDDEN_KNOWLEDGE_ID}`,
+            ],
+          },
+        ],
+      },
+    },
+  });
+  const script = scriptedIO([LOCKPICK_QUERY]);
+
+  const result = await runNaturalLanguagePlay({
+    io: script.io,
+    modelGateway: createModelGateway({ provider }),
+    eventStore,
+  });
+
+  assert.deepEqual(eventStore.readAll(), before);
+  assert.match(script.output.join(""), /deterministic fallback/);
+  const explanationRecord = result.modelCallRecords[1];
+  assert.ok(explanationRecord);
+  assert.equal(explanationRecord.validation.status, "rejected");
+  assert.equal(explanationRecord.validatedOutput, null);
+  assert.equal(explanationRecord.fallbackOutcome, "deterministic-rules");
+  const playerVisibleResult = JSON.stringify({
+    output: script.output,
+    records: result.modelCallRecords,
+  });
+  assertLockedManorHiddenKnowledgeAbsent(playerVisibleResult);
+});
 
 test("an irrelevant in-bundle citation selects deterministic presentation", async () => {
   const { app, eventStore } = beginAdventureFixture();
