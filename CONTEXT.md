@@ -172,6 +172,10 @@ _Avoid_: disclosure, narration, new fact
 An immutable, task-specific collection of Player-visible source items supplied to a model, each identified by its source and inclusion reason. An Evidence Bundle may include Established Facts, rules, entities, and accepted events, but is not itself game truth and cannot authorize a state change.
 _Avoid_: prompt context, model memory, truth
 
+**Retrieval Boundary**:
+The single campaign-scale application boundary that resolves a Player utterance against explicitly scoped campaign entities, actor-visible World Knowledge, approved rules, and accepted events before assembling an Evidence Bundle. It requires actor, Player Character, campaign, Model Task, and ruleset-version scope; excludes forbidden candidates before deduplication, ranking, or budgeting; and preserves a stable source, Visibility, inclusion reason, and applicable citation for every selected item.
+_Avoid_: global search, prompt builder, shared corpus
+
 **Model Call Record**:
 An operational audit record of one model task, including its provider, model, prompt version, Evidence Bundle references and hashes, timing, usage, validation, retries, fallback result, and validated output. A Model Call Record may correlate with accepted commands and events, but raw provider payloads are diagnostic data rather than default record content; the record is not part of a Timeline and cannot rebuild game state.
 _Avoid_: canonical event, Adventure history, model memory

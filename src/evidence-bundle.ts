@@ -1,5 +1,8 @@
-import { createHash } from "node:crypto";
-
+import {
+  evidenceBundleId,
+  selectRankedEvidence,
+  type RankedEvidenceItem,
+} from "./evidence-selection.js";
 import { immutableSnapshot } from "./model-boundary.js";
 import type {
   ApplicationView,
@@ -28,6 +31,7 @@ export type EvidenceSourceKind =
   | "authority-rule"
   | "resolution"
   | "direct-entity"
+  | "retrieved-entity"
   | "accepted-event";
 
 export interface EvidenceItem {
@@ -46,25 +50,6 @@ export interface EvidenceBundle {
     | "narrate-committed-outcome";
   readonly items: readonly EvidenceItem[];
 }
-
-interface RankedEvidenceItem {
-  readonly item: EvidenceItem;
-  readonly priority: number;
-  readonly order: number;
-}
-
-const selectRankedEvidence = (
-  candidates: readonly RankedEvidenceItem[],
-  maxItems: number,
-): readonly EvidenceItem[] =>
-  [...candidates]
-    .sort((left, right) =>
-      left.priority === right.priority
-        ? left.order - right.order
-        : left.priority - right.priority,
-    )
-    .slice(0, maxItems)
-    .map(({ item }) => item);
 
 export interface InterpretationEvidenceInput {
   readonly actorScope: PlayerWorldKnowledgeActorScope;
@@ -115,9 +100,6 @@ const directWorldKnowledgeReferences = (utterance: string): ReadonlySet<string> 
     ),
   );
 
-const bundleId = (items: readonly EvidenceItem[]): string =>
-  `evidence:${createHash("sha256").update(JSON.stringify(items)).digest("hex")}`;
-
 const worldKnowledgeContent = (
   entry: WorldKnowledgeEntry,
 ): string => entry.kind === "Established Fact" ? entry.text : entry.content;
@@ -141,7 +123,7 @@ const worldKnowledgeEvidenceItem = (
 export const assembleInterpretationEvidence = (
   input: InterpretationEvidenceInput,
 ): EvidenceBundle => {
-  const candidates: RankedEvidenceItem[] = [];
+  const candidates: RankedEvidenceItem<EvidenceItem>[] = [];
   const add = (item: EvidenceItem, priority: number): void => {
     candidates.push({ item, priority, order: candidates.length });
   };
@@ -292,7 +274,7 @@ export const assembleInterpretationEvidence = (
   const maxItems = Math.max(1, input.maxItems ?? 64);
   const items = selectRankedEvidence(candidates, maxItems);
   return immutableSnapshot({
-    id: bundleId(items),
+    id: evidenceBundleId(items),
     taskType: "interpret-player-input" as const,
     items,
   });
@@ -422,7 +404,7 @@ const resolutionContent = (trace: CheckTrace | OracleTrace): string =>
 export const assembleNarrationEvidence = (
   input: NarrationEvidenceInput,
 ): EvidenceBundle => {
-  const candidates: RankedEvidenceItem[] = [];
+  const candidates: RankedEvidenceItem<EvidenceItem>[] = [];
   const add = (item: EvidenceItem, priority: number): void => {
     candidates.push({ item, priority, order: candidates.length });
   };
@@ -518,7 +500,7 @@ export const assembleNarrationEvidence = (
   const maxItems = Math.max(1, input.maxItems ?? 64);
   const items = selectRankedEvidence(candidates, maxItems);
   return immutableSnapshot({
-    id: bundleId(items),
+    id: evidenceBundleId(items),
     taskType: "narrate-committed-outcome" as const,
     items,
   });
@@ -720,7 +702,7 @@ export const assembleRulesExplanationEvidence = (
     }).items.filter((item) => item.id !== "rule:structured-play-authority"),
   );
   const rules = applicableRules(input.utterance, input.view);
-  const ranked: RankedEvidenceItem[] = [
+  const ranked: RankedEvidenceItem<EvidenceItem>[] = [
     ...rules.map((item, order) => ({ item, priority: 0, order })),
     ...contextual.map((item, order) => ({
       item,
@@ -741,7 +723,7 @@ export const assembleRulesExplanationEvidence = (
   const maxItems = Math.max(1, input.maxItems ?? 64);
   const items = selectRankedEvidence(ranked, maxItems);
   return immutableSnapshot({
-    id: bundleId(items),
+    id: evidenceBundleId(items),
     taskType: "explain-rules" as const,
     items,
   });
