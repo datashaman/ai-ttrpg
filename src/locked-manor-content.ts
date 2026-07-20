@@ -25,6 +25,51 @@ export const DEFAULT_AUTHORED_WORLD_KNOWLEDGE: readonly WorldKnowledgeEstablishe
     },
     visibility: "Game Master-only",
     knowledgeScope: ["Game Master"],
+    endpointFacts: [
+      {
+        fact: {
+          id: "manor-housekeeper",
+          text: "The locked manor employs a housekeeper.",
+        },
+        provenance: {
+          originKind: "authored-content",
+          sourceReference: "locked-manor:housekeeper",
+        },
+        visibility: "Game Master-only",
+        knowledgeScope: ["Game Master"],
+      },
+      {
+        fact: {
+          id: "manor-cellar",
+          text: "The locked manor has a cellar.",
+        },
+        provenance: {
+          originKind: "authored-content",
+          sourceReference: "locked-manor:cellar",
+        },
+        visibility: "Game Master-only",
+        knowledgeScope: ["Game Master"],
+      },
+    ],
+    relationships: [
+      {
+        relationship: {
+          id: "housekeeper-guards-cellar",
+          type: "guards",
+          sourceId: "manor-housekeeper",
+          targetId: "manor-cellar",
+          content:
+            "The manor's housekeeper guards the cellar while disguised as its guardian.",
+          requiredWorldKnowledgeIds: ["cellar-guardian-identity"],
+        },
+        provenance: {
+          originKind: "authored-content",
+          sourceReference: "locked-manor:housekeeper-cellar-relationship",
+        },
+        visibility: "Game Master-only",
+        knowledgeScope: ["Game Master"],
+      },
+    ],
   },
 ];
 
@@ -36,6 +81,16 @@ export const DEFAULT_REVEALS: readonly RevealDefinition[] = [
     worldKnowledgeId: "cellar-guardian-identity",
     availableInScenes: ["discovery"],
     requiredFactIds: ["side-door-open"],
+    knowledgeScope: ["Game Master", "Player Character"],
+  },
+  {
+    id: "trace-concealed-insignia",
+    label: "Trace the concealed insignia's meaning",
+    kind: "Reveal",
+    worldKnowledgeId: "housekeeper-guards-cellar",
+    availableInScenes: ["discovery"],
+    requiredFactIds: ["side-door-open"],
+    requiredWorldKnowledgeIds: ["cellar-guardian-identity"],
     knowledgeScope: ["Game Master", "Player Character"],
   },
 ];

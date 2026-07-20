@@ -13,6 +13,7 @@ import type {
 import {
   filterCanonicalEventsVisibleTo,
   projectWorldKnowledge,
+  type WorldKnowledgeEntry,
 } from "./world-knowledge.js";
 
 export type EvidenceSourceKind =
@@ -21,6 +22,7 @@ export type EvidenceSourceKind =
   | "inventory-item"
   | "condition"
   | "established-fact"
+  | "relationship"
   | "capability"
   | "authority-rule"
   | "resolution"
@@ -113,6 +115,26 @@ const directWorldKnowledgeReferences = (utterance: string): ReadonlySet<string> 
 const bundleId = (items: readonly EvidenceItem[]): string =>
   `evidence:${createHash("sha256").update(JSON.stringify(items)).digest("hex")}`;
 
+const worldKnowledgeContent = (
+  entry: WorldKnowledgeEntry,
+): string => entry.kind === "Established Fact" ? entry.text : entry.content;
+
+const worldKnowledgeEvidenceItem = (
+  entry: WorldKnowledgeEntry,
+  reason: "current situation" | "committed outcome",
+): EvidenceItem => {
+  const isFact = entry.kind === "Established Fact";
+  return {
+    id: `${isFact ? "fact" : "relationship"}:${entry.id}`,
+    sourceKind: isFact ? "established-fact" : "relationship",
+    sourceReference: `world-knowledge:${entry.id}`,
+    content: worldKnowledgeContent(entry),
+    inclusionReason: `This Player-visible World Knowledge ${
+      isFact ? "Entry" : "Relationship"
+    } ${reason === "current situation" ? "describes" : "supports"} the ${reason}.`,
+  };
+};
+
 export const assembleInterpretationEvidence = (
   input: InterpretationEvidenceInput,
 ): EvidenceBundle => {
@@ -188,19 +210,16 @@ export const assembleInterpretationEvidence = (
     events: input.acceptedEvents,
   }).entries.forEach((entry) =>
     add(
-      {
-        id: `fact:${entry.id}`,
-        sourceKind: "established-fact",
-        sourceReference: `world-knowledge:${entry.id}`,
-        content: entry.text,
-        inclusionReason:
-          "This Player-visible World Knowledge Entry describes the current situation.",
-      },
+      worldKnowledgeEvidenceItem(entry, "current situation"),
       directKnowledgeReferences.size > 0
         ? directKnowledgeReferences.has(entry.id)
           ? 0
           : 4
-        : isDirectlyRelevant(input.utterance, entry.id, entry.text)
+        : isDirectlyRelevant(
+            input.utterance,
+            entry.id,
+            worldKnowledgeContent(entry),
+          )
           ? 0
           : 4,
     ),
@@ -484,18 +503,11 @@ export const assembleNarrationEvidence = (
     .filter(
       (entry) =>
         committedContent.includes(entry.id) ||
-        committedContent.includes(entry.text),
+        committedContent.includes(worldKnowledgeContent(entry)),
     )
     .forEach((entry) =>
       add(
-        {
-          id: `fact:${entry.id}`,
-          sourceKind: "established-fact",
-          sourceReference: `world-knowledge:${entry.id}`,
-          content: entry.text,
-          inclusionReason:
-            "This Player-visible World Knowledge Entry supports the committed outcome.",
-        },
+        worldKnowledgeEvidenceItem(entry, "committed outcome"),
         1,
       ),
     );

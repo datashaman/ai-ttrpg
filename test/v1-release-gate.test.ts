@@ -52,7 +52,9 @@ test("every canonical v1 fixture rebuilds byte-equivalent World Knowledge", asyn
         assert.equal(JSON.stringify(rebuilt), JSON.stringify(expected));
         if (actorScope === "Player") {
           assert.deepEqual(
-            rebuilt.entries.map(({ id, text }) => ({ id, text })),
+            rebuilt.entries
+              .filter((entry) => entry.kind === "Established Fact")
+              .map(({ id, text }) => ({ id, text })),
             fixture.state.establishedFacts,
           );
         }

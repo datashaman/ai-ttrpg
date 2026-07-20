@@ -16,7 +16,7 @@ export interface Provenance {
   readonly establishedByEventId: string;
 }
 
-export interface WorldKnowledgeEntry {
+export interface WorldKnowledgeFactEntry {
   readonly id: string;
   readonly kind: "Established Fact";
   readonly text: string;
@@ -25,15 +25,52 @@ export interface WorldKnowledgeEntry {
   readonly knowledgeScope: readonly KnowledgeScope[];
 }
 
-export interface WorldKnowledgeEstablishedPayload {
+export interface WorldKnowledgeRelationshipEntry {
+  readonly id: string;
+  readonly kind: "Relationship";
+  readonly relationshipType: string;
+  readonly sourceId: string;
+  readonly targetId: string;
+  readonly content: string;
+  readonly requiredWorldKnowledgeIds: readonly string[];
+  readonly provenance: Provenance;
+  readonly visibility: WorldKnowledgeVisibility;
+  readonly knowledgeScope: readonly KnowledgeScope[];
+}
+
+export type WorldKnowledgeEntry =
+  | WorldKnowledgeFactEntry
+  | WorldKnowledgeRelationshipEntry;
+
+export interface WorldKnowledgeFactEstablishedPayload {
   readonly fact: EstablishedFact;
   readonly provenance: Omit<Provenance, "establishedByEventId">;
   readonly visibility: WorldKnowledgeVisibility;
   readonly knowledgeScope: readonly KnowledgeScope[];
 }
 
+export interface WorldKnowledgeEstablishedPayload
+  extends WorldKnowledgeFactEstablishedPayload {
+  readonly endpointFacts?: readonly WorldKnowledgeFactEstablishedPayload[];
+  readonly relationships?: readonly WorldKnowledgeRelationshipEstablishedPayload[];
+}
+
 export interface WorldKnowledgeRevealedPayload {
   readonly worldKnowledgeId: string;
+  readonly knowledgeScope: readonly KnowledgeScope[];
+}
+
+export interface WorldKnowledgeRelationshipEstablishedPayload {
+  readonly relationship: {
+    readonly id: string;
+    readonly type: string;
+    readonly sourceId: string;
+    readonly targetId: string;
+    readonly content: string;
+    readonly requiredWorldKnowledgeIds: readonly string[];
+  };
+  readonly provenance: Omit<Provenance, "establishedByEventId">;
+  readonly visibility: WorldKnowledgeVisibility;
   readonly knowledgeScope: readonly KnowledgeScope[];
 }
 
@@ -57,6 +94,9 @@ export type WorldKnowledgeErrorCode =
   | "INVALID_KNOWLEDGE_ENTRY"
   | "DUPLICATE_KNOWLEDGE_ID"
   | "CONTRADICTORY_KNOWLEDGE_ID"
+  | "RELATIONSHIP_ENDPOINT_NOT_FOUND"
+  | "RELATIONSHIP_KNOWLEDGE_NOT_FOUND"
+  | "RELATIONSHIP_VISIBILITY_EXCEEDED"
   | "INVALID_REVEAL"
   | "KNOWLEDGE_NOT_FOUND"
   | "KNOWLEDGE_ALREADY_REVEALED";
@@ -106,39 +146,72 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.trim() !== "";
 
-export const isWorldKnowledgeEstablishedPayload = (
+const PROVENANCE_ORIGIN_KINDS: readonly ProvenanceOriginKind[] = [
+  "authored-content",
+  "imported-content",
+  "human-action",
+  "rule-outcome",
+  "validated-model-proposal",
+];
+const KNOWLEDGE_SCOPES: readonly KnowledgeScope[] = [
+  "Player Character",
+  "Game Master",
+];
+
+const isProvenanceDefinition = (
   value: unknown,
-): value is WorldKnowledgeEstablishedPayload => {
+): value is Omit<Provenance, "establishedByEventId"> =>
+  isRecord(value) &&
+  PROVENANCE_ORIGIN_KINDS.includes(
+    value.originKind as ProvenanceOriginKind,
+  ) &&
+  isNonEmptyString(value.sourceReference);
+
+const isWorldKnowledgeVisibility = (
+  value: unknown,
+): value is WorldKnowledgeVisibility =>
+  value === "Player-visible" || value === "Game Master-only";
+
+const isKnowledgeScope = (
+  value: unknown,
+): value is readonly KnowledgeScope[] =>
+  Array.isArray(value) &&
+  value.length > 0 &&
+  value.every((scope) => KNOWLEDGE_SCOPES.includes(scope as KnowledgeScope)) &&
+  new Set(value).size === value.length;
+
+const isWorldKnowledgeFactEstablishedPayload = (
+  value: unknown,
+): value is WorldKnowledgeFactEstablishedPayload => {
   if (!isRecord(value)) return false;
   const fact = value.fact;
   const provenance = value.provenance;
   const knowledgeScope = value.knowledgeScope;
-  const validOriginKinds: readonly ProvenanceOriginKind[] = [
-    "authored-content",
-    "imported-content",
-    "human-action",
-    "rule-outcome",
-    "validated-model-proposal",
-  ];
-  const validKnowledgeScopes: readonly KnowledgeScope[] = [
-    "Player Character",
-    "Game Master",
-  ];
   return (
     isRecord(fact) &&
     isNonEmptyString(fact.id) &&
     isNonEmptyString(fact.text) &&
-    isRecord(provenance) &&
-    validOriginKinds.includes(provenance.originKind as ProvenanceOriginKind) &&
-    isNonEmptyString(provenance.sourceReference) &&
-    (value.visibility === "Player-visible" ||
-      value.visibility === "Game Master-only") &&
-    Array.isArray(knowledgeScope) &&
-    knowledgeScope.length > 0 &&
-    knowledgeScope.every((scope) =>
-      validKnowledgeScopes.includes(scope as KnowledgeScope),
-    ) &&
-    new Set(knowledgeScope).size === knowledgeScope.length
+    isProvenanceDefinition(provenance) &&
+    isWorldKnowledgeVisibility(value.visibility) &&
+    isKnowledgeScope(knowledgeScope)
+  );
+};
+
+export const isWorldKnowledgeEstablishedPayload = (
+  value: unknown,
+): value is WorldKnowledgeEstablishedPayload => {
+  if (!isRecord(value) || !isWorldKnowledgeFactEstablishedPayload(value)) {
+    return false;
+  }
+  return (
+    (value.endpointFacts === undefined ||
+      (Array.isArray(value.endpointFacts) &&
+        value.endpointFacts.every(isWorldKnowledgeFactEstablishedPayload))) &&
+    (value.relationships === undefined ||
+      (Array.isArray(value.relationships) &&
+        value.relationships.every(
+          isWorldKnowledgeRelationshipEstablishedPayload,
+        )))
   );
 };
 
@@ -149,6 +222,31 @@ export const isWorldKnowledgeRevealedPayload = (
   isNonEmptyString(value.worldKnowledgeId) &&
   isPlayerCharacterRevealScope(value.knowledgeScope);
 
+export const isWorldKnowledgeRelationshipEstablishedPayload = (
+  value: unknown,
+): value is WorldKnowledgeRelationshipEstablishedPayload => {
+  if (!isRecord(value)) return false;
+  const relationship = value.relationship;
+  const provenance = value.provenance;
+  const knowledgeScope = value.knowledgeScope;
+  if (!isRecord(relationship) || !isRecord(provenance)) return false;
+  return (
+    isNonEmptyString(relationship.id) &&
+    isNonEmptyString(relationship.type) &&
+    isNonEmptyString(relationship.sourceId) &&
+    isNonEmptyString(relationship.targetId) &&
+    isNonEmptyString(relationship.content) &&
+    Array.isArray(relationship.requiredWorldKnowledgeIds) &&
+    relationship.requiredWorldKnowledgeIds.length > 0 &&
+    relationship.requiredWorldKnowledgeIds.every(isNonEmptyString) &&
+    new Set(relationship.requiredWorldKnowledgeIds).size ===
+      relationship.requiredWorldKnowledgeIds.length &&
+    isProvenanceDefinition(provenance) &&
+    isWorldKnowledgeVisibility(value.visibility) &&
+    isKnowledgeScope(knowledgeScope)
+  );
+};
+
 export const isPlayerCharacterRevealScope = (
   value: unknown,
 ): value is readonly ["Game Master", "Player Character"] =>
@@ -157,16 +255,10 @@ export const isPlayerCharacterRevealScope = (
   value[0] === "Game Master" &&
   value[1] === "Player Character";
 
-const authoredEntryEstablishedBy = (
-  event: Extract<CanonicalEvent, { readonly type: "WorldKnowledgeEstablished" }>,
+const authoredFactEstablishedBy = (
+  payload: WorldKnowledgeFactEstablishedPayload,
+  event: CanonicalEvent,
 ): WorldKnowledgeEntry => {
-  const payload: unknown = event.payload;
-  if (!isWorldKnowledgeEstablishedPayload(payload)) {
-    throw new WorldKnowledgeError(
-      "INVALID_KNOWLEDGE_ENTRY",
-      "World Knowledge metadata is invalid.",
-    );
-  }
   return {
     id: payload.fact.id,
     kind: "Established Fact",
@@ -180,11 +272,45 @@ const authoredEntryEstablishedBy = (
   };
 };
 
+const authoredRelationshipEstablishedBy = (
+  payload: WorldKnowledgeRelationshipEstablishedPayload,
+  event: CanonicalEvent,
+): WorldKnowledgeRelationshipEntry => ({
+  id: payload.relationship.id,
+  kind: "Relationship",
+  relationshipType: payload.relationship.type,
+  sourceId: payload.relationship.sourceId,
+  targetId: payload.relationship.targetId,
+  content: payload.relationship.content,
+  requiredWorldKnowledgeIds: payload.relationship.requiredWorldKnowledgeIds,
+  provenance: {
+    ...payload.provenance,
+    establishedByEventId: event.id,
+  },
+  visibility: payload.visibility,
+  knowledgeScope: payload.knowledgeScope,
+});
+
 const entriesEstablishedBy = (
   event: CanonicalEvent,
 ): readonly WorldKnowledgeEntry[] => {
   if (event.type === "WorldKnowledgeEstablished") {
-    return [authoredEntryEstablishedBy(event)];
+    const payload = event.payload;
+    if (!isWorldKnowledgeEstablishedPayload(payload)) {
+      throw new WorldKnowledgeError(
+        "INVALID_KNOWLEDGE_ENTRY",
+        "World Knowledge metadata is invalid.",
+      );
+    }
+    return [
+      authoredFactEstablishedBy(payload, event),
+      ...(payload.endpointFacts ?? []).map((fact) =>
+        authoredFactEstablishedBy(fact, event),
+      ),
+      ...(payload.relationships ?? []).map((relationship) =>
+        authoredRelationshipEstablishedBy(relationship, event),
+      ),
+    ];
   }
   if (event.type === "FreeActionCompleted") {
     return [
@@ -254,9 +380,12 @@ const replayWorldKnowledgeEntries = (
 ): readonly WorldKnowledgeEntry[] => {
   const entries = new Map<string, WorldKnowledgeEntry>();
   events.forEach((event) => {
-    entriesEstablishedBy(event).forEach((entry) =>
-      insertUniqueEntry(entries, entry),
-    );
+    entriesEstablishedBy(event).forEach((entry) => {
+      if (entry.kind === "Relationship") {
+        validateRelationshipKnowledge(entry, entries);
+      }
+      insertUniqueEntry(entries, entry);
+    });
     if (event.type !== "WorldKnowledgeRevealed") return;
     if (!isWorldKnowledgeRevealedPayload(event.payload)) {
       throw new WorldKnowledgeError(
@@ -277,6 +406,29 @@ const replayWorldKnowledgeEntries = (
         "World Knowledge is already Player-visible.",
       );
     }
+    if (existing.kind === "Relationship") {
+      existing.requiredWorldKnowledgeIds.forEach((knowledgeId) => {
+        const required = entries.get(knowledgeId);
+        if (
+          required === undefined ||
+          required.kind !== "Established Fact" ||
+          required.visibility !== "Player-visible"
+        ) {
+          throw new WorldKnowledgeError(
+            "RELATIONSHIP_VISIBILITY_EXCEEDED",
+            "World Knowledge Relationship cannot become visible before its required knowledge.",
+          );
+        }
+      });
+      [existing.sourceId, existing.targetId].forEach((endpointId) => {
+        const endpoint = entries.get(endpointId)!;
+        entries.set(endpointId, {
+          ...endpoint,
+          visibility: "Player-visible",
+          knowledgeScope: event.payload.knowledgeScope,
+        });
+      });
+    }
     entries.set(existing.id, {
       ...existing,
       visibility: "Player-visible",
@@ -284,6 +436,50 @@ const replayWorldKnowledgeEntries = (
     });
   });
   return [...entries.values()];
+};
+
+const validateRelationshipKnowledge = (
+  relationship: WorldKnowledgeRelationshipEntry,
+  entries: ReadonlyMap<string, WorldKnowledgeEntry>,
+): void => {
+  const endpoints = [
+    entries.get(relationship.sourceId),
+    entries.get(relationship.targetId),
+  ];
+  if (
+    endpoints.some(
+      (entry) => entry === undefined || entry.kind !== "Established Fact",
+    )
+  ) {
+    throw new WorldKnowledgeError(
+      "RELATIONSHIP_ENDPOINT_NOT_FOUND",
+      "World Knowledge Relationship endpoint does not exist.",
+    );
+  }
+  const requiredEntries = relationship.requiredWorldKnowledgeIds.map(
+    (knowledgeId) => entries.get(knowledgeId),
+  );
+  if (
+    requiredEntries.some(
+      (entry) => entry === undefined || entry.kind !== "Established Fact",
+    )
+  ) {
+    throw new WorldKnowledgeError(
+      "RELATIONSHIP_KNOWLEDGE_NOT_FOUND",
+      "World Knowledge Relationship requires an existing Established Fact.",
+    );
+  }
+  if (
+    relationship.visibility === "Player-visible" &&
+    [...endpoints, ...requiredEntries].some(
+      (entry) => entry!.visibility !== "Player-visible",
+    )
+  ) {
+    throw new WorldKnowledgeError(
+      "RELATIONSHIP_VISIBILITY_EXCEEDED",
+      "World Knowledge Relationship visibility exceeds its required knowledge.",
+    );
+  }
 };
 
 const insertUniqueEntry = (
@@ -295,13 +491,25 @@ const insertUniqueEntry = (
     entries.set(entry.id, entry);
     return;
   }
-  const contradictory = existing.text !== entry.text;
+  const contradictory =
+    existing.kind !== entry.kind ||
+    (existing.kind === "Established Fact" &&
+      entry.kind === "Established Fact" &&
+      existing.text !== entry.text) ||
+    (existing.kind === "Relationship" &&
+      entry.kind === "Relationship" &&
+      (existing.relationshipType !== entry.relationshipType ||
+        existing.sourceId !== entry.sourceId ||
+        existing.targetId !== entry.targetId ||
+        existing.content !== entry.content ||
+        JSON.stringify(existing.requiredWorldKnowledgeIds) !==
+          JSON.stringify(entry.requiredWorldKnowledgeIds)));
   throw new WorldKnowledgeError(
     contradictory
       ? "CONTRADICTORY_KNOWLEDGE_ID"
       : "DUPLICATE_KNOWLEDGE_ID",
     contradictory
-      ? `World Knowledge ID "${entry.id}" has contradictory Established Fact text.`
+      ? `World Knowledge ID "${entry.id}" has a contradictory definition.`
       : `World Knowledge ID "${entry.id}" is already established.`,
   );
 };
@@ -345,10 +553,34 @@ export const filterCanonicalEventsVisibleTo = (
   query: WorldKnowledgeQuery,
 ): readonly CanonicalEvent[] => {
   assertWorldKnowledgeActorScope(query.actorScope);
-  return query.events.filter(
-    (event) =>
-      event.type !== "WorldKnowledgeEstablished" ||
-      query.actorScope === "Game Master" ||
-      event.payload.visibility === "Player-visible",
-  );
+  if (query.actorScope === "Game Master") return query.events;
+  return query.events.reduce<CanonicalEvent[]>((visibleEvents, event) => {
+    if (event.type !== "WorldKnowledgeEstablished") {
+      visibleEvents.push(event);
+      return visibleEvents;
+    }
+    if (event.payload.visibility !== "Player-visible") return visibleEvents;
+    const visibleRelationships = (event.payload.relationships ?? []).filter(
+      (relationship) => relationship.visibility === "Player-visible",
+    );
+    visibleEvents.push(
+      ({
+        ...event,
+        payload: {
+          ...event.payload,
+          ...(event.payload.endpointFacts === undefined
+            ? {}
+            : {
+                endpointFacts: event.payload.endpointFacts.filter(
+                  (fact) => fact.visibility === "Player-visible",
+                ),
+              }),
+          ...(event.payload.relationships === undefined
+            ? {}
+            : { relationships: visibleRelationships }),
+        },
+      }) as CanonicalEvent,
+    );
+    return visibleEvents;
+  }, []);
 };
