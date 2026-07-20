@@ -121,7 +121,7 @@ const validateScope = ({ scope, corpus }: ActorScopedRetrievalInput): void => {
 const normalized = (value: string): string =>
   value
     .toLocaleLowerCase("en")
-    .replace(/[^a-z0-9:._-]+/g, " ")
+    .replace(/[^a-z0-9:_-]+/g, " ")
     .trim();
 
 const mentions = (utterance: string, reference: string): boolean => {
@@ -392,6 +392,11 @@ export const assembleActorScopedEvidence = (
           explicitLocationIds.has(entity.locationId)) ||
         (asksForActiveParticipants &&
           entity.activeInScene === input.view.state.activeScene),
+    )
+    .sort(
+      (left, right) =>
+        Number(explicitEntities.includes(right)) -
+        Number(explicitEntities.includes(left)),
     )
     .forEach((entity) => {
       const reason = explicitEntities.includes(entity)

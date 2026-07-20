@@ -176,6 +176,10 @@ _Avoid_: prompt context, model memory, truth
 The single campaign-scale application boundary that resolves a Player utterance against explicitly scoped campaign entities, actor-visible World Knowledge, approved rules, and accepted events before assembling an Evidence Bundle. It requires actor, Player Character, campaign, Model Task, and ruleset-version scope; excludes forbidden candidates before deduplication, ranking, or budgeting; and preserves a stable source, Visibility, inclusion reason, and applicable citation for every selected item.
 _Avoid_: global search, prompt builder, shared corpus
 
+**Retrieval Evaluation**:
+A reproducible measurement of the Retrieval Boundary against a versioned, labelled campaign corpus, reporting precision at k, recall at k, mean reciprocal rank, unambiguous entity-link accuracy, and forbidden-data leakage by retrieval kind. It authorizes a retrieval-policy change only when an approved threshold is missed; it does not turn benchmark labels or retrieved evidence into game truth.
+_Avoid_: search demo, relevance vibe check, model benchmark
+
 **Model Call Record**:
 An operational audit record of one model task, including its provider, model, prompt version, Evidence Bundle references and hashes, timing, usage, validation, retries, fallback result, and validated output. A Model Call Record may correlate with accepted commands and events, but raw provider payloads are diagnostic data rather than default record content; the record is not part of a Timeline and cannot rebuild game state.
 _Avoid_: canonical event, Adventure history, model memory
