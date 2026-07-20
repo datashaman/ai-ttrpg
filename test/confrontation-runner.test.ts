@@ -65,7 +65,7 @@ test("Structured Play completes a visible Confrontation victory without an oppos
 
   const victory = await playExchange(eventStore, 690);
 
-  assert.equal(victory.view.state.confrontation?.status, "victory");
+  assert.equal(victory.view.state.confrontation, null);
   assert.equal(victory.view.state.activeScene, null);
   assert.match(victory.transcript, /cellar is secured/);
   assert.doesNotMatch(victory.transcript, /Committed events:|Resulting state:/);
@@ -81,8 +81,12 @@ test("Structured Play completes Defeat when the Danger Clock fills", async () =>
   await playExchange(eventStore, 8);
   const defeat = await playExchange(eventStore, 8);
 
-  assert.equal(defeat.view.state.confrontation?.status, "defeat");
-  assert.equal(defeat.view.state.confrontation?.ending?.reason, "danger");
+  assert.equal(defeat.view.state.confrontation, null);
+  assert.equal(
+    eventStore.readAll().filter((event) => event.type === "ConfrontationEnded")
+      .at(-1)?.payload.ending.reason,
+    "danger",
+  );
   assert.equal(defeat.view.state.activeScene, "consequence");
   assert.equal(defeat.view.state.playerCharacter?.health, 1);
   assert.match(defeat.transcript, /captures Mara/);
@@ -104,8 +108,12 @@ test("Structured Play completes Defeat when Health reaches zero", async () => {
   const defeat = await playExchange(eventStore, 8, applicationOptions);
 
   assert.equal(defeat.view.state.playerCharacter?.health, 0);
-  assert.equal(defeat.view.state.confrontation?.dangerClock.current, 0);
-  assert.equal(defeat.view.state.confrontation?.ending?.reason, "health");
+  assert.equal(defeat.view.state.confrontation, null);
+  assert.equal(
+    eventStore.readAll().filter((event) => event.type === "ConfrontationEnded")
+      .at(-1)?.payload.ending.reason,
+    "health",
+  );
   assert.equal(defeat.view.state.activeScene, "consequence");
   assert.match(defeat.transcript, /wakes imprisoned/);
   assert.doesNotMatch(defeat.transcript, /dead|death/i);

@@ -21,14 +21,30 @@ import {
   isPlayerCharacterRevealScope,
   projectWorldKnowledge,
   type KnowledgeScope,
+  type WorldKnowledgeActorScope,
   type WorldKnowledgeEstablishedPayload,
+  type WorldKnowledgeProjection,
   type WorldKnowledgeRevealedPayload,
   validateWorldKnowledgeAppend,
   WorldKnowledgeError,
 } from "./world-knowledge.js";
+import {
+  createInMemoryConversationStore,
+  layeredMemoryView,
+  type ConversationStore,
+  type LayeredMemoryView,
+} from "./layered-memory.js";
 
 export { createInMemoryEventStore } from "./in-memory-event-store.js";
 export { createInMemoryTimelineStore } from "./in-memory-timeline-store.js";
+export { createInMemoryConversationStore } from "./layered-memory.js";
+export type {
+  ConversationClassification,
+  ConversationRecord,
+  ConversationScope,
+  ConversationStore,
+  LayeredMemoryView,
+} from "./layered-memory.js";
 export { createSeededRandomSource } from "./random-source.js";
 export type { RandomSource } from "./random-source.js";
 
@@ -603,6 +619,7 @@ export interface AcceptedResult {
   readonly state: GameState;
   readonly availableActions: readonly AvailableAction[];
   readonly timeline: TimelineCollectionView | null;
+  readonly memory: LayeredMemoryView;
   readonly appendedEvents: readonly CanonicalEvent[];
 }
 
@@ -635,6 +652,7 @@ export interface RejectedResult {
   readonly state: GameState;
   readonly availableActions: readonly AvailableAction[];
   readonly timeline: TimelineCollectionView | null;
+  readonly memory: LayeredMemoryView;
   readonly appendedEvents: readonly [];
 }
 
@@ -642,6 +660,7 @@ export interface ApplicationView {
   readonly state: GameState;
   readonly availableActions: readonly AvailableAction[];
   readonly timeline: TimelineCollectionView | null;
+  readonly memory: LayeredMemoryView;
 }
 
 export interface EventStore {
@@ -708,6 +727,7 @@ export interface TimelineStore extends BatchEventStore, RandomSource {
 export interface StructuredPlayApplication {
   submit(input: StructuredPlayInput): AcceptedResult | RejectedResult;
   view(): ApplicationView;
+  worldKnowledge(actorScope: WorldKnowledgeActorScope): WorldKnowledgeProjection;
 }
 
 export interface StructuredPlayOptions {
@@ -722,6 +742,7 @@ export interface StructuredPlayOptions {
   readonly authoredWorldKnowledge?: readonly WorldKnowledgeEstablishedPayload[];
   readonly reveals?: readonly RevealDefinition[];
   readonly timelineStore?: TimelineStore;
+  readonly conversationStore?: ConversationStore;
 }
 
 const STARTING_INVENTORY: readonly InventoryItem[] = [
@@ -1390,11 +1411,7 @@ const project = (events: readonly CanonicalEvent[]): GameState =>
         return {
           ...stateWithEndingEffects,
           activeScene: event.payload.nextScene,
-          confrontation: {
-            ...state.confrontation,
-            status: event.payload.ending.kind,
-            ending: event.payload.ending,
-          },
+          confrontation: null,
           conditions: stateWithEndingEffects.conditions.filter(
             (condition) => condition !== "Shaken",
           ),
@@ -1533,6 +1550,8 @@ export const createStructuredPlayApplication = (
   const authoredWorldKnowledge =
     options.authoredWorldKnowledge ?? DEFAULT_AUTHORED_WORLD_KNOWLEDGE;
   const reveals = options.reveals ?? DEFAULT_REVEALS;
+  const conversationStore =
+    options.conversationStore ?? createInMemoryConversationStore();
   checkActions.forEach(validateCheckAction);
   oracleActions.forEach(validateOracleAction);
   sceneTransitions.forEach(validateSceneTransition);
@@ -1693,12 +1712,28 @@ export const createStructuredPlayApplication = (
     ...pendingEvents,
   ];
 
+  const memoryFor = (state: GameState): LayeredMemoryView => {
+    conversationStore.enterScope({
+      timelineId:
+        timelineStore === null ? null : timelineStore.view().activeTimelineId,
+      scene: state.activeScene,
+    });
+    return layeredMemoryView({
+      playerCharacter: state.playerCharacter,
+      conditions: state.conditions,
+      establishedFacts: state.establishedFacts,
+      confrontation: state.confrontation,
+      conversationStore,
+    });
+  };
+
   const view = (): ApplicationView => {
     const state = project(currentEvents());
     return {
       state,
       availableActions: currentAvailableActions(state),
       timeline: playerTimelineView(),
+      memory: memoryFor(state),
     };
   };
 
@@ -1715,6 +1750,7 @@ export const createStructuredPlayApplication = (
       state,
       availableActions: currentAvailableActions(state),
       timeline: playerTimelineView(),
+      memory: memoryFor(state),
       appendedEvents: [],
     };
   };
@@ -1782,6 +1818,7 @@ export const createStructuredPlayApplication = (
       state,
       availableActions: currentAvailableActions(state),
       timeline: playerTimelineView(),
+      memory: memoryFor(state),
       appendedEvents: filterCanonicalEventsVisibleTo({
         actorScope: "Player",
         events: acceptedEvents,
@@ -1910,6 +1947,8 @@ export const createStructuredPlayApplication = (
 
   return {
     view,
+    worldKnowledge: (actorScope) =>
+      projectWorldKnowledge({ actorScope, events: currentEvents() }),
     submit(input) {
       const events = eventStore.readAll();
       pendingEvents = [];

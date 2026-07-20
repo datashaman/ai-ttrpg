@@ -38,6 +38,10 @@ import {
   createInMemoryModelCallRecordStore,
   type ModelCallRecordStore,
 } from "./model-gateway.js";
+import {
+  createInMemoryConversationStore,
+  type ConversationStore,
+} from "./layered-memory.js";
 
 export interface AdventureIdentity {
   readonly id: string;
@@ -53,6 +57,7 @@ export interface OpenAdventure extends AdventureIdentity {
   readonly randomSource: RandomSource;
   readonly timelineStore: TimelineStore;
   readonly modelCallStore: ModelCallRecordStore;
+  readonly conversationStore: ConversationStore;
   close(): void;
 }
 
@@ -92,6 +97,7 @@ const openAdventure = (
   modelCallStore: ModelCallRecordStore,
 ): OpenAdventure => {
   let closed = false;
+  const storedConversation = createInMemoryConversationStore();
   const ensureOpen = (): void => {
     if (closed) throw new Error(`Adventure "${identity.id}" is closed.`);
   };
@@ -153,7 +159,26 @@ const openAdventure = (
         return modelCallStore.readAll();
       },
     },
+    conversationStore: {
+      enterScope: (scope) => {
+        ensureOpen();
+        storedConversation.enterScope(scope);
+      },
+      append: (record) => {
+        ensureOpen();
+        storedConversation.append(record);
+      },
+      readAll: () => {
+        ensureOpen();
+        return storedConversation.readAll();
+      },
+      clear: () => {
+        ensureOpen();
+        storedConversation.clear();
+      },
+    },
     close: () => {
+      storedConversation.clear();
       closed = true;
     },
   };

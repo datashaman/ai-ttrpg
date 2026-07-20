@@ -299,7 +299,7 @@ test("a Confrontation victory commits a favourable Adventure ending", async () =
   await playConfrontationExchange(eventStore, 690);
   const victory = await playConfrontationExchange(eventStore, 690);
 
-  assert.equal(victory.state.confrontation?.status, "victory");
+  assert.equal(victory.state.confrontation, null);
   assert.equal(victory.state.adventureEnding?.kind, "favourable");
   assert.equal(victory.state.adventureEnding?.id, "cellar-secured");
   assert.deepEqual(
@@ -314,7 +314,7 @@ test("Defeat enters a consequence Scene before an adverse Adventure ending", asy
 
   await playConfrontationExchange(eventStore, 8);
   const defeat = await playConfrontationExchange(eventStore, 8);
-  assert.equal(defeat.state.confrontation?.status, "defeat");
+  assert.equal(defeat.state.confrontation, null);
   assert.equal(defeat.state.activeScene, "consequence");
   assert.equal(defeat.state.adventureEnding, null);
 

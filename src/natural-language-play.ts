@@ -1,4 +1,7 @@
+import { randomUUID } from "node:crypto";
+
 import {
+  createInMemoryConversationStore,
   createInMemoryEventStore,
   createStructuredPlayApplication,
   type ApplicationView,
@@ -9,6 +12,11 @@ import {
   type StructuredPlayOptions,
   type TimelineStore,
 } from "./structured-play.js";
+import type {
+  ConversationClassification,
+  ConversationStore,
+} from "./layered-memory.js";
+import { isConversationClassification } from "./layered-memory.js";
 import {
   hasExactKeys,
   immutableSnapshot,
@@ -38,13 +46,7 @@ import {
   type StructuredPlayIO,
 } from "./structured-play-runner.js";
 
-export type InputClassification =
-  | "player-action"
-  | "in-character-speech"
-  | "rules-query"
-  | "out-of-character-request"
-  | "table-chat"
-  | "system-command";
+export type InputClassification = ConversationClassification;
 
 export interface KnownEntity {
   readonly id: string;
@@ -74,6 +76,7 @@ export interface NaturalLanguagePlayOptions {
   readonly interpreter?: InterpretationModel;
   readonly modelGateway?: ModelGateway;
   readonly modelCallStore?: ModelCallRecordStore;
+  readonly conversationStore?: ConversationStore;
   readonly evidenceBudget?: number;
   readonly eventStore?: EventStore;
   readonly timelineStore?: TimelineStore;
@@ -598,18 +601,29 @@ const writeSafeFailure = (
 const createApplication = (
   options: NaturalLanguagePlayOptions,
   eventStore: EventStore,
-) =>
-  createStructuredPlayApplication(
+) => {
+  const applicationOptions = applicationOptionsWithConversation(options);
+  return createStructuredPlayApplication(
     options.timelineStore !== undefined
-      ? { ...options.applicationOptions, timelineStore: options.timelineStore }
+      ? { ...applicationOptions, timelineStore: options.timelineStore }
       : options.randomSource === undefined
-        ? { ...options.applicationOptions, eventStore }
+        ? { ...applicationOptions, eventStore }
         : {
-            ...options.applicationOptions,
+            ...applicationOptions,
             eventStore,
             randomSource: options.randomSource,
           },
   );
+};
+
+const applicationOptionsWithConversation = (
+  options: NaturalLanguagePlayOptions,
+): Omit<StructuredPlayOptions, "eventStore" | "randomSource" | "timelineStore"> => ({
+  ...options.applicationOptions,
+  ...(options.conversationStore === undefined
+    ? {}
+    : { conversationStore: options.conversationStore }),
+});
 
 const runThroughStructuredPlay = (
   options: NaturalLanguagePlayOptions,
@@ -626,9 +640,7 @@ const runThroughStructuredPlay = (
     ...(options.randomSource === undefined
       ? {}
       : { randomSource: options.randomSource }),
-    ...(options.applicationOptions === undefined
-      ? {}
-      : { applicationOptions: options.applicationOptions }),
+    applicationOptions: applicationOptionsWithConversation(options),
     ...(options.narrator === undefined ? {} : { narrator: options.narrator }),
     ...(options.modelGateway === undefined
       ? {}
@@ -678,6 +690,24 @@ const appendUncorrelatedModelCall = (
       fallbackOutcome,
     }),
   );
+
+const conversationClassificationFrom = (
+  interpretation: unknown,
+): ConversationClassification | null => {
+  if (!isRecord(interpretation)) return null;
+  const classification = interpretation.classification;
+  return isConversationClassification(classification) ? classification : null;
+};
+
+const recordConversation = (
+  store: ConversationStore | undefined,
+  interpretation: unknown,
+  content: string,
+): void => {
+  const classification = conversationClassificationFrom(interpretation);
+  if (store === undefined || classification === null) return;
+  store.append({ id: randomUUID(), classification, content });
+};
 
 const explainRulesQuery = async ({
   options,
@@ -748,8 +778,15 @@ const explainRulesQuery = async ({
 };
 
 export const runNaturalLanguagePlay = async (
-  options: NaturalLanguagePlayOptions,
+  suppliedOptions: NaturalLanguagePlayOptions,
 ): Promise<NaturalLanguagePlayResult> => {
+  const options: NaturalLanguagePlayOptions =
+    suppliedOptions.conversationStore === undefined
+      ? {
+          ...suppliedOptions,
+          conversationStore: createInMemoryConversationStore(),
+        }
+      : suppliedOptions;
   const eventStore = options.eventStore ?? createInMemoryEventStore();
   const modelCallStore =
     options.modelCallStore ?? createInMemoryModelCallRecordStore();
@@ -866,6 +903,8 @@ export const runNaturalLanguagePlay = async (
     return withoutInterpretedCommand(view, modelCallStore);
   }
   if (isRulesQuery(interpretation, request)) {
+    recordConversation(options.conversationStore, interpretation, utterance);
+    view = app.view();
     if (gatewayExecution !== null) {
       appendUncorrelatedModelCall(
         modelCallStore,
@@ -886,6 +925,8 @@ export const runNaturalLanguagePlay = async (
   }
   const nonGameplay = nonGameplayClassification(interpretation, request);
   if (nonGameplay !== null) {
+    recordConversation(options.conversationStore, interpretation, utterance);
+    view = app.view();
     if (gatewayExecution !== null) {
       appendUncorrelatedModelCall(
         modelCallStore,
@@ -924,6 +965,8 @@ export const runNaturalLanguagePlay = async (
     );
     return withoutInterpretedCommand(view, modelCallStore);
   }
+
+  recordConversation(options.conversationStore, interpretation, utterance);
 
   const actionIndex = view.availableActions.findIndex(
     (action) => action.id === selected.action.id,

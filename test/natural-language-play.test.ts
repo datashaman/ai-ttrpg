@@ -728,7 +728,7 @@ test("natural-language play reaches a Confrontation ending", async () => {
     ["c", "d"],
   );
 
-  assert.equal(result.state.confrontation?.status, "victory");
+  assert.equal(result.state.confrontation, null);
   assert.equal(result.state.adventureEnding?.kind, "favourable");
   assert.equal(result.state.adventureEnding?.id, "cellar-secured");
   assert.ok(
