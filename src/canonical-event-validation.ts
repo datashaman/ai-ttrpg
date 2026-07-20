@@ -24,7 +24,6 @@ const isArrayOf = (
   predicate: (entry: unknown) => boolean,
 ): value is unknown[] => Array.isArray(value) && value.every(predicate);
 
-const scenes = ["arrival", "discovery", "confrontation", "consequence"] as const;
 const traits = ["Might", "Wits", "Presence"] as const;
 const outcomes = ["Setback", "Success with Cost", "Clean Success"] as const;
 const likelihoods = ["Unlikely", "Even", "Likely"] as const;
@@ -370,17 +369,17 @@ type PayloadValidator = (payload: ValueObject) => boolean;
 
 const payloadValidators = {
   PlayerCharacterConfigured: isPlayerCharacter,
-  SceneStarted: (payload) => isOneOf(payload.scene, scenes),
+  SceneStarted: (payload) => isString(payload.scene),
   WorldKnowledgeEstablished: isWorldKnowledgeEstablishedPayload,
   WorldKnowledgeRevealed: isWorldKnowledgeRevealedPayload,
   SceneTransitioned: (payload) =>
-    isOneOf(payload.from, scenes) && isOneOf(payload.to, scenes),
+    isString(payload.from) && isString(payload.to),
   ConfrontationStarted: (payload) =>
     isConfrontationDefinition(payload.definition),
   FreeActionCompleted: (payload) =>
     isString(payload.actionId) && isEstablishedFact(payload.establishedFact),
   AdventureEnded: (payload) =>
-    isOneOf(payload.from, scenes) && isAdventureEnding(payload.ending),
+    isString(payload.from) && isAdventureEnding(payload.ending),
   CheckProposalCreated: (payload) => isCheckProposal(payload.proposal),
   CheckProposalReplaced: (payload) =>
     isString(payload.supersededProposalId) &&

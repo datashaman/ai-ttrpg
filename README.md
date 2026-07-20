@@ -146,6 +146,16 @@ required Player choices and deterministic resolution finish; invalid claims
 select the deterministic summary, and presentation-only regeneration cannot
 append events or change projections.
 
+The bounded Milestone B journey in `src/ten-scene-adventure.ts` composes these
+boundaries across ten authored Scenes. The same confirmed choices complete it
+through offline Structured Play or scripted model assistance with equivalent
+commands, canonical events, random results, projections, lifecycle exits, and
+ending. Its release scenario also exercises a reviewed Adventure Markdown
+Reveal, exact published-rule citations, attributable retrieval, a Game Master
+checkpoint, deterministic Narration and rules fallbacks, Pending Choice and
+Scene-boundary restoration, Timeline branches around a discovery, and portable
+export/import that excludes Model Call Records and conversation context.
+
 For development:
 
 ```sh
