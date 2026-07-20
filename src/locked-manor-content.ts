@@ -8,6 +8,7 @@ import type {
   FreeActionDefinition,
   MechanicalEffect,
   OracleActionDefinition,
+  RevealDefinition,
   SceneTransitionDefinition,
 } from "./structured-play.js";
 import type { WorldKnowledgeEstablishedPayload } from "./world-knowledge.js";
@@ -24,6 +25,18 @@ export const DEFAULT_AUTHORED_WORLD_KNOWLEDGE: readonly WorldKnowledgeEstablishe
     },
     visibility: "Game Master-only",
     knowledgeScope: ["Game Master"],
+  },
+];
+
+export const DEFAULT_REVEALS: readonly RevealDefinition[] = [
+  {
+    id: "examine-housekeeper-insignia",
+    label: "Examine the housekeeper's concealed insignia",
+    kind: "Reveal",
+    worldKnowledgeId: "cellar-guardian-identity",
+    availableInScenes: ["discovery"],
+    requiredFactIds: ["side-door-open"],
+    knowledgeScope: ["Game Master", "Player Character"],
   },
 ];
 

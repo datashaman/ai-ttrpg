@@ -32,6 +32,11 @@ export interface WorldKnowledgeEstablishedPayload {
   readonly knowledgeScope: readonly KnowledgeScope[];
 }
 
+export interface WorldKnowledgeRevealedPayload {
+  readonly worldKnowledgeId: string;
+  readonly knowledgeScope: readonly KnowledgeScope[];
+}
+
 export interface WorldKnowledgeProjection {
   readonly actorScope: WorldKnowledgeActorScope;
   readonly entries: readonly WorldKnowledgeEntry[];
@@ -51,7 +56,10 @@ export type WorldKnowledgeErrorCode =
   | "INVALID_ACTOR_SCOPE"
   | "INVALID_KNOWLEDGE_ENTRY"
   | "DUPLICATE_KNOWLEDGE_ID"
-  | "CONTRADICTORY_KNOWLEDGE_ID";
+  | "CONTRADICTORY_KNOWLEDGE_ID"
+  | "INVALID_REVEAL"
+  | "KNOWLEDGE_NOT_FOUND"
+  | "KNOWLEDGE_ALREADY_REVEALED";
 
 export class WorldKnowledgeError extends Error {
   readonly code: WorldKnowledgeErrorCode;
@@ -133,6 +141,21 @@ export const isWorldKnowledgeEstablishedPayload = (
     new Set(knowledgeScope).size === knowledgeScope.length
   );
 };
+
+export const isWorldKnowledgeRevealedPayload = (
+  value: unknown,
+): value is WorldKnowledgeRevealedPayload =>
+  isRecord(value) &&
+  isNonEmptyString(value.worldKnowledgeId) &&
+  isPlayerCharacterRevealScope(value.knowledgeScope);
+
+export const isPlayerCharacterRevealScope = (
+  value: unknown,
+): value is readonly ["Game Master", "Player Character"] =>
+  Array.isArray(value) &&
+  value.length === 2 &&
+  value[0] === "Game Master" &&
+  value[1] === "Player Character";
 
 const authoredEntryEstablishedBy = (
   event: Extract<CanonicalEvent, { readonly type: "WorldKnowledgeEstablished" }>,
@@ -226,13 +249,40 @@ const entriesEstablishedBy = (
   return [];
 };
 
-const normalizedEntries = (
+const replayWorldKnowledgeEntries = (
   events: readonly CanonicalEvent[],
 ): readonly WorldKnowledgeEntry[] => {
   const entries = new Map<string, WorldKnowledgeEntry>();
-  events
-    .flatMap(entriesEstablishedBy)
-    .forEach((entry) => insertUniqueEntry(entries, entry));
+  events.forEach((event) => {
+    entriesEstablishedBy(event).forEach((entry) =>
+      insertUniqueEntry(entries, entry),
+    );
+    if (event.type !== "WorldKnowledgeRevealed") return;
+    if (!isWorldKnowledgeRevealedPayload(event.payload)) {
+      throw new WorldKnowledgeError(
+        "INVALID_REVEAL",
+        "World Knowledge Reveal metadata is invalid.",
+      );
+    }
+    const existing = entries.get(event.payload.worldKnowledgeId);
+    if (existing === undefined) {
+      throw new WorldKnowledgeError(
+        "KNOWLEDGE_NOT_FOUND",
+        "World Knowledge Reveal target does not exist.",
+      );
+    }
+    if (existing.visibility === "Player-visible") {
+      throw new WorldKnowledgeError(
+        "KNOWLEDGE_ALREADY_REVEALED",
+        "World Knowledge is already Player-visible.",
+      );
+    }
+    entries.set(existing.id, {
+      ...existing,
+      visibility: "Player-visible",
+      knowledgeScope: event.payload.knowledgeScope,
+    });
+  });
   return [...entries.values()];
 };
 
@@ -265,19 +315,17 @@ const isVisibleTo = (
 export const validateWorldKnowledgeAppend = (
   input: WorldKnowledgeAppendValidation,
 ): void => {
-  const established = new Map(
-    normalizedEntries(input.currentEvents).map((entry) => [entry.id, entry]),
-  );
-  input.proposedEvents
-    .flatMap(entriesEstablishedBy)
-    .forEach((entry) => insertUniqueEntry(established, entry));
+  replayWorldKnowledgeEntries([
+    ...input.currentEvents,
+    ...input.proposedEvents,
+  ]);
 };
 
 export const projectWorldKnowledge = (
   query: WorldKnowledgeQuery,
 ): WorldKnowledgeProjection => {
   assertWorldKnowledgeActorScope(query.actorScope);
-  const entries = normalizedEntries(query.events).filter((entry) =>
+  const entries = replayWorldKnowledgeEntries(query.events).filter((entry) =>
     isVisibleTo(entry, query.actorScope),
   );
   return immutableSnapshot({ actorScope: query.actorScope, entries });

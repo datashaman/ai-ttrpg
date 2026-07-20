@@ -8,6 +8,7 @@ import {
   DEFAULT_CONFRONTATION,
   DEFAULT_FREE_ACTIONS,
   DEFAULT_ORACLE_ACTIONS,
+  DEFAULT_REVEALS,
   DEFAULT_SCENE_TRANSITIONS,
   FRESH_FOOTPRINTS,
 } from "./locked-manor-content.js";
@@ -17,7 +18,11 @@ import {
 } from "./random-source.js";
 import {
   filterCanonicalEventsVisibleTo,
+  isPlayerCharacterRevealScope,
+  projectWorldKnowledge,
+  type KnowledgeScope,
   type WorldKnowledgeEstablishedPayload,
+  type WorldKnowledgeRevealedPayload,
   validateWorldKnowledgeAppend,
   WorldKnowledgeError,
 } from "./world-knowledge.js";
@@ -326,6 +331,7 @@ interface EventPayloads {
   readonly PlayerCharacterConfigured: PlayerCharacter;
   readonly SceneStarted: { readonly scene: Scene };
   readonly WorldKnowledgeEstablished: WorldKnowledgeEstablishedPayload;
+  readonly WorldKnowledgeRevealed: WorldKnowledgeRevealedPayload;
   readonly SceneTransitioned: {
     readonly from: Scene;
     readonly to: Scene;
@@ -497,6 +503,19 @@ export interface FreeActionDefinition extends FreeAction {
   readonly requiredFactIds: readonly string[];
 }
 
+export interface RevealAction {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: "Reveal";
+}
+
+export interface RevealDefinition extends RevealAction {
+  readonly worldKnowledgeId: string;
+  readonly availableInScenes: readonly Scene[];
+  readonly requiredFactIds: readonly string[];
+  readonly knowledgeScope: readonly KnowledgeScope[];
+}
+
 export interface AdventureEndingDefinition {
   readonly from: Scene;
   readonly requiredFactIds: readonly string[];
@@ -553,6 +572,7 @@ export interface TimelineSelectionAction {
 
 export type AvailableAction =
   | FreeAction
+  | RevealAction
   | CheckAction
   | OracleAction
   | RecoveryAction
@@ -699,6 +719,7 @@ export interface StructuredPlayOptions {
   readonly freeActions?: readonly FreeActionDefinition[];
   readonly adventureEndings?: readonly AdventureEndingDefinition[];
   readonly authoredWorldKnowledge?: readonly WorldKnowledgeEstablishedPayload[];
+  readonly reveals?: readonly RevealDefinition[];
   readonly timelineStore?: TimelineStore;
 }
 
@@ -967,6 +988,22 @@ const validateFreeAction = (action: FreeActionDefinition): void => {
   }
 };
 
+const validateReveal = (reveal: RevealDefinition): void => {
+  if (
+    reveal.id.trim() === "" ||
+    reveal.label.trim() === "" ||
+    reveal.kind !== "Reveal" ||
+    reveal.worldKnowledgeId.trim() === "" ||
+    reveal.availableInScenes.length === 0 ||
+    new Set(reveal.availableInScenes).size !== reveal.availableInScenes.length ||
+    new Set(reveal.requiredFactIds).size !== reveal.requiredFactIds.length ||
+    reveal.requiredFactIds.some((factId) => factId.trim() === "") ||
+    !isPlayerCharacterRevealScope(reveal.knowledgeScope)
+  ) {
+    throw new Error(`Invalid Reveal definition: ${reveal.id || "<unknown>"}.`);
+  }
+};
+
 const validateAdventureEnding = (
   definition: AdventureEndingDefinition,
 ): void => {
@@ -1224,6 +1261,7 @@ const project = (events: readonly CanonicalEvent[]): GameState =>
       case "SceneStarted":
         return { ...state, activeScene: event.payload.scene };
       case "WorldKnowledgeEstablished":
+      case "WorldKnowledgeRevealed":
         return state;
       case "SceneTransitioned":
         return {
@@ -1487,10 +1525,12 @@ export const createStructuredPlayApplication = (
     options.adventureEndings ?? DEFAULT_ADVENTURE_ENDINGS;
   const authoredWorldKnowledge =
     options.authoredWorldKnowledge ?? DEFAULT_AUTHORED_WORLD_KNOWLEDGE;
+  const reveals = options.reveals ?? DEFAULT_REVEALS;
   checkActions.forEach(validateCheckAction);
   oracleActions.forEach(validateOracleAction);
   sceneTransitions.forEach(validateSceneTransition);
   freeActions.forEach(validateFreeAction);
+  reveals.forEach(validateReveal);
   adventureEndings.forEach(validateAdventureEnding);
   validateConfrontation(confrontation);
   const checkEstablishedFactIds = new Set(
@@ -1611,6 +1651,25 @@ export const createStructuredPlayApplication = (
       sceneTransitions,
       freeActions,
     ),
+    ...reveals
+      .filter(
+        (reveal) =>
+          state.activeScene !== null &&
+          state.pendingCheckProposal === null &&
+          state.pendingChoice === null &&
+          state.pendingNarratorRecommendation === null &&
+          reveal.availableInScenes.includes(state.activeScene) &&
+          requiredFactsAreEstablished(reveal.requiredFactIds, state) &&
+          projectWorldKnowledge({
+            actorScope: "Game Master",
+            events: currentEvents(),
+          }).entries.some(
+            (entry) =>
+              entry.id === reveal.worldKnowledgeId &&
+              entry.visibility === "Game Master-only",
+          ),
+      )
+      .map(({ id, label, kind }) => ({ id, label, kind })),
     ...timelineActions(),
   ];
 
@@ -1663,7 +1722,7 @@ export const createStructuredPlayApplication = (
   };
 
   const commitPendingEvents = (
-    message: string,
+    message: string | (() => string),
     appendedEvents: readonly CanonicalEvent[],
   ): AcceptedResult | RejectedResult => {
     let acceptedEvents = appendedEvents;
@@ -1706,7 +1765,7 @@ export const createStructuredPlayApplication = (
     const state = project(currentEvents());
     return {
       status: "accepted",
-      message,
+      message: typeof message === "string" ? message : message(),
       state,
       availableActions: currentAvailableActions(state),
       timeline: playerTimelineView(),
@@ -2373,18 +2432,45 @@ export const createStructuredPlayApplication = (
             state,
           );
         }
-        const actionIsAvailable = availableActionsFor(
-          state,
-          checkActions,
-          oracleActions,
-          sceneTransitions,
-          freeActions,
-        ).some((action) => action.id === input.actionId);
+        const actionIsAvailable = currentAvailableActions(state).some(
+          (action) =>
+            action.id === input.actionId &&
+            action.kind !== "Timeline Branch" &&
+            action.kind !== "Timeline Selection",
+        );
         if (!actionIsAvailable) {
           return reject(
             "action-unavailable",
             "That action is not available in the current Scene.",
             state,
+          );
+        }
+
+        const reveal = reveals.find(
+          (candidate) => candidate.id === input.actionId,
+        );
+        if (reveal !== undefined) {
+          const event = append(
+            "WorldKnowledgeRevealed",
+            {
+              worldKnowledgeId: reveal.worldKnowledgeId,
+              knowledgeScope: reveal.knowledgeScope,
+            },
+            commandId,
+          );
+          return commitPendingEvents(
+            () => {
+              const revealedEntry = projectWorldKnowledge({
+                actorScope: "Player",
+                events: currentEvents(),
+              }).entries.find(
+                (entry) => entry.id === reveal.worldKnowledgeId,
+              );
+              return revealedEntry === undefined
+                ? "Knowledge revealed."
+                : `Revealed: ${revealedEntry.text}`;
+            },
+            [event],
           );
         }
 
