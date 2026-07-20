@@ -137,11 +137,15 @@ A canonical, non-probabilistic proposition about the game world whose truth has 
 _Avoid_: lore, canon, hidden fact
 
 **World Knowledge Entry**:
-A stable, attributable representation of an Established Fact, carrying its Provenance, Visibility, and Knowledge Scope without becoming a separate source of game truth.
+A stable, attributable projection item representing either an Established Fact or a World Knowledge Relationship, carrying its Provenance, Visibility, and Knowledge Scope without becoming a separate source of game truth.
 _Avoid_: lore record, model memory, knowledge-base fact
 
+**World Knowledge Relationship**:
+A stable, typed connection between two Established Fact entry IDs, carrying its own Provenance, Visibility, and Knowledge Scope while remaining a projection of canonical game truth. A relationship is attributable knowledge about how established subjects connect; it is not a separate Established Fact or source of truth. Its canonical Reveal also reveals its endpoint entries so the relationship never exceeds their Visibility.
+_Avoid_: inferred link, model association, knowledge-graph truth
+
 **Provenance**:
-The attributable origin of a World Knowledge Entry, identifying how its Established Fact entered canonical game truth and the stable source that supports that origin.
+The attributable origin of a World Knowledge Entry, identifying how its Established Fact or World Knowledge Relationship entered canonical game truth and the stable source that supports that origin.
 _Avoid_: citation text, confidence, generated explanation
 
 **Visibility**:
@@ -149,11 +153,11 @@ The explicit boundary that determines which application actor scopes may observe
 _Avoid_: permission, secrecy convention, prompt filter
 
 **Knowledge Scope**:
-The in-world boundary describing who knows an Established Fact. It may change through a Reveal without changing the fact's truth or original Provenance.
+The in-world boundary describing who knows an Established Fact or World Knowledge Relationship. It may change through a Reveal without changing the represented truth or original Provenance.
 _Avoid_: access control, audience, confidence
 
 **Reveal**:
-A canonical change that expands the Knowledge Scope of an existing World Knowledge Entry while preserving its Established Fact and original Provenance. Displaying, narrating, or citing hidden knowledge is not a Reveal.
+A canonical change that expands the Knowledge Scope of an existing World Knowledge Entry while preserving the represented Established Fact or World Knowledge Relationship and its original Provenance. Revealing a relationship also reveals its endpoint entries so their Visibility remains equal. Displaying, narrating, or citing hidden knowledge is not a Reveal.
 _Avoid_: disclosure, narration, new fact
 
 **Evidence Bundle**:

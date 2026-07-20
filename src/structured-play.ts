@@ -513,6 +513,7 @@ export interface RevealDefinition extends RevealAction {
   readonly worldKnowledgeId: string;
   readonly availableInScenes: readonly Scene[];
   readonly requiredFactIds: readonly string[];
+  readonly requiredWorldKnowledgeIds?: readonly string[];
   readonly knowledgeScope: readonly KnowledgeScope[];
 }
 
@@ -998,6 +999,12 @@ const validateReveal = (reveal: RevealDefinition): void => {
     new Set(reveal.availableInScenes).size !== reveal.availableInScenes.length ||
     new Set(reveal.requiredFactIds).size !== reveal.requiredFactIds.length ||
     reveal.requiredFactIds.some((factId) => factId.trim() === "") ||
+    (reveal.requiredWorldKnowledgeIds !== undefined &&
+      (new Set(reveal.requiredWorldKnowledgeIds).size !==
+        reveal.requiredWorldKnowledgeIds.length ||
+        reveal.requiredWorldKnowledgeIds.some(
+          (knowledgeId) => knowledgeId.trim() === "",
+        ))) ||
     !isPlayerCharacterRevealScope(reveal.knowledgeScope)
   ) {
     throw new Error(`Invalid Reveal definition: ${reveal.id || "<unknown>"}.`);
@@ -1660,6 +1667,12 @@ export const createStructuredPlayApplication = (
           state.pendingNarratorRecommendation === null &&
           reveal.availableInScenes.includes(state.activeScene) &&
           requiredFactsAreEstablished(reveal.requiredFactIds, state) &&
+          (reveal.requiredWorldKnowledgeIds ?? []).every((knowledgeId) =>
+            projectWorldKnowledge({
+              actorScope: "Player",
+              events: currentEvents(),
+            }).entries.some((entry) => entry.id === knowledgeId),
+          ) &&
           projectWorldKnowledge({
             actorScope: "Game Master",
             events: currentEvents(),
@@ -2468,7 +2481,11 @@ export const createStructuredPlayApplication = (
               );
               return revealedEntry === undefined
                 ? "Knowledge revealed."
-                : `Revealed: ${revealedEntry.text}`;
+                : `Revealed: ${
+                    revealedEntry.kind === "Established Fact"
+                      ? revealedEntry.text
+                      : revealedEntry.content
+                  }`;
             },
             [event],
           );
