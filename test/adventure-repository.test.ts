@@ -237,7 +237,7 @@ test("opening an unavailable or unreadable local Adventure reports a concise dia
 
   writeFileSync(
     join(directory, created.id, "events.jsonl"),
-    `${JSON.stringify(envelope(1, "SceneStarted", { scene: "not-a-scene" }))}\n`,
+    `${JSON.stringify(envelope(1, "SceneStarted", { scene: "" }))}\n`,
   );
   assert.throws(
     () => repository.open(created.id),
