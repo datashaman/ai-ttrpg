@@ -180,6 +180,18 @@ _Avoid_: canonical event, Adventure history, model memory
 One stateless request for interpretation, rules explanation, or narration, containing explicit task input and one Evidence Bundle. A Model Task has no provider-managed conversational memory and cannot directly establish game truth.
 _Avoid_: chat session, agent turn, conversation memory
 
+**Rule Source**:
+A bounded, versioned source document segmented into stable anchored passages with preserved text and layout metadata. A Rule Source is evidence for Rule Authoring; ingesting it does not approve, register, or execute a rule.
+_Avoid_: executable ruleset, prompt text, unanchored document
+
+**Rule Candidate**:
+An immutable, non-executable normalized rule proposed from a Rule Source. Every field carries exact source-passage citations or an Authored Interpretation with reviewer identity; only a later explicit review may approve it for publication.
+_Avoid_: approved rule, runtime rule, extracted code
+
+**Authored Interpretation**:
+A reviewer-attributed Rule Candidate field whose normalized meaning is not stated exactly by a source passage. It records deliberate human authorship and cannot substitute for approval.
+_Avoid_: model inference, uncited field, automatic normalization
+
 **Micro-ruleset**:
 The original, intentionally small ruleset used to prove the first playable experience. It resolves uncertain actions with 2d6 plus a relevant trait and distinguishes a Setback, Success with Cost, and Clean Success.
 _Avoid_: demo rules, test rules, house rules
