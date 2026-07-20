@@ -66,6 +66,16 @@ Narration, model calls, diagnostics, replay, and portable archives retain the
 same boundary. Format-v1 knowledge that used the original generic `Player
 Character` scope remains assigned to the primary Player Character.
 
+Integrations may render an actor-scoped World Knowledge projection as Adventure
+Markdown: structured JSON frontmatter for machine review followed by derived,
+descriptive prose for people. Rereading an unchanged document is a no-op. An
+external edit is compared with both its exported revision and current canonical
+state; stale, simultaneous, contradictory, malformed, and unauthorized edits
+produce a Review Conflict without changing the Adventure. A supported Reveal
+edit becomes a validated command, and World Knowledge changes only if the
+application commits its canonical Reveal event. Adventure Markdown is therefore
+a review surface, not a second history or a replacement for portable archives.
+
 The locked manor is a non-linear graph rather than a mandatory sequence. Visible Oracle answers and Established Facts can route the Player from arrival into social discovery or directly to the Confrontation. Social discovery can reveal the cellar route or resolve the mystery without a Confrontation. The Player may also withdraw with the mystery unresolved, while Confrontation victory and Defeat lead to favourable and adverse endings. Scene transitions and Adventure endings occur only when committed events satisfy pre-authored exit conditions; the Narrator cannot end either one. The Structured Play path completes every route with no language-model calls.
 
 Structured Play also exposes Timeline controls after the first accepted event. The Player can branch from any accepted event position to explore another choice without deleting or rewriting the source Timeline, and can select any existing Timeline to inspect or resume it. Each Timeline appends and projects independently. A child inherits the parent's random-stream position at its branch point, so repeating identical confirmed play reproduces the same Check and Oracle rolls rather than granting a reroll. Both repository adapters share this contract, and the local durable repository preserves every Timeline history, relationship, active selection, and random position across process restarts.
