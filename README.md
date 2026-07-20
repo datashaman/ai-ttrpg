@@ -122,6 +122,17 @@ Structured Play also exposes Timeline controls after the first accepted event. T
 
 Applications may provide a replaceable interpretation model for natural-language play. It receives an immutable snapshot of the Player's utterance, Player-visible Established Facts and entities, and currently available capabilities—never the application or event store. Its strictly validated classification may select one exposed capability, but application code creates the command and routes it through the same Check Proposal, Pending Choice, Oracle Likelihood, rules, and event boundaries as Structured Play. Ambiguity, unavailable capabilities, nonexistent entity references, invalid schema, timeout, or adversarial authority fields append no gameplay events and ask for clarification or reject safely.
 
+The expanded provider-neutral contract separates Discourse Classification,
+intent extraction, Rule Match Suggestion, and State Proposal tasks. Rule matching
+has explicit `no-rule` and `needs-adjudication` outcomes. A State Proposal becomes
+only a candidate command after actor authorization, exact schema, entity and
+capability existence, Evidence Bundle citations, exact ruleset version, and
+domain invariants all pass. The versioned 100-example baseline and results are
+documented in the [Model Task evaluation report](docs/model-task-evaluation-report.md).
+Expanded task results also expose Model Call, Evidence Bundle, evidence-item,
+and exact rule IDs so a presentation can render its evidence and rule trace on
+demand while the underlying Model Call Records remain outside the Timeline.
+
 Applications may also provide a replaceable presentation model to narrate an outcome only after its events commit. The model receives an immutable snapshot containing only Player-visible Established Facts, the committed resolution trace, and the just-appended events—never the private deterministic fallback, an application command, or an event-store handle. Schema-invalid, contradictory, timed-out, or mechanically ungrounded output falls back to the private deterministic summary without replaying the action. The Player may regenerate narration or ask a grounded rules question repeatedly from the same committed inputs; neither interaction appends events or changes projected game state. Without a presentation model, Structured Play continues to use deterministic summaries.
 
 For development:

@@ -167,7 +167,8 @@ test("OpenAI adapter satisfies every shared Model Task provider contract", async
                 {
                   type: "output_text",
                   text: JSON.stringify(
-                    task.type === "interpret-player-input"
+                    task.type === "interpret-player-input" ||
+                      task.type === "suggest-rule-match"
                       ? { result: contractCase.expectedOutput }
                       : contractCase.expectedOutput,
                   ),
@@ -193,6 +194,10 @@ test("OpenAI adapter satisfies every shared Model Task provider contract", async
   });
   assert.deepEqual(requestedTaskTypes, [
     "interpret-player-input",
+    "classify-discourse",
+    "extract-intent",
+    "suggest-rule-match",
+    "propose-state-change",
     "explain-rules",
     "narrate-committed-outcome",
   ]);

@@ -188,6 +188,18 @@ _Avoid_: canonical event, Adventure history, model memory
 One stateless request for interpretation, rules explanation, or narration, containing explicit task input and one Evidence Bundle. A Model Task has no provider-managed conversational memory and cannot directly establish game truth.
 _Avoid_: chat session, agent turn, conversation memory
 
+**Discourse Classification**:
+A stateless Model Task result that assigns one Player utterance to exactly one of Player action, in-character speech, rules query, out-of-character request, table chat, or system command. Classification routes later work but cannot itself authorize a command or append an event.
+_Avoid_: intent, command, free-text routing
+
+**Rule Match Suggestion**:
+A strictly validated Model Task result that identifies one approved rule from its Evidence Bundle, reports that no supplied rule applies, or requests adjudication between multiple supplied candidates. A suggestion cannot approve, execute, or invent a rule.
+_Avoid_: rule decision, inferred rule, automatic adjudication
+
+**State Proposal**:
+A strictly shaped, non-canonical Model Task result that may become a candidate command only after application code validates actor authorization, exact shape, referenced entity and capability existence, Evidence Bundle citations, exact ruleset version, and domain invariants. A State Proposal never appends an event or applies a Mechanical Effect directly.
+_Avoid_: event, command, model action
+
 **Rule Source**:
 A bounded, versioned source document segmented into stable anchored passages with preserved text and layout metadata. A Rule Source is evidence for Rule Authoring; ingesting it does not approve, register, or execute a rule.
 _Avoid_: executable ruleset, prompt text, unanchored document
