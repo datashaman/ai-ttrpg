@@ -22,13 +22,22 @@ export interface ReviewExtractedField<Value> {
 
 export interface RuleValidationFinding {
   readonly code:
+    | "missing-input"
     | "unsupported-procedure"
     | "unsupported-outcome-range"
     | "unresolved-reference"
+    | "cyclic-reference"
     | "source-contradiction";
   readonly severity: "error";
-  readonly field: "source" | "procedure" | "outcomes";
+  readonly field:
+    | "name"
+    | "trigger"
+    | "prerequisites"
+    | "inputs"
+    | "procedure"
+    | "outcomes";
   readonly message: string;
+  readonly supportingPassages: readonly StableRuleSourcePassage[];
 }
 
 export interface RuleConformanceExample {
@@ -162,10 +171,99 @@ const reviewField = <Value>(
         reviewerId: field.reviewerId,
       };
 
+const citedPassages = <Value>(
+  field: CandidateRuleField<Value>,
+  supportsFinding: (text: string) => boolean,
+): readonly StableRuleSourcePassage[] =>
+  field.attribution === "source-citation"
+    ? field.passages.filter(({ text }) => supportsFinding(text))
+    : [];
+
+const procedurePassage = (text: string): boolean =>
+  /\b(?:roll|flip|draw|die|dice|d\d+)\b/i.test(text) ||
+  /\brelevant trait\b/i.test(text);
+
+const contradictoryOutcomePassage = (text: string): boolean => {
+  const contradictoryPatterns = [
+    /(?:6 or less|6-)\D{0,24}(?:success with cost|clean success)/,
+    /(?:success with cost|clean success)\D{0,24}(?:6 or less|6-)/,
+    /7\s*[-–]\s*9\D{0,24}(?:setback|clean success)/,
+    /(?:setback|clean success)\D{0,24}7\s*[-–]\s*9/,
+    /(?:10 or more|10\+)\D{0,24}(?:setback|success with cost)/,
+    /(?:setback|success with cost)\D{0,24}(?:10 or more|10\+)/,
+  ];
+  return text
+    .toLocaleLowerCase("en")
+    .split(/[;\n]/)
+    .some((clause) =>
+      contradictoryPatterns.some((pattern) => pattern.test(clause)),
+  );
+};
+
+const INSIGNIFICANT_SOURCE_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "before",
+  "check",
+  "is",
+  "of",
+  "or",
+  "the",
+  "to",
+  "use",
+  "when",
+]);
+
+const sourceConcepts = (text: string): ReadonlySet<string> =>
+  new Set(
+    (text.toLocaleLowerCase("en").match(/[a-z0-9]+/g) ?? [])
+      .map((word) => {
+        if (word.startsWith("uncertain")) return "uncertain";
+        if (word.endsWith("ed") && word.length > 5) return word.slice(0, -2);
+        if (word.endsWith("s") && word.length > 4) return word.slice(0, -1);
+        return word;
+      })
+      .filter((word) => !INSIGNIFICANT_SOURCE_WORDS.has(word)),
+  );
+
+const sharedSourceConceptCount = (left: string, right: string): number => {
+  const rightConcepts = sourceConcepts(right);
+  return [...sourceConcepts(left)].filter((word) => rightConcepts.has(word)).length;
+};
+
+const hasPolarityConflict = (candidateText: string, sourceText: string): boolean =>
+  /\b(?:no|not|never|without)\b/i.test(candidateText) !==
+  /\b(?:no|not|never|without)\b/i.test(sourceText);
+
 const validationFindings = (
   candidate: CitedRuleCandidate,
 ): readonly RuleValidationFinding[] => {
   const findings: RuleValidationFinding[] = [];
+  const stablePassage = (
+    sectionAnchor: string,
+    passage: CitedRuleCandidate["source"]["sections"][number]["passages"][number],
+  ): StableRuleSourcePassage => ({
+    documentId: candidate.source.document.id,
+    documentVersion: candidate.source.document.version,
+    sectionAnchor,
+    passageAnchor: passage.anchor,
+    text: passage.text,
+    layout: passage.layout,
+  });
+  const crossReferences = candidate.source.sections.flatMap((section) =>
+    section.passages
+      .filter(({ kind }) => kind === "cross-reference")
+      .map((passage) => ({ sectionAnchor: section.anchor, passage })),
+  );
+  const referenceTargetsFor = (text: string): readonly string[] =>
+    text
+      .replace(/^see\s+/i, "")
+      .replace(/[.]$/, "")
+      .split(/\s*(?:,|\band\b)\s*/i)
+      .map((target) => target.trim().toLocaleLowerCase("en"))
+      .filter((target) => target !== "");
   const referenceTargets = new Set(
     candidate.source.sections.flatMap((section) => [
       section.anchor.toLocaleLowerCase("en"),
@@ -173,25 +271,218 @@ const validationFindings = (
       ...section.passages.map(({ anchor }) => anchor.toLocaleLowerCase("en")),
     ]),
   );
-  for (const passage of candidate.source.sections.flatMap(
-    ({ passages }) => passages,
-  )) {
-    if (passage.kind !== "cross-reference") continue;
-    const targets = passage.text
-      .replace(/^see\s+/i, "")
-      .replace(/[.]$/, "")
-      .split(/\s*(?:,|\band\b)\s*/i)
-      .map((target) => target.trim().toLocaleLowerCase("en"))
-      .filter((target) => target !== "");
+  for (const { sectionAnchor, passage } of crossReferences) {
+    const targets = referenceTargetsFor(passage.text);
     const unresolved = targets.filter((target) => !referenceTargets.has(target));
     if (unresolved.length > 0) {
       findings.push({
         code: "unresolved-reference",
         severity: "error",
-        field: "source",
+        field: "prerequisites",
         message: `Source passage ${passage.anchor} has unresolved references: ${unresolved.join(", ")}.`,
+        supportingPassages: [stablePassage(sectionAnchor, passage)],
       });
     }
+  }
+  const crossReferenceByAnchor = new Map(
+    crossReferences.map((reference) => [
+      reference.passage.anchor.toLocaleLowerCase("en"),
+      reference,
+    ]),
+  );
+  const crossReferencesBySection = new Map<string, readonly string[]>();
+  for (const section of candidate.source.sections) {
+    const referenceAnchors = section.passages
+      .filter(({ kind }) => kind === "cross-reference")
+      .map(({ anchor }) => anchor.toLocaleLowerCase("en"));
+    crossReferencesBySection.set(
+      section.anchor.toLocaleLowerCase("en"),
+      referenceAnchors,
+    );
+    crossReferencesBySection.set(
+      section.heading.toLocaleLowerCase("en"),
+      referenceAnchors,
+    );
+  }
+  const referenceGraph = new Map(
+    crossReferences.map(({ passage }) => [
+      passage.anchor.toLocaleLowerCase("en"),
+      referenceTargetsFor(passage.text).flatMap((target) =>
+        crossReferenceByAnchor.has(target)
+          ? [target]
+          : (crossReferencesBySection.get(target) ?? []),
+      ),
+    ]),
+  );
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+  const stack: string[] = [];
+  const reportedCycles = new Set<string>();
+  const visitReference = (anchor: string): void => {
+    if (visited.has(anchor)) return;
+    if (visiting.has(anchor)) {
+      const cycleStart = stack.indexOf(anchor);
+      const cycleAnchors = [...stack.slice(cycleStart)].sort();
+      const cycleKey = cycleAnchors.join("\0");
+      if (!reportedCycles.has(cycleKey)) {
+        reportedCycles.add(cycleKey);
+        findings.push({
+          code: "cyclic-reference",
+          severity: "error",
+          field: "prerequisites",
+          message: `Rule Source cross-references contain a cycle: ${cycleAnchors.join(", ")}.`,
+          supportingPassages: cycleAnchors.flatMap((cycleAnchor) => {
+            const reference = crossReferenceByAnchor.get(cycleAnchor);
+            return reference === undefined
+              ? []
+              : [stablePassage(reference.sectionAnchor, reference.passage)];
+          }),
+        });
+      }
+      return;
+    }
+    visiting.add(anchor);
+    stack.push(anchor);
+    for (const target of referenceGraph.get(anchor) ?? []) {
+      visitReference(target);
+    }
+    stack.pop();
+    visiting.delete(anchor);
+    visited.add(anchor);
+  };
+  for (const anchor of [...referenceGraph.keys()].sort()) {
+    visitReference(anchor);
+  }
+  if (candidate.rule.name.attribution === "source-citation") {
+    const name = candidate.rule.name.value.trim().toLocaleLowerCase("en");
+    if (
+      !candidate.rule.name.passages.some(({ text }) =>
+        text.toLocaleLowerCase("en").includes(name) &&
+        !hasPolarityConflict(candidate.rule.name.value, text),
+      )
+    ) {
+      findings.push({
+        code: "source-contradiction",
+        severity: "error",
+        field: "name",
+        message: "The cited source passages contradict the normalized rule name.",
+        supportingPassages: citedPassages(
+          candidate.rule.name,
+          (text) =>
+            /\bcheck\b/i.test(text) ||
+            (text.toLocaleLowerCase("en").includes(name) &&
+              hasPolarityConflict(candidate.rule.name.value, text)),
+        ),
+      });
+    }
+  }
+  if (candidate.rule.trigger.attribution === "source-citation") {
+    const sourceText = candidate.rule.trigger.passages
+      .map(({ text }) => text)
+      .join("\n");
+    const contradictsTrigger =
+      sharedSourceConceptCount(candidate.rule.trigger.value, sourceText) < 2 ||
+      candidate.rule.trigger.passages.some(
+        ({ text }) =>
+          sharedSourceConceptCount(candidate.rule.trigger.value, text) >= 2 &&
+          hasPolarityConflict(candidate.rule.trigger.value, text),
+      ) ||
+      (/\b(?:always|unconditionally)\b/i.test(candidate.rule.trigger.value) &&
+        /\b(?:uncertain|uncertainty|when)\b/i.test(sourceText));
+    if (contradictsTrigger) {
+      findings.push({
+        code: "source-contradiction",
+        severity: "error",
+        field: "trigger",
+        message: "The cited source passages contradict the normalized rule trigger.",
+        supportingPassages: citedPassages(
+          candidate.rule.trigger,
+          (text) =>
+            sharedSourceConceptCount(candidate.rule.trigger.value, text) > 0 ||
+            /\b(?:uncertain|uncertainty|when)\b/i.test(text),
+        ),
+      });
+    }
+  }
+  if (candidate.rule.prerequisites.attribution === "source-citation") {
+    const sourceText = candidate.rule.prerequisites.passages
+      .map(({ text }) => text)
+      .join("\n");
+    const sourceStatesPrerequisites =
+      /\b(?:confirm|confirmed|must|required|requires|before)\b/i.test(sourceText);
+    const contradictsPrerequisites =
+      sourceStatesPrerequisites &&
+      candidate.rule.prerequisites.value.some(
+        (prerequisite) =>
+          sharedSourceConceptCount(prerequisite, sourceText) < 2 ||
+          candidate.rule.prerequisites.passages.some(
+            ({ text }) =>
+              sharedSourceConceptCount(prerequisite, text) >= 2 &&
+              hasPolarityConflict(prerequisite, text),
+          ),
+      );
+    if (contradictsPrerequisites) {
+      findings.push({
+        code: "source-contradiction",
+        severity: "error",
+        field: "prerequisites",
+        message: "The cited source passages contradict the normalized rule prerequisites.",
+        supportingPassages: citedPassages(
+          candidate.rule.prerequisites,
+          (text) =>
+            candidate.rule.prerequisites.value.some(
+              (prerequisite) =>
+                sharedSourceConceptCount(prerequisite, text) > 0 &&
+                (sharedSourceConceptCount(prerequisite, sourceText) < 2 ||
+                  hasPolarityConflict(prerequisite, text)),
+            ),
+        ),
+      });
+    }
+  }
+  if (candidate.rule.inputs.attribution === "source-citation") {
+    const unsupportedInputs = candidate.rule.inputs.value.filter(
+      (input) =>
+        !candidate.rule.inputs.passages.some(
+          ({ text }) =>
+            text
+              .toLocaleLowerCase("en")
+              .includes(input.trim().toLocaleLowerCase("en")) &&
+            !hasPolarityConflict(input, text),
+        ),
+    );
+    if (unsupportedInputs.length > 0) {
+      findings.push({
+        code: "source-contradiction",
+        severity: "error",
+        field: "inputs",
+        message: `The cited source passages do not support inputs: ${unsupportedInputs.join(", ")}.`,
+        supportingPassages: citedPassages(
+          candidate.rule.inputs,
+          procedurePassage,
+        ),
+      });
+    }
+  }
+  const normalizedInputs = candidate.rule.inputs.value.map((input) =>
+    input.trim().toLocaleLowerCase("en"),
+  );
+  const missingInputs = ["2d6", "relevant trait"].filter(
+    (input) => !normalizedInputs.includes(input),
+  );
+  if (
+    missingInputs.length > 0
+  ) {
+    findings.push({
+      code: "missing-input",
+      severity: "error",
+      field: "inputs",
+      message: "The deterministic Check requires inputs 2d6 and relevant Trait.",
+      supportingPassages: citedPassages(candidate.rule.inputs, (text) => {
+        const normalized = text.toLocaleLowerCase("en");
+        return missingInputs.some((input) => normalized.includes(input));
+      }),
+    });
   }
   if (candidate.rule.procedure.value !== "Roll 2d6 and add the relevant Trait.") {
     findings.push({
@@ -199,6 +490,10 @@ const validationFindings = (
       severity: "error",
       field: "procedure",
       message: "The deterministic runtime supports exactly 2d6 plus the relevant Trait.",
+      supportingPassages: citedPassages(
+        candidate.rule.procedure,
+        procedurePassage,
+      ),
     });
   }
   for (const outcome of candidate.rule.outcomes.value) {
@@ -208,6 +503,12 @@ const validationFindings = (
         severity: "error",
         field: "outcomes",
         message: `${outcome.name} must use range ${CHECK_OUTCOME_RANGES[outcome.name]}.`,
+        supportingPassages: citedPassages(
+          candidate.rule.outcomes,
+          (text) => text.toLocaleLowerCase("en").includes(
+            outcome.name.toLocaleLowerCase("en"),
+          ),
+        ),
       });
     }
   }
@@ -223,32 +524,27 @@ const validationFindings = (
       severity: "error",
       field: "procedure",
       message: "The cited source passages do not support the normalized Check procedure.",
+      supportingPassages: citedPassages(
+        candidate.rule.procedure,
+        procedurePassage,
+      ),
     });
   }
   if (
     candidate.rule.outcomes.attribution === "source-citation" &&
-    candidate.rule.outcomes.passages.some(({ text }) => {
-      const contradictoryPatterns = [
-          /(?:6 or less|6-)\D{0,24}(?:success with cost|clean success)/,
-          /(?:success with cost|clean success)\D{0,24}(?:6 or less|6-)/,
-          /7\s*[-–]\s*9\D{0,24}(?:setback|clean success)/,
-          /(?:setback|clean success)\D{0,24}7\s*[-–]\s*9/,
-          /(?:10 or more|10\+)\D{0,24}(?:setback|success with cost)/,
-          /(?:setback|success with cost)\D{0,24}(?:10 or more|10\+)/,
-        ];
-      return text
-        .toLocaleLowerCase("en")
-        .split(/[;\n]/)
-        .some((clause) =>
-          contradictoryPatterns.some((pattern) => pattern.test(clause)),
-        );
-    })
+    candidate.rule.outcomes.passages.some(({ text }) =>
+      contradictoryOutcomePassage(text),
+    )
   ) {
     findings.push({
       code: "source-contradiction",
       severity: "error",
       field: "outcomes",
       message: "A cited source passage contradicts the normalized Check outcome ranges.",
+      supportingPassages: citedPassages(
+        candidate.rule.outcomes,
+        contradictoryOutcomePassage,
+      ),
     });
   }
   return findings;

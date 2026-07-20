@@ -95,6 +95,16 @@ trace and Player-facing rules answer identify both the package rule and exact
 source passages. A candidate or tampered package is rejected before play and
 cannot append an event.
 
+Re-ingestion validates the complete Rule Source before deciding whether it is
+unchanged. Byte-identical input and source-version or layout-only changes reuse
+the existing executable package; a meaningful cited-field change produces a
+Rule Candidate Diff with both old and new passages. Missing Check inputs,
+unresolved references, reference cycles, and contradictory cited mechanics
+block approval with narrowly attributable diagnostics. Rule Version History
+retains prior packages unchanged when a later candidate is rejected, and a
+corrected candidate may be reviewed and published under a new unique package
+version.
+
 The locked manor is a non-linear graph rather than a mandatory sequence. Visible Oracle answers and Established Facts can route the Player from arrival into social discovery or directly to the Confrontation. Social discovery can reveal the cellar route or resolve the mystery without a Confrontation. The Player may also withdraw with the mystery unresolved, while Confrontation victory and Defeat lead to favourable and adverse endings. Scene transitions and Adventure endings occur only when committed events satisfy pre-authored exit conditions; the Narrator cannot end either one. The Structured Play path completes every route with no language-model calls.
 
 Structured Play also exposes Timeline controls after the first accepted event. The Player can branch from any accepted event position to explore another choice without deleting or rewriting the source Timeline, and can select any existing Timeline to inspect or resume it. Each Timeline appends and projects independently. A child inherits the parent's random-stream position at its branch point, so repeating identical confirmed play reproduces the same Check and Oracle rolls rather than granting a reroll. Both repository adapters share this contract, and the local durable repository preserves every Timeline history, relationship, active selection, and random position across process restarts.
