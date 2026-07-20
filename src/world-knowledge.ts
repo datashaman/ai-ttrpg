@@ -180,6 +180,14 @@ const isKnowledgeScope = (
   value.every((scope) => KNOWLEDGE_SCOPES.includes(scope as KnowledgeScope)) &&
   new Set(value).size === value.length;
 
+const isVisibilityCompatibleWithKnowledgeScope = (
+  visibility: WorldKnowledgeVisibility,
+  knowledgeScope: readonly KnowledgeScope[],
+): boolean =>
+  visibility === "Player-visible"
+    ? knowledgeScope.includes("Player Character")
+    : !knowledgeScope.includes("Player Character");
+
 const isWorldKnowledgeFactEstablishedPayload = (
   value: unknown,
 ): value is WorldKnowledgeFactEstablishedPayload => {
@@ -193,7 +201,8 @@ const isWorldKnowledgeFactEstablishedPayload = (
     isNonEmptyString(fact.text) &&
     isProvenanceDefinition(provenance) &&
     isWorldKnowledgeVisibility(value.visibility) &&
-    isKnowledgeScope(knowledgeScope)
+    isKnowledgeScope(knowledgeScope) &&
+    isVisibilityCompatibleWithKnowledgeScope(value.visibility, knowledgeScope)
   );
 };
 
@@ -243,7 +252,8 @@ export const isWorldKnowledgeRelationshipEstablishedPayload = (
       relationship.requiredWorldKnowledgeIds.length &&
     isProvenanceDefinition(provenance) &&
     isWorldKnowledgeVisibility(value.visibility) &&
-    isKnowledgeScope(knowledgeScope)
+    isKnowledgeScope(knowledgeScope) &&
+    isVisibilityCompatibleWithKnowledgeScope(value.visibility, knowledgeScope)
   );
 };
 
