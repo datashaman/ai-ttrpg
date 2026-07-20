@@ -1,0 +1,5 @@
+# Fail Closed on Ambiguous v1 World Knowledge
+
+Adventure archive format version 1 remains readable across World Knowledge additions because canonical event types are additive: an existing valid archive that contains no World Knowledge events requires no inferred metadata. When a format-v1 archive does contain `WorldKnowledgeEstablished` or `WorldKnowledgeRevealed`, every security-relevant field must satisfy the current canonical event contract, including Provenance, Visibility, Knowledge Scope, relationship endpoints, Reveal references, event ordering, and integrity.
+
+Compatibility never supplies defaults for missing or contradictory security metadata. `Player-visible` knowledge must include the Player Character in its Knowledge Scope, while `Game Master-only` knowledge must exclude the Player Character. An archive that cannot establish those semantics is rejected in full before its Adventure identity becomes visible. This keeps older unambiguous histories portable without turning schema compatibility into an accidental privilege escalation or disclosure path.
