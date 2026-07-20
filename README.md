@@ -36,6 +36,10 @@ npm start -- import portable-adventure.json
 
 Import validates the complete archive before making the Adventure visible and
 refuses to overwrite an existing Adventure with the same identity.
+Archive import and export are repository-owner operations: the portable archive
+intentionally preserves canonical knowledge for every actor scope and is not a
+Player-visible projection. Player-facing exports must use an explicitly scoped
+projection rather than exposing the canonical archive.
 
 Choose a name, pronouns, Motivation, and assign `0`, `1`, and `2` exactly once among Might, Wits, and Presence. The CLI then starts the arrival Scene and offers authored Free Actions and uncertain actions. An uncertain action presents its complete Check Proposal before you confirm, correct, revise, or withdraw it. A confirmed Check records and reveals `2d6 + Trait`; before the outcome commits, you may spend one Resolve for `+1` or decline. The selected predeclared stakes commit only after that Pending Choice is resolved. Closing and reopening the Adventure replays its durable event history to restore the same Player-visible state, after which accepted actions append to that same history.
 
@@ -52,6 +56,15 @@ retaining committed Adventure facts, Mechanical Effects, and attributable World
 Knowledge. Conversation records belong to the open Adventure session, never to
 the canonical Timeline or an Evidence Bundle, and are discarded on Scene or
 Timeline changes and when the Adventure closes.
+
+Player-facing World Knowledge queries carry an explicit Player Character
+identity. A Player Character observes only entries in that character's
+Knowledge Scope; another Player Character and an unauthenticated actor observe
+none of those entries. This filtering happens before accepted events are
+retrieved or budgeted into an Evidence Bundle, so rules explanations,
+Narration, model calls, diagnostics, replay, and portable archives retain the
+same boundary. Format-v1 knowledge that used the original generic `Player
+Character` scope remains assigned to the primary Player Character.
 
 The locked manor is a non-linear graph rather than a mandatory sequence. Visible Oracle answers and Established Facts can route the Player from arrival into social discovery or directly to the Confrontation. Social discovery can reveal the cellar route or resolve the mystery without a Confrontation. The Player may also withdraw with the mystery unresolved, while Confrontation victory and Defeat lead to favourable and adverse endings. Scene transitions and Adventure endings occur only when committed events satisfy pre-authored exit conditions; the Narrator cannot end either one. The Structured Play path completes every route with no language-model calls.
 

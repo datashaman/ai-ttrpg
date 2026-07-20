@@ -17,10 +17,13 @@ import {
   type RandomSource,
 } from "./random-source.js";
 import {
+  DEFAULT_PLAYER_ACTOR_SCOPE,
+  GAME_MASTER_ACTOR_SCOPE,
   filterCanonicalEventsVisibleTo,
   isPlayerCharacterRevealScope,
   projectWorldKnowledge,
   type KnowledgeScope,
+  type PlayerWorldKnowledgeActorScope,
   type WorldKnowledgeActorScope,
   type WorldKnowledgeEstablishedPayload,
   type WorldKnowledgeProjection,
@@ -47,6 +50,13 @@ export type {
 } from "./layered-memory.js";
 export { createSeededRandomSource } from "./random-source.js";
 export type { RandomSource } from "./random-source.js";
+export {
+  DEFAULT_PLAYER_ACTOR_SCOPE,
+  DEFAULT_PLAYER_CHARACTER_ID,
+  GAME_MASTER_ACTOR_SCOPE,
+  playerWorldKnowledgeActorScope,
+  UNAUTHENTICATED_ACTOR_SCOPE,
+} from "./world-knowledge.js";
 
 export type Trait = "Might" | "Wits" | "Presence";
 export type CheckOutcome = "Setback" | "Success with Cost" | "Clean Success";
@@ -731,6 +741,7 @@ export interface StructuredPlayApplication {
 }
 
 export interface StructuredPlayOptions {
+  readonly actorScope?: PlayerWorldKnowledgeActorScope;
   readonly eventStore?: EventStore;
   readonly randomSource?: RandomSource;
   readonly checkActions?: readonly CheckActionDefinition[];
@@ -1536,6 +1547,7 @@ export const createStructuredPlayApplication = (
     );
   }
   const timelineStore = options.timelineStore ?? null;
+  const actorScope = options.actorScope ?? DEFAULT_PLAYER_ACTOR_SCOPE;
   const eventStore = timelineStore ?? options.eventStore ?? createInMemoryEventStore();
   const randomSource =
     timelineStore ?? options.randomSource ?? createSeededRandomSource(Date.now());
@@ -1587,7 +1599,7 @@ export const createStructuredPlayApplication = (
     timelineStore === null
       ? []
       : filterCanonicalEventsVisibleTo({
-          actorScope: "Player",
+          actorScope,
           events: timelineStore.readTimeline(timelineId),
         });
 
@@ -1601,7 +1613,7 @@ export const createStructuredPlayApplication = (
         candidate.branchEventPosition === null
           ? null
           : filterCanonicalEventsVisibleTo({
-              actorScope: "Player",
+              actorScope,
               events: timelineStore
                 .readTimeline(candidate.parentTimelineId)
                 .slice(0, candidate.branchEventPosition),
@@ -1632,7 +1644,7 @@ export const createStructuredPlayApplication = (
     for (let index = 0; index < events.length; index += 1) {
       if (
         filterCanonicalEventsVisibleTo({
-          actorScope: "Player",
+          actorScope,
           events: [events[index]!],
         }).length === 0
       ) {
@@ -1688,12 +1700,12 @@ export const createStructuredPlayApplication = (
           requiredFactsAreEstablished(reveal.requiredFactIds, state) &&
           (reveal.requiredWorldKnowledgeIds ?? []).every((knowledgeId) =>
             projectWorldKnowledge({
-              actorScope: "Player",
+              actorScope,
               events: currentEvents(),
             }).entries.some((entry) => entry.id === knowledgeId),
           ) &&
           projectWorldKnowledge({
-            actorScope: "Game Master",
+            actorScope: GAME_MASTER_ACTOR_SCOPE,
             events: currentEvents(),
           }).entries.some(
             (entry) =>
@@ -1820,7 +1832,7 @@ export const createStructuredPlayApplication = (
       timeline: playerTimelineView(),
       memory: memoryFor(state),
       appendedEvents: filterCanonicalEventsVisibleTo({
-        actorScope: "Player",
+        actorScope,
         events: acceptedEvents,
       }),
     };
@@ -2513,7 +2525,7 @@ export const createStructuredPlayApplication = (
           return commitPendingEvents(
             () => {
               const revealedEntry = projectWorldKnowledge({
-                actorScope: "Player",
+                actorScope,
                 events: currentEvents(),
               }).entries.find(
                 (entry) => entry.id === reveal.worldKnowledgeId,

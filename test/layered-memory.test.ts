@@ -5,6 +5,7 @@ import {
   createInMemoryConversationStore,
   createInMemoryEventStore,
   createStructuredPlayApplication,
+  DEFAULT_PLAYER_ACTOR_SCOPE,
   type BatchEventStore,
 } from "../src/structured-play.js";
 import { createInMemoryAdventureRepository } from "../src/adventure-repository.js";
@@ -46,7 +47,7 @@ test("ending a Confrontation preserves Adventure consequences and tears down sho
     true,
   );
   assert.equal(
-    app.worldKnowledge("Player").entries.some(
+    app.worldKnowledge(DEFAULT_PLAYER_ACTOR_SCOPE).entries.some(
       (entry) => entry.id === "mara-captured-by-guardian",
     ),
     true,
@@ -234,7 +235,7 @@ test("branching, reopening, and portable archives reproduce teardown consequence
   const reopenedView = reopenedApp.view();
   assert.deepEqual(reopenedView.state, source.state);
   assert.deepEqual(reopenedView.memory.conversation.records, []);
-  const sourceKnowledge = reopenedApp.worldKnowledge("Player");
+  const sourceKnowledge = reopenedApp.worldKnowledge(DEFAULT_PLAYER_ACTOR_SCOPE);
   reopened.close();
 
   const importedRepository = createInMemoryAdventureRepository();
@@ -248,7 +249,7 @@ test("branching, reopening, and portable archives reproduce teardown consequence
   assert.deepEqual(importedView.state, source.state);
   assert.deepEqual(importedView.memory.conversation.records, []);
   assert.deepEqual(
-    importedApp.worldKnowledge("Player"),
+    importedApp.worldKnowledge(DEFAULT_PLAYER_ACTOR_SCOPE),
     sourceKnowledge,
   );
   imported.close();
@@ -281,6 +282,7 @@ test("validated conversation stays non-canonical and outside later Evidence Bund
   ]);
 
   const evidence = assembleInterpretationEvidence({
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     utterance: "What is happening?",
     view: result,
     acceptedEvents: eventStore.readAll(),

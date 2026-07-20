@@ -13,6 +13,7 @@ import type {
 import {
   filterCanonicalEventsVisibleTo,
   projectWorldKnowledge,
+  type PlayerWorldKnowledgeActorScope,
   type WorldKnowledgeEntry,
 } from "./world-knowledge.js";
 
@@ -66,6 +67,7 @@ const selectRankedEvidence = (
     .map(({ item }) => item);
 
 export interface InterpretationEvidenceInput {
+  readonly actorScope: PlayerWorldKnowledgeActorScope;
   readonly utterance: string;
   readonly view: ApplicationView;
   readonly acceptedEvents: readonly CanonicalEvent[];
@@ -75,6 +77,7 @@ export interface InterpretationEvidenceInput {
 export type RulesExplanationEvidenceInput = InterpretationEvidenceInput;
 
 export interface NarrationEvidenceInput {
+  readonly actorScope: PlayerWorldKnowledgeActorScope;
   readonly acceptedEvents: readonly CanonicalEvent[];
   readonly resolutionTrace: CheckTrace | OracleTrace;
   readonly committedEvents: readonly CanonicalEvent[];
@@ -206,7 +209,7 @@ export const assembleInterpretationEvidence = (
     ),
   );
   projectWorldKnowledge({
-    actorScope: "Player",
+    actorScope: input.actorScope,
     events: input.acceptedEvents,
   }).entries.forEach((entry) =>
     add(
@@ -268,7 +271,7 @@ export const assembleInterpretationEvidence = (
   }
 
   [...filterCanonicalEventsVisibleTo({
-    actorScope: "Player",
+    actorScope: input.actorScope,
     events: input.acceptedEvents,
   })]
     .reverse()
@@ -425,7 +428,7 @@ export const assembleNarrationEvidence = (
   };
 
   const committedEvents = filterCanonicalEventsVisibleTo({
-    actorScope: "Player",
+    actorScope: input.actorScope,
     events: input.committedEvents,
   });
   committedEvents.forEach((event, index) =>
@@ -497,7 +500,7 @@ export const assembleNarrationEvidence = (
     resolutionContent(input.resolutionTrace),
   ].join(" ");
   projectWorldKnowledge({
-    actorScope: "Player",
+    actorScope: input.actorScope,
     events: input.acceptedEvents,
   }).entries
     .filter(

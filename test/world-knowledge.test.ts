@@ -16,7 +16,9 @@ import {
   type FreeActionDefinition,
 } from "../src/structured-play.js";
 import {
+  DEFAULT_PLAYER_ACTOR_SCOPE,
   filterCanonicalEventsVisibleTo,
+  GAME_MASTER_ACTOR_SCOPE,
   projectWorldKnowledge,
   type WorldKnowledgeEstablishedPayload,
 } from "../src/world-knowledge.js";
@@ -44,11 +46,11 @@ test("Player projects attributable World Knowledge from canonical history", () =
   app.submit({ type: "choose-action", actionId: "survey-manor" });
 
   const knowledge = projectWorldKnowledge({
-    actorScope: "Player",
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     events: eventStore.readAll(),
   });
   const gameMasterKnowledge = projectWorldKnowledge({
-    actorScope: "Game Master",
+    actorScope: GAME_MASTER_ACTOR_SCOPE,
     events: eventStore.readAll(),
   });
   const establishedEvent = eventStore
@@ -89,11 +91,11 @@ test("authored locked-manor knowledge is visible only to the Game Master", () =>
   const { eventStore } = beginAdventureFixture();
 
   const playerKnowledge = projectWorldKnowledge({
-    actorScope: "Player",
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     events: eventStore.readAll(),
   });
   const gameMasterKnowledge = projectWorldKnowledge({
-    actorScope: "Game Master",
+    actorScope: GAME_MASTER_ACTOR_SCOPE,
     events: eventStore.readAll(),
   });
   const authoredEvent = eventStore
@@ -147,11 +149,11 @@ test("Game Master projects the authored locked-manor relationship while the Play
   const { eventStore } = beginAdventureFixture();
 
   const playerKnowledge = projectWorldKnowledge({
-    actorScope: "Player",
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     events: eventStore.readAll(),
   });
   const gameMasterKnowledge = projectWorldKnowledge({
-    actorScope: "Game Master",
+    actorScope: GAME_MASTER_ACTOR_SCOPE,
     events: eventStore.readAll(),
   });
   const relationshipEvent = eventStore
@@ -201,11 +203,11 @@ test("Structured Play canonically reveals authored knowledge after its discovery
 
   const beforeEvents = structuredClone(eventStore.readAll());
   const beforePlayer = projectWorldKnowledge({
-    actorScope: "Player",
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     events: beforeEvents,
   });
   const beforeGameMaster = projectWorldKnowledge({
-    actorScope: "Game Master",
+    actorScope: GAME_MASTER_ACTOR_SCOPE,
     events: beforeEvents,
   });
   assert.equal(
@@ -241,7 +243,7 @@ test("Structured Play canonically reveals authored knowledge after its discovery
     knowledgeScope: ["Game Master", "Player Character"],
   });
   const afterPlayer = projectWorldKnowledge({
-    actorScope: "Player",
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     events: eventStore.readAll(),
   });
   assert.deepEqual(
@@ -270,6 +272,7 @@ test("a committed Reveal enters attributable evidence and survives reopening", (
   });
 
   const evidence = assembleInterpretationEvidence({
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     utterance: "I confront the cellar guardian.",
     view: app.view(),
     acceptedEvents: eventStore.readAll(),
@@ -290,7 +293,7 @@ test("a committed Reveal enters attributable evidence and survives reopening", (
 
   const reopened = createStructuredPlayApplication({ eventStore });
   const reopenedKnowledge = projectWorldKnowledge({
-    actorScope: "Player",
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     events: eventStore.readAll(),
   });
   assert.equal(
@@ -331,7 +334,7 @@ test("canonical play reveals the attributable relationship only after its relate
     /connect-housekeeper|housekeeper.{0,30}cellar|guards the cellar/i,
   );
   const beforeReveal = projectWorldKnowledge({
-    actorScope: "Game Master",
+    actorScope: GAME_MASTER_ACTOR_SCOPE,
     events: eventStore.readAll(),
   }).entries.find((entry) => entry.id === "housekeeper-guards-cellar");
   assert.ok(beforeReveal);
@@ -354,7 +357,7 @@ test("canonical play reveals the attributable relationship only after its relate
   });
 
   const playerRelationship = projectWorldKnowledge({
-    actorScope: "Player",
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     events: eventStore.readAll(),
   }).entries.find((entry) => entry.id === "housekeeper-guards-cellar");
   assert.deepEqual(playerRelationship, {
@@ -364,7 +367,7 @@ test("canonical play reveals the attributable relationship only after its relate
   });
   assert.deepEqual(playerRelationship?.provenance, beforeReveal.provenance);
   const revealedEndpointIds = projectWorldKnowledge({
-    actorScope: "Player",
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     events: eventStore.readAll(),
   }).entries
     .filter(
@@ -389,7 +392,10 @@ test("canonical play reveals the attributable relationship only after its relate
     },
   ]);
 
-  for (const actorScope of ["Player", "Game Master"] as const) {
+  for (const actorScope of [
+    DEFAULT_PLAYER_ACTOR_SCOPE,
+    GAME_MASTER_ACTOR_SCOPE,
+  ] as const) {
     assert.equal(
       JSON.stringify(
         projectWorldKnowledge({
@@ -407,6 +413,7 @@ test("canonical play reveals the attributable relationship only after its relate
   }
 
   const evidence = assembleInterpretationEvidence({
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     utterance: "I follow world-knowledge:housekeeper-guards-cellar.",
     view: app.view(),
     acceptedEvents: eventStore.readAll(),
@@ -454,7 +461,7 @@ test("a rejected Reveal commit leaves hidden knowledge unprojected and undisclos
   assert.deepEqual(eventStore.readAll(), before);
   assert.equal(
     projectWorldKnowledge({
-      actorScope: "Player",
+      actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
       events: eventStore.readAll(),
     }).entries.some((entry) => entry.id === "cellar-guardian-identity"),
     false,
@@ -544,8 +551,24 @@ test("World Knowledge rejects a missing or unknown actor scope", () => {
       }),
     {
       name: "WorldKnowledgeError",
-      message: "World Knowledge requires an explicit Player or Game Master actor scope. [INVALID_ACTOR_SCOPE]",
+      message: "World Knowledge requires an explicit actor scope and Player Character identity for a Player. [INVALID_ACTOR_SCOPE]",
     },
+  );
+  assert.throws(
+    () =>
+      projectWorldKnowledge({
+        actorScope: { kind: "Player", playerCharacterId: "" },
+        events: [],
+      }),
+    { name: "WorldKnowledgeError", code: "INVALID_ACTOR_SCOPE" },
+  );
+  assert.throws(
+    () =>
+      projectWorldKnowledge({
+        actorScope: "Player" as never,
+        events: [],
+      }),
+    { name: "WorldKnowledgeError", code: "INVALID_ACTOR_SCOPE" },
   );
 });
 
@@ -566,7 +589,7 @@ test("World Knowledge rejects a duplicate ID already present in canonical histor
   assert.throws(
     () =>
       projectWorldKnowledge({
-        actorScope: "Player",
+        actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
         events: [...events, duplicate],
       }),
     {
@@ -600,7 +623,7 @@ test("a duplicate World Knowledge ID is rejected before an event commits", () =>
   assert.equal(first.status, "accepted");
   const beforeEvents = structuredClone(eventStore.readAll());
   const beforeKnowledge = projectWorldKnowledge({
-    actorScope: "Player",
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     events: eventStore.readAll(),
   });
 
@@ -615,7 +638,7 @@ test("a duplicate World Knowledge ID is rejected before an event commits", () =>
   assert.deepEqual(eventStore.readAll(), beforeEvents);
   assert.deepEqual(
     projectWorldKnowledge({
-      actorScope: "Player",
+      actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
       events: eventStore.readAll(),
     }),
     beforeKnowledge,
@@ -646,7 +669,7 @@ test("contradictory World Knowledge text is rejected before an event commits", (
   assert.equal(first.status, "accepted");
   const beforeEvents = structuredClone(eventStore.readAll());
   const beforeKnowledge = projectWorldKnowledge({
-    actorScope: "Game Master",
+    actorScope: GAME_MASTER_ACTOR_SCOPE,
     events: eventStore.readAll(),
   });
 
@@ -665,7 +688,7 @@ test("contradictory World Knowledge text is rejected before an event commits", (
   assert.deepEqual(eventStore.readAll(), beforeEvents);
   assert.deepEqual(
     projectWorldKnowledge({
-      actorScope: "Game Master",
+      actorScope: GAME_MASTER_ACTOR_SCOPE,
       events: eventStore.readAll(),
     }),
     beforeKnowledge,
@@ -677,6 +700,7 @@ test("Player-visible World Knowledge enters attributable interpretation evidence
   app.submit({ type: "choose-action", actionId: "survey-manor" });
 
   const evidence = assembleInterpretationEvidence({
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     utterance: "I follow the fresh footprints.",
     view: app.view(),
     acceptedEvents: eventStore.readAll(),
@@ -715,7 +739,7 @@ test("hidden knowledge is filtered before direct references and evidence budgets
   app.submit({ type: "choose-action", actionId: similarVisibleFact.id });
   const events = eventStore.readAll();
   const playerEvents = filterCanonicalEventsVisibleTo({
-    actorScope: "Player",
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     events,
   });
 
@@ -726,10 +750,12 @@ test("hidden knowledge is filtered before direct references and evidence budgets
       maxItems,
     };
     const withHiddenHistory = assembleInterpretationEvidence({
+      actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
       ...input,
       acceptedEvents: events,
     });
     const withoutHiddenHistory = assembleInterpretationEvidence({
+      actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
       ...input,
       acceptedEvents: playerEvents,
     });
@@ -750,6 +776,7 @@ test("hidden knowledge is filtered before direct references and evidence budgets
   }
 
   const tightEvidence = assembleInterpretationEvidence({
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     utterance: "world-knowledge:cellar-guardian-identity",
     view: app.view(),
     acceptedEvents: events,
@@ -817,7 +844,7 @@ test("Player-filtered canonical history removes a hidden relationship nested bes
   assert.equal(begun.status, "accepted");
 
   const playerHistory = filterCanonicalEventsVisibleTo({
-    actorScope: "Player",
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     events: eventStore.readAll(),
   });
 
@@ -1147,7 +1174,7 @@ test("rules and Narration evidence exclude hidden history before budgeting", () 
   );
   assert.ok(hiddenEvent);
   const playerEvents = filterCanonicalEventsVisibleTo({
-    actorScope: "Player",
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     events,
   });
   for (const maxItems of [1, 2, 64]) {
@@ -1158,16 +1185,19 @@ test("rules and Narration evidence exclude hidden history before budgeting", () 
     };
     assert.deepEqual(
       assembleRulesExplanationEvidence({
+        actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
         ...rulesInput,
         acceptedEvents: events,
       }),
       assembleRulesExplanationEvidence({
+        actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
         ...rulesInput,
         acceptedEvents: playerEvents,
       }),
     );
 
     const narrationInput: Omit<NarrationEvidenceInput, "committedEvents"> = {
+      actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
       acceptedEvents: events,
       resolutionTrace: resolved.state.lastCheckResolution.trace,
       playerCharacter: resolved.state.playerCharacter,

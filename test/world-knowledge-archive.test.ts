@@ -20,7 +20,11 @@ import {
   type FreeActionDefinition,
   type StructuredPlayApplication,
 } from "../src/structured-play.js";
-import { projectWorldKnowledge } from "../src/world-knowledge.js";
+import {
+  DEFAULT_PLAYER_ACTOR_SCOPE,
+  GAME_MASTER_ACTOR_SCOPE,
+  projectWorldKnowledge,
+} from "../src/world-knowledge.js";
 
 interface MutableArchiveDocument {
   formatVersion: number;
@@ -167,11 +171,11 @@ const portableKnowledgeSnapshot = (adventure: OpenAdventure): string => {
         ...timeline,
         events,
         playerKnowledge: projectWorldKnowledge({
-          actorScope: "Player",
+          actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
           events,
         }),
         gameMasterKnowledge: projectWorldKnowledge({
-          actorScope: "Game Master",
+          actorScope: GAME_MASTER_ACTOR_SCOPE,
           events,
         }),
       };
@@ -184,7 +188,7 @@ const playerKnowledgeIds = (
   timelineId: string,
 ): readonly string[] =>
   projectWorldKnowledge({
-    actorScope: "Player",
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     events: adventure.timelineStore.readTimeline(timelineId),
   }).entries.map((entry) => entry.id);
 
@@ -265,7 +269,7 @@ test("format v1 archives from before World Knowledge remain readable without inf
   const imported = createInMemoryAdventureRepository().importArchive(archive);
   assert.deepEqual(
     projectWorldKnowledge({
-      actorScope: "Game Master",
+      actorScope: GAME_MASTER_ACTOR_SCOPE,
       events: imported.eventStore.readAll(),
     }).entries,
     [],

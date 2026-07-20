@@ -28,6 +28,10 @@ import {
   type PresentationContext,
   type PresentationModel,
 } from "./presentation.js";
+import {
+  DEFAULT_PLAYER_ACTOR_SCOPE,
+  type PlayerWorldKnowledgeActorScope,
+} from "./world-knowledge.js";
 
 export type {
   GroundedPresentation,
@@ -42,6 +46,7 @@ export interface StructuredPlayIO {
 }
 
 export interface StructuredPlayRunnerOptions {
+  readonly actorScope?: PlayerWorldKnowledgeActorScope;
   readonly io: StructuredPlayIO;
   readonly eventStore?: EventStore;
   readonly timelineStore?: TimelineStore;
@@ -69,6 +74,7 @@ type PresentationRuntime =
       readonly gateway: ModelGateway;
       readonly modelCallStore: ModelCallRecordStore;
       readonly readAcceptedEvents: () => readonly CanonicalEvent[];
+      readonly actorScope: PlayerWorldKnowledgeActorScope;
       readonly evidenceBudget?: number;
       readonly timeoutMs: number;
     };
@@ -125,6 +131,7 @@ const presentCommittedOutcome = async (
     runtime.kind === "legacy"
       ? narrateCommittedOutcome(runtime.narrator, context, runtime.timeoutMs)
       : narrateCommittedOutcomeThroughGateway({
+          actorScope: runtime.actorScope,
           gateway: runtime.gateway,
           modelCallStore: runtime.modelCallStore,
           context,
@@ -536,6 +543,7 @@ const chooseAvailableAction = async (
 };
 
 export const runStructuredPlay = async ({
+  actorScope = DEFAULT_PLAYER_ACTOR_SCOPE,
   io,
   eventStore,
   timelineStore,
@@ -549,13 +557,14 @@ export const runStructuredPlay = async ({
   narrationTimeoutMs = 5_000,
 }: StructuredPlayRunnerOptions): Promise<ApplicationView> => {
   const selectedEventStore = eventStore ?? createInMemoryEventStore();
+  const scopedApplicationOptions = { ...applicationOptions, actorScope };
   const app = createStructuredPlayApplication(
     timelineStore !== undefined
-      ? { ...applicationOptions, timelineStore }
+      ? { ...scopedApplicationOptions, timelineStore }
       : randomSource === undefined
-        ? { ...applicationOptions, eventStore: selectedEventStore }
+        ? { ...scopedApplicationOptions, eventStore: selectedEventStore }
         : {
-            ...applicationOptions,
+            ...scopedApplicationOptions,
             eventStore: selectedEventStore,
             randomSource,
           },
@@ -564,6 +573,7 @@ export const runStructuredPlay = async ({
     modelGateway !== undefined
       ? {
           kind: "model-gateway" as const,
+          actorScope,
           gateway: modelGateway,
           modelCallStore:
             modelCallStore ?? createInMemoryModelCallRecordStore(),

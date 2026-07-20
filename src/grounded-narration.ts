@@ -22,6 +22,7 @@ import type {
   CheckTrace,
   OracleTrace,
 } from "./structured-play.js";
+import type { PlayerWorldKnowledgeActorScope } from "./world-knowledge.js";
 
 interface NarrationSegment {
   readonly text: string;
@@ -207,6 +208,7 @@ const outcomeReferenceFrom = (trace: CheckTrace | OracleTrace): string =>
   }`;
 
 export const narrateCommittedOutcomeThroughGateway = async ({
+  actorScope,
   gateway,
   modelCallStore,
   context,
@@ -215,6 +217,7 @@ export const narrateCommittedOutcomeThroughGateway = async ({
   timeoutMs,
   evidenceBudget,
 }: {
+  readonly actorScope: PlayerWorldKnowledgeActorScope;
   readonly gateway: ModelGateway;
   readonly modelCallStore: ModelCallRecordStore;
   readonly context: PresentationContext;
@@ -230,6 +233,7 @@ export const narrateCommittedOutcomeThroughGateway = async ({
     };
   }
   const evidenceBundle = assembleNarrationEvidence({
+    actorScope,
     acceptedEvents,
     resolutionTrace: context.resolutionTrace,
     committedEvents: context.committedEvents,

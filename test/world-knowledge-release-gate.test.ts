@@ -29,7 +29,12 @@ import {
   type StructuredPlayApplication,
   type StructuredPlayOptions,
 } from "../src/structured-play.js";
-import { projectWorldKnowledge } from "../src/world-knowledge.js";
+import {
+  DEFAULT_PLAYER_ACTOR_SCOPE,
+  GAME_MASTER_ACTOR_SCOPE,
+  projectWorldKnowledge,
+  type WorldKnowledgeActorScope,
+} from "../src/world-knowledge.js";
 import {
   assertLockedManorHiddenKnowledgeAbsent,
   LOCKED_MANOR_HIDDEN_KNOWLEDGE_ID,
@@ -82,15 +87,21 @@ const knowledgeSnapshot = (
 ): string => {
   const events = adventure.timelineStore.readTimeline(timelineId);
   return JSON.stringify({
-    Player: projectWorldKnowledge({ actorScope: "Player", events }),
-    GameMaster: projectWorldKnowledge({ actorScope: "Game Master", events }),
+    Player: projectWorldKnowledge({
+      actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
+      events,
+    }),
+    GameMaster: projectWorldKnowledge({
+      actorScope: GAME_MASTER_ACTOR_SCOPE,
+      events,
+    }),
   });
 };
 
 const entryIds = (
   adventure: OpenAdventure,
   timelineId: string,
-  actorScope: "Player" | "Game Master",
+  actorScope: WorldKnowledgeActorScope,
 ): readonly string[] =>
   projectWorldKnowledge({
     actorScope,
@@ -139,13 +150,19 @@ test("the attributable World Knowledge release journey survives mixed play, bran
   let app = started.app;
 
   const sourceTimelineId = adventure.timelineStore.view().activeTimelineId;
-  assert.deepEqual(entryIds(adventure, sourceTimelineId, "Player"), []);
-  assert.deepEqual(entryIds(adventure, sourceTimelineId, "Game Master"), [
-    "cellar-guardian-identity",
-    "manor-housekeeper",
-    "manor-cellar",
-    "housekeeper-guards-cellar",
-  ]);
+  assert.deepEqual(
+    entryIds(adventure, sourceTimelineId, DEFAULT_PLAYER_ACTOR_SCOPE),
+    [],
+  );
+  assert.deepEqual(
+    entryIds(adventure, sourceTimelineId, GAME_MASTER_ACTOR_SCOPE),
+    [
+      "cellar-guardian-identity",
+      "manor-housekeeper",
+      "manor-cellar",
+      "housekeeper-guards-cellar",
+    ],
+  );
 
   assert.equal(
     app.submit({ type: "choose-action", actionId: OPEN_SIDE_DOOR.id }).status,
@@ -197,6 +214,7 @@ test("the attributable World Knowledge release journey survives mixed play, bran
     "accepted",
   );
   const evidence = assembleInterpretationEvidence({
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
     utterance: "What does the cellar guardian relationship establish?",
     view: app.view(),
     acceptedEvents: adventure.timelineStore.readAll(),
@@ -233,10 +251,10 @@ test("the attributable World Knowledge release journey survives mixed play, bran
   );
   const afterRevealTimelineId = adventure.timelineStore.view().activeTimelineId;
 
-  assert.deepEqual(entryIds(adventure, beforeRevealTimelineId, "Player"), [
+  assert.deepEqual(entryIds(adventure, beforeRevealTimelineId, DEFAULT_PLAYER_ACTOR_SCOPE), [
     "side-door-open",
   ]);
-  assert.deepEqual(entryIds(adventure, afterRevealTimelineId, "Player"), [
+  assert.deepEqual(entryIds(adventure, afterRevealTimelineId, DEFAULT_PLAYER_ACTOR_SCOPE), [
     "cellar-guardian-identity",
     "manor-housekeeper",
     "manor-cellar",
@@ -293,6 +311,7 @@ test("the deterministic leakage audit rejects model-authored truth and Mechanica
       actionId: "trace-concealed-insignia",
     }),
     evidence: assembleInterpretationEvidence({
+      actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
       utterance: `Tell me about world-knowledge:${LOCKED_MANOR_HIDDEN_KNOWLEDGE_ID}`,
       view: app.view(),
       acceptedEvents: adventure.timelineStore.readAll(),
