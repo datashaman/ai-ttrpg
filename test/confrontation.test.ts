@@ -70,12 +70,13 @@ test("filling Resistance commits the visible successful ending and closes the Co
   const victory = resolveAction(app, "drive-back-cult-guardian");
 
   assert.equal(victory.status, "accepted");
-  assert.equal(victory.state.confrontation?.status, "victory");
-  assert.equal(victory.state.confrontation?.resistanceClock.current, 2);
+  assert.equal(victory.state.confrontation, null);
   assert.equal(victory.state.activeScene, null);
   assert.equal(
-    victory.state.confrontation?.ending?.establishedFact.text,
-    "The cult guardian is overcome and the cellar is secured.",
+    victory.state.establishedFacts.some(
+      (fact) => fact.id === "cellar-guardian-overcome",
+    ),
+    true,
   );
   assert.deepEqual(
     victory.appendedEvents.map((event) => event.type),
@@ -93,9 +94,7 @@ test("filling Danger commits the visible Defeat and enters a consequence Scene",
   const defeat = resolveAction(app, "drive-back-cult-guardian");
 
   assert.equal(defeat.status, "accepted");
-  assert.equal(defeat.state.confrontation?.status, "defeat");
-  assert.equal(defeat.state.confrontation?.dangerClock.current, 2);
-  assert.equal(defeat.state.confrontation?.ending?.reason, "danger");
+  assert.equal(defeat.state.confrontation, null);
   assert.equal(defeat.state.activeScene, "consequence");
   assert.equal(defeat.state.playerCharacter?.health, 1);
   assert.deepEqual(defeat.state.conditions, ["Restrained"]);
@@ -140,18 +139,18 @@ test("zero Health commits Defeat even when Danger is not filled", () => {
   const defeat = resolveAction(app, "hold-collapsing-gate");
 
   assert.equal(defeat.state.playerCharacter?.health, 0);
-  assert.equal(defeat.state.confrontation?.dangerClock.current, 0);
-  assert.equal(defeat.state.confrontation?.status, "defeat");
-  assert.equal(defeat.state.confrontation?.ending?.reason, "health");
+  assert.equal(defeat.state.confrontation, null);
   assert.equal(
-    defeat.state.confrontation?.ending?.establishedFact.id,
-    "mara-overwhelmed-and-imprisoned",
+    defeat.state.establishedFacts.some(
+      (fact) => fact.id === "mara-overwhelmed-and-imprisoned",
+    ),
+    true,
   );
   assert.equal(defeat.state.activeScene, "consequence");
   assert.deepEqual(defeat.state.conditions, ["Restrained"]);
 });
 
-test("replay reproduces Confrontation Clocks, resources, Conditions, ending, and Scene", () => {
+test("replay reproduces Adventure consequences and completed Confrontation teardown", () => {
   const eventStore = createInMemoryEventStore();
   const app = createStructuredPlayApplication({
     eventStore,
@@ -165,10 +164,15 @@ test("replay reproduces Confrontation Clocks, resources, Conditions, ending, and
   const afterRestart = createStructuredPlayApplication({ eventStore }).view();
 
   assert.deepEqual(afterRestart.state, beforeRestart.state);
-  assert.equal(afterRestart.state.confrontation?.dangerClock.current, 2);
+  assert.equal(afterRestart.state.confrontation, null);
   assert.equal(afterRestart.state.playerCharacter?.health, 1);
   assert.deepEqual(afterRestart.state.conditions, ["Restrained"]);
-  assert.equal(afterRestart.state.confrontation?.ending?.reason, "danger");
+  assert.equal(
+    afterRestart.state.establishedFacts.some(
+      (fact) => fact.id === "mara-captured-by-guardian",
+    ),
+    true,
+  );
   assert.equal(afterRestart.state.activeScene, "consequence");
 });
 
@@ -215,10 +219,12 @@ test("an active Confrontation completes from its recorded definition after confi
   assert.equal(firstExchange.state.confrontation?.resistanceClock.capacity, 2);
   const victory = resolveAction(resumed, "drive-back-cult-guardian");
 
-  assert.equal(victory.state.confrontation?.status, "victory");
+  assert.equal(victory.state.confrontation, null);
   assert.equal(
-    victory.state.confrontation?.ending?.establishedFact.id,
-    "cellar-guardian-overcome",
+    victory.state.establishedFacts.some(
+      (fact) => fact.id === "cellar-guardian-overcome",
+    ),
+    true,
   );
   assert.deepEqual(victory.state.conditions, []);
 });
@@ -272,6 +278,6 @@ test("ending a Confrontation clears Shaken with the Scene", () => {
 
   const victory = resolveAction(app, "rally-against-guardian");
 
-  assert.equal(victory.state.confrontation?.status, "victory");
+  assert.equal(victory.state.confrontation, null);
   assert.deepEqual(victory.state.conditions, []);
 });

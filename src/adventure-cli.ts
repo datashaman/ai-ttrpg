@@ -79,6 +79,7 @@ const runModeSession = async (
           io,
           createStructuredPlayApplication({
             timelineStore: adventure.timelineStore,
+            conversationStore: adventure.conversationStore,
           }).view(),
         );
       } else {
@@ -86,6 +87,7 @@ const runModeSession = async (
           io,
           modelGateway: modelRuntime.modelGateway,
           modelCallStore,
+          conversationStore: adventure.conversationStore,
           timelineStore: adventure.timelineStore,
           interpretationTimeoutMs: modelRuntime.timeoutMs,
           narrationTimeoutMs: modelRuntime.timeoutMs,
@@ -106,12 +108,16 @@ const runModeSession = async (
       await runStructuredPlay({
         io: structuredIO,
         timelineStore: adventure.timelineStore,
+        applicationOptions: {
+          conversationStore: adventure.conversationStore,
+        },
       });
       structuredChoice = undefined;
     }
 
     const view = createStructuredPlayApplication({
       timelineStore: adventure.timelineStore,
+      conversationStore: adventure.conversationStore,
     }).view();
     if (view.state.adventureEnding !== null) return;
     const selectedMode = await readInputMode(io, view.availableActions.length);
@@ -154,6 +160,9 @@ const playAdventure = async (
       io,
       timelineStore: adventure.timelineStore,
       modelCallStore: adventure.modelCallStore,
+      applicationOptions: {
+        conversationStore: adventure.conversationStore,
+      },
       runToAdventureEnd,
       ...(modelRuntime === undefined
         ? {}
