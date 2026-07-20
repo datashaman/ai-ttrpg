@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import type { ActorScopedEvidenceBundle } from "../src/actor-scoped-retrieval.js";
+import {
+  assembleActorScopedModelTaskEvidence,
+  type ActorScopedEvidenceBundle,
+} from "../src/actor-scoped-retrieval.js";
 import {
   assembleStateProposalEvidence,
   runExpandedModelTaskSet,
@@ -22,6 +25,8 @@ import {
 import type { ModelTask } from "../src/model-gateway.js";
 import { createOpenAIModelProvider } from "../src/openai-model-provider.js";
 import { beginAdventureFixture } from "./support/adventure-fixture.js";
+import { publishedCheckPackage } from "./support/published-check-package.js";
+import { DEFAULT_PLAYER_ACTOR_SCOPE } from "../src/structured-play.js";
 
 const evidenceBundle: ActorScopedEvidenceBundle = {
   id: `evidence:${"a".repeat(64)}`,
@@ -71,6 +76,27 @@ const evidenceBundle: ActorScopedEvidenceBundle = {
       citation: "rule-package:micro-ruleset@1.0.0#free-actions",
     },
   ],
+};
+
+const retrievedEvidenceFor = (utterance: string): ActorScopedEvidenceBundle => {
+  const { app, eventStore } = beginAdventureFixture();
+  return assembleActorScopedModelTaskEvidence({
+    scope: {
+      actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
+      playerCharacterId: DEFAULT_PLAYER_ACTOR_SCOPE.playerCharacterId,
+      campaignId: "campaign:locked-manor",
+      taskType: "classify-discourse",
+      rulesetVersion: "1.0.0",
+    },
+    corpus: {
+      campaignId: "campaign:locked-manor",
+      entities: [],
+      acceptedEvents: eventStore.readAll(),
+      approvedRules: [publishedCheckPackage()],
+    },
+    utterance,
+    view: app.view(),
+  });
 };
 
 test("rule-match suggestions distinguish matched, no-rule, and needs-adjudication outcomes", () => {
@@ -243,7 +269,7 @@ test("state proposals become candidate commands only after every authority check
 
 test("expanded stateless Model Tasks route every discourse class and keep records outside Timelines", async () => {
   const utterances = {
-    action: "I survey the manor grounds.",
+    action: "I survey the manor grounds with a Check.",
     speech: "Mara calls into the dark hall.",
     rules: "Does surveying require a Check?",
     ooc: "Out of character, pause a moment.",
@@ -279,8 +305,9 @@ test("expanded stateless Model Tasks route every discourse class and keep record
     referencedEntityIds: readonly string[];
     evidenceItemIds: readonly string[];
   };
+  const actionEvidenceBundle = retrievedEvidenceFor(utterances.action);
   const intentEvidenceItemId = assembleStateProposalEvidence(
-    evidenceBundle,
+    actionEvidenceBundle,
     validatedIntent,
   ).items.at(-1)!.id;
   responses[`propose-state-change:${utterances.action}`] = {
@@ -290,19 +317,19 @@ test("expanded stateless Model Tasks route every discourse class and keep record
     evidenceItemIds: [
       "entity:scene:arrival",
       "capability:survey-manor",
-      "rule:free-actions@1.0.0",
+      "rule:micro-ruleset.check@1.0.0",
       intentEvidenceItemId,
     ],
     intentEvidenceItemId,
-    ruleEvidenceItemIds: ["rule:free-actions@1.0.0"],
+    ruleEvidenceItemIds: ["rule:micro-ruleset.check@1.0.0"],
     stateEvidenceItemIds: ["entity:scene:arrival"],
     rulesetVersion: "1.0.0",
     command: { type: "choose-action", actionId: "survey-manor" },
   };
   responses[`suggest-rule-match:${utterances.rules}`] = {
     status: "matched",
-    ruleId: "rule:checks@1.0.0",
-    evidenceItemIds: ["rule:checks@1.0.0"],
+    ruleId: "rule:micro-ruleset.check@1.0.0",
+    evidenceItemIds: ["rule:micro-ruleset.check@1.0.0"],
   };
   responses[`suggest-rule-match:${utterances.noRule}`] = { status: "no-rule" };
   responses[`suggest-rule-match:${utterances.adjudication}`] = {
@@ -316,19 +343,26 @@ test("expanded stateless Model Tasks route every discourse class and keep record
   const gateway = createModelGateway({
     provider: createScriptedModelProvider({ model: "expanded-v1", responses }),
   });
-  const context = {
-    evidenceBundle,
-    knownEntityIds: ["scene:arrival"],
-    availableCapabilityIds: ["survey-manor"],
-    authorizedCapabilityIds: ["survey-manor"],
-    rulesetVersion: "1.0.0",
-    commandSatisfiesInvariants: () => true,
-  } as const;
-
   const results = await Promise.all(
-    Object.values(utterances).map((utterance) =>
-      runExpandedModelTaskSet({ utterance, gateway, modelCallStore, context }),
-    ),
+    Object.values(utterances).map((utterance) => {
+      const scopedEvidenceBundle =
+        utterance === utterances.action
+          ? actionEvidenceBundle
+          : retrievedEvidenceFor(utterance);
+      return runExpandedModelTaskSet({
+        utterance,
+        gateway,
+        modelCallStore,
+        context: {
+          evidenceBundle: scopedEvidenceBundle,
+          knownEntityIds: ["scene:arrival"],
+          availableCapabilityIds: ["survey-manor"],
+          authorizedCapabilityIds: ["survey-manor"],
+          rulesetVersion: "1.0.0",
+          commandSatisfiesInvariants: () => true,
+        },
+      });
+    }),
   );
 
   assert.deepEqual(results.map(({ classification }) => classification), [
@@ -348,11 +382,11 @@ test("expanded stateless Model Tasks route every discourse class and keep record
   assert.equal(results.slice(1).every(({ candidateCommand }) => candidateCommand === null), true);
   assert.deepEqual(results[2]?.ruleMatch, {
     status: "matched",
-    ruleId: "rule:checks@1.0.0",
-    evidenceItemIds: ["rule:checks@1.0.0"],
+    ruleId: "rule:micro-ruleset.check@1.0.0",
+    evidenceItemIds: ["rule:micro-ruleset.check@1.0.0"],
   });
   assert.deepEqual(results[6]?.ruleMatch, { status: "no-rule" });
-  assert.equal(results[7]?.ruleMatch?.status, "needs-adjudication");
+  assert.equal(results[7]?.ruleMatch, null);
   assert.equal(modelCallStore.readAll().length, 13);
   assert.equal(
     modelCallStore.readAll().every((record) => record.acceptedEventIds.length === 0),
@@ -361,13 +395,15 @@ test("expanded stateless Model Tasks route every discourse class and keep record
   assert.equal(modelCallStore.readAll().every((record) => record.promptVersion.endsWith("-v1")), true);
   assert.equal(results[0]?.evidenceTrace.modelCallIds.length, 3);
   assert.deepEqual(results[0]?.evidenceTrace.ruleIds, [
-    "rule:free-actions@1.0.0",
+    "rule:micro-ruleset.check@1.0.0",
   ]);
   assert.equal(
     results[0]?.evidenceTrace.evidenceItemIds.some((id) => id.startsWith("intent:")),
     true,
   );
-  assert.deepEqual(results[2]?.evidenceTrace.ruleIds, ["rule:checks@1.0.0"]);
+  assert.deepEqual(results[2]?.evidenceTrace.ruleIds, [
+    "rule:micro-ruleset.check@1.0.0",
+  ]);
   assert.equal(
     results[0]?.evidenceTrace.modelCallIds.every((id) =>
       modelCallStore.readAll().some((record) => record.id === id),
@@ -400,7 +436,7 @@ test("invalid and unsupported expanded task outputs fail closed after one repair
     gateway,
     modelCallStore,
     context: {
-      evidenceBundle,
+      evidenceBundle: retrievedEvidenceFor(utterance),
       knownEntityIds: ["scene:arrival"],
       availableCapabilityIds: ["survey-manor"],
       authorizedCapabilityIds: ["survey-manor"],
@@ -493,14 +529,14 @@ test("the versioned 100-example evaluation reports per-class metrics, confusion,
           }),
       },
     ],
-    context: {
-      evidenceBundle,
+    contextFor: (example) => ({
+      evidenceBundle: retrievedEvidenceFor(example.utterance),
       knownEntityIds: ["scene:arrival"],
       availableCapabilityIds: ["survey-manor"],
       authorizedCapabilityIds: ["survey-manor"],
       rulesetVersion: "1.0.0",
       commandSatisfiesInvariants: () => true,
-    },
+    }),
     acceptedEventCount: () => eventStore.readAll().length,
   });
   const report = evaluateClassificationProviders(

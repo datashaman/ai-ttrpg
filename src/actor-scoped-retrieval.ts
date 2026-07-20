@@ -76,6 +76,35 @@ export interface ActorScopedEvidenceBundle
   readonly items: readonly ActorScopedEvidenceItem[];
 }
 
+const retrievalBoundaryEvidenceBundles = new WeakMap<
+  object,
+  { readonly utterance: string; readonly scope: RetrievalScope }
+>();
+
+export const isActorScopedEvidenceBundleFromRetrieval = (
+  bundle: ActorScopedEvidenceBundle,
+  expected?: { readonly utterance: string; readonly scope: RetrievalScope },
+): boolean => {
+  const provenance = retrievalBoundaryEvidenceBundles.get(bundle);
+  return (
+    provenance !== undefined &&
+    (expected === undefined ||
+      (provenance.utterance === expected.utterance &&
+        provenance.scope === expected.scope))
+  );
+};
+
+const markRetrievalBoundaryBundle = (
+  bundle: ActorScopedEvidenceBundle,
+  input: ActorScopedRetrievalInput,
+): ActorScopedEvidenceBundle => {
+  retrievalBoundaryEvidenceBundles.set(bundle, {
+    utterance: input.utterance,
+    scope: bundle.scope,
+  });
+  return bundle;
+};
+
 export type RetrievalScopeErrorCode =
   | "INVALID_SCOPE"
   | "ACTOR_SCOPE_MISMATCH"
@@ -531,10 +560,87 @@ export const assembleActorScopedEvidence = (
   const maxItems = Math.max(1, input.maxItems ?? 64);
   const items = selectRankedEvidence(candidates, maxItems, true);
 
-  return immutableSnapshot({
+  return markRetrievalBoundaryBundle(immutableSnapshot({
     id: evidenceBundleId(items),
     taskType: input.scope.taskType,
     scope: input.scope,
     items,
-  });
+  }), input);
+};
+
+export const assembleActorScopedModelTaskEvidence = (
+  input: ActorScopedRetrievalInput,
+): ActorScopedEvidenceBundle => {
+  const retrieved = assembleActorScopedEvidence(input);
+  const required: ActorScopedEvidenceItem[] = [];
+  if (input.view.state.playerCharacter !== null) {
+    required.push({
+      id: `entity:${input.scope.playerCharacterId}`,
+      sourceKind: "player-character",
+      sourceReference: input.scope.playerCharacterId,
+      content: JSON.stringify({
+        id: input.scope.playerCharacterId,
+        name: input.view.state.playerCharacter.name,
+        pronouns: input.view.state.playerCharacter.pronouns,
+      }),
+      inclusionReason:
+        "The actor-scoped Player Character owns this Model Task request.",
+      visibility: "Player-visible",
+      citation: input.scope.playerCharacterId,
+    });
+  }
+  if (input.view.state.activeScene !== null) {
+    required.push({
+      id: `entity:scene:${input.view.state.activeScene}`,
+      sourceKind: "active-scene",
+      sourceReference: `scene:${input.view.state.activeScene}`,
+      content: input.view.state.activeScene,
+      inclusionReason:
+        "The active Scene bounds the currently available capabilities.",
+      visibility: "Player-visible",
+      citation: `scene:${input.view.state.activeScene}`,
+    });
+  }
+  input.view.availableActions
+    .filter(
+      (action) =>
+        mentions(input.utterance, action.id) ||
+        significantTerms(action.label).some((term) =>
+          mentions(input.utterance, term),
+        ),
+    )
+    .forEach((action) =>
+      required.push({
+        id: `capability:${action.id}`,
+        sourceKind: "capability",
+        sourceReference: action.id,
+        content: JSON.stringify(action),
+        inclusionReason:
+          "The Player utterance refers to this currently available capability.",
+        visibility: "Player-visible",
+        citation: null,
+      }),
+    );
+  const candidates: RankedEvidenceItem<ActorScopedEvidenceItem>[] = [
+    ...required.map((item, order) => ({ item, priority: 0, order })),
+    ...retrieved.items.map((item, index) => ({
+      item,
+      priority: 10,
+      order: required.length + index,
+    })),
+  ];
+  const items = selectRankedEvidence(
+    candidates,
+    Math.max(1, input.maxItems ?? 64),
+    true,
+  );
+  return markRetrievalBoundaryBundle(
+    immutableSnapshot({
+      id: evidenceBundleId(items),
+      taskType: input.scope.taskType,
+      scope: input.scope,
+      items,
+    }),
+    input,
+  );
 };

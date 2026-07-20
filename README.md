@@ -135,6 +135,17 @@ demand while the underlying Model Call Records remain outside the Timeline.
 
 Applications may also provide a replaceable presentation model to narrate an outcome only after its events commit. The model receives an immutable snapshot containing only Player-visible Established Facts, the committed resolution trace, and the just-appended events—never the private deterministic fallback, an application command, or an event-store handle. Schema-invalid, contradictory, timed-out, or mechanically ungrounded output falls back to the private deterministic summary without replaying the action. The Player may regenerate narration or ask a grounded rules question repeatedly from the same committed inputs; neither interaction appends events or changes projected game state. Without a presentation model, Structured Play continues to use deterministic summaries.
 
+The Scene Orchestration boundary coordinates classified input through
+application-owned `proposed`, `active`, `resolving`, `paused`, and `ended`
+lifecycle states. These states and every non-linear exit are projections of
+canonical events, so replay and Timeline branches reproduce them without model
+calls. Actor-authorized Game Master approval, edit, rejection, and override
+decisions retain an attributable audit record and still submit ordinary
+validated commands. Final Narration receives a committed snapshot only after
+required Player choices and deterministic resolution finish; invalid claims
+select the deterministic summary, and presentation-only regeneration cannot
+append events or change projections.
+
 For development:
 
 ```sh

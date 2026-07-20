@@ -4,6 +4,7 @@ import type {
   ActorScopedEvidenceBundle,
   ActorScopedEvidenceItem,
 } from "./actor-scoped-retrieval.js";
+import { isActorScopedEvidenceBundleFromRetrieval } from "./actor-scoped-retrieval.js";
 import type { EvidenceBundle } from "./evidence-bundle.js";
 import { evidenceBundleId } from "./evidence-selection.js";
 import {
@@ -78,6 +79,28 @@ export interface ExpandedModelTaskResult {
   readonly candidateCommand: StructuredPlayInput | null;
   readonly evidenceTrace: ModelTaskEvidenceTrace;
 }
+
+const validatedExpandedModelTaskResults = new WeakMap<
+  object,
+  {
+    readonly utterance: string;
+    readonly evidenceBundle: ActorScopedEvidenceBundle;
+  }
+>();
+
+export const isValidatedExpandedModelTaskResult = (
+  result: ExpandedModelTaskResult,
+  expected: {
+    readonly utterance: string;
+    readonly evidenceBundle: ActorScopedEvidenceBundle;
+  },
+): boolean => {
+  const validation = validatedExpandedModelTaskResults.get(result);
+  return (
+    validation?.utterance === expected.utterance &&
+    validation.evidenceBundle === expected.evidenceBundle
+  );
+};
 
 const isStringArray = (value: unknown): value is readonly string[] =>
   Array.isArray(value) && value.every((item) => typeof item === "string");
@@ -369,10 +392,17 @@ const bundleFor = (
     scope: { ...bundle.scope, taskType },
   });
 
-const assertActorScopedContext = (context: ExpandedModelTaskContext): void => {
+const assertActorScopedContext = (
+  context: ExpandedModelTaskContext,
+  utterance: string,
+): void => {
   const { evidenceBundle } = context;
   const scope: unknown = evidenceBundle.scope;
   if (
+    !isActorScopedEvidenceBundleFromRetrieval(evidenceBundle, {
+      utterance,
+      scope: evidenceBundle.scope,
+    }) ||
     !isRecord(scope) ||
     typeof scope.taskType !== "string" ||
     evidenceBundle.taskType !== scope.taskType ||
@@ -456,14 +486,16 @@ const taskResult = ({
   readonly candidateCommand?: StructuredPlayInput | null;
   readonly executions: readonly ModelGatewayExecution[];
   readonly ruleIds?: readonly string[];
-}): ExpandedModelTaskResult =>
-  immutableSnapshot({
+}): ExpandedModelTaskResult => {
+  const result = immutableSnapshot({
     classification,
     intent,
     ruleMatch,
     candidateCommand,
     evidenceTrace: evidenceTraceFrom(executions, ruleIds),
   });
+  return result;
+};
 
 export const runExpandedModelTaskSet = async ({
   utterance,
@@ -476,7 +508,17 @@ export const runExpandedModelTaskSet = async ({
   readonly modelCallStore: ModelCallRecordStore;
   readonly context: ExpandedModelTaskContext;
 }): Promise<ExpandedModelTaskResult> => {
-  assertActorScopedContext(context);
+  assertActorScopedContext(context, utterance);
+  const validatedResult = (
+    input: Parameters<typeof taskResult>[0],
+  ): ExpandedModelTaskResult => {
+    const result = taskResult(input);
+    validatedExpandedModelTaskResults.set(result, {
+      utterance,
+      evidenceBundle: context.evidenceBundle,
+    });
+    return result;
+  };
   const classificationExecution = await gateway.execute(
     {
       type: "classify-discourse",
@@ -494,7 +536,7 @@ export const runExpandedModelTaskSet = async ({
     classification === null ? null : { classification },
   );
   if (classification === null) {
-    return taskResult({
+    return validatedResult({
       classification: null,
       executions: [classificationExecution],
     });
@@ -512,7 +554,7 @@ export const runExpandedModelTaskSet = async ({
     const intent = validateIntentExtraction(succeededOutput(intentExecution), context);
     recordExecution(modelCallStore, intentExecution, intent);
     if (intent === null) {
-      return taskResult({
+      return validatedResult({
         classification,
         executions: [classificationExecution, intentExecution],
       });
@@ -552,7 +594,7 @@ export const runExpandedModelTaskSet = async ({
       candidateCommand !== null && isRecord(proposalOutput)
         ? (proposalOutput.ruleEvidenceItemIds as readonly string[])
         : [];
-    return taskResult({
+    return validatedResult({
       classification,
       intent,
       candidateCommand,
@@ -588,7 +630,7 @@ export const runExpandedModelTaskSet = async ({
         : ruleMatch?.status === "needs-adjudication"
           ? ruleMatch.candidateRuleIds
           : [];
-    return taskResult({
+    return validatedResult({
       classification,
       ruleMatch,
       executions: [classificationExecution, ruleExecution],
@@ -596,7 +638,7 @@ export const runExpandedModelTaskSet = async ({
     });
   }
 
-  return taskResult({
+  return validatedResult({
     classification,
     executions: [classificationExecution],
   });
