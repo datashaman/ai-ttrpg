@@ -24,6 +24,17 @@ export const immutableSnapshot = <Value>(value: Value): Value => {
   return snapshot;
 };
 
+export const canonicalJson = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+};
+
 export class ModelTimeoutError extends Error {
   constructor() {
     super("Model timed out.");

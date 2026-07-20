@@ -1,5 +1,16 @@
 import { randomUUID } from "node:crypto";
 
+import {
+  assertApprovedExecutableRulesetPackage,
+  publishedCheckRuleReference,
+  type ExecutableRulesetPackage,
+  type PublishedCheckRuleReference,
+} from "./rule-publication.js";
+import {
+  checkOutcomeFor,
+  type CheckOutcome,
+} from "./check-rule.js";
+
 import { canonicalHistoryRevision } from "./canonical-history-revision.js";
 import { createInMemoryEventStore } from "./in-memory-event-store.js";
 import {
@@ -60,7 +71,7 @@ export {
 } from "./world-knowledge.js";
 
 export type Trait = "Might" | "Wits" | "Presence";
-export type CheckOutcome = "Setback" | "Success with Cost" | "Clean Success";
+export type { CheckOutcome } from "./check-rule.js";
 export type Likelihood = "Unlikely" | "Even" | "Likely";
 export type OracleAnswer = "Yes" | "No";
 export type Health = 0 | 1 | 2 | 3;
@@ -246,10 +257,12 @@ export interface CheckProposal {
 }
 
 interface CheckRollEvidence {
-  readonly rule: {
-    readonly id: "micro-ruleset.check";
-    readonly version: "1.0.0";
-  };
+  readonly rule:
+    | {
+        readonly id: "micro-ruleset.check";
+        readonly version: "1.0.0";
+      }
+    | PublishedCheckRuleReference;
   readonly random: {
     readonly source: string;
     readonly seed: number | null;
@@ -766,6 +779,7 @@ export interface StructuredPlayOptions {
   readonly reveals?: readonly RevealDefinition[];
   readonly timelineStore?: TimelineStore;
   readonly conversationStore?: ConversationStore;
+  readonly checkRulesetPackage?: ExecutableRulesetPackage;
 }
 
 const STARTING_INVENTORY: readonly InventoryItem[] = [
@@ -1528,9 +1542,6 @@ const createNarratorLikelihoodRecommendation = (
   evidence,
 });
 
-const outcomeFor = (total: number): CheckOutcome =>
-  total <= 6 ? "Setback" : total <= 9 ? "Success with Cost" : "Clean Success";
-
 const yesThresholdFor = (likelihood: Likelihood): 25 | 50 | 75 =>
   likelihood === "Unlikely" ? 25 : likelihood === "Even" ? 50 : 75;
 
@@ -1576,6 +1587,13 @@ export const createStructuredPlayApplication = (
   const reveals = options.reveals ?? DEFAULT_REVEALS;
   const conversationStore =
     options.conversationStore ?? createInMemoryConversationStore();
+  if (options.checkRulesetPackage !== undefined) {
+    assertApprovedExecutableRulesetPackage(options.checkRulesetPackage);
+  }
+  const checkRule =
+    options.checkRulesetPackage === undefined
+      ? ({ id: "micro-ruleset.check", version: "1.0.0" } as const)
+      : publishedCheckRuleReference(options.checkRulesetPackage);
   checkActions.forEach(validateCheckAction);
   oracleActions.forEach(validateOracleAction);
   sceneTransitions.forEach(validateSceneTransition);
@@ -2272,7 +2290,7 @@ export const createStructuredPlayApplication = (
 
         const resolveSpent = input.choice === "spend-resolve" ? 1 : 0;
         const adjustedTotal = pendingChoice.roll.result.total + resolveSpent;
-        const outcome = outcomeFor(adjustedTotal);
+        const outcome = checkOutcomeFor(adjustedTotal);
         const resultingResolve = (
           playerCharacter.resolve - resolveSpent
         ) as Resolve;
@@ -2410,7 +2428,7 @@ export const createStructuredPlayApplication = (
           type: "spend-resolve",
           proposal,
           roll: {
-            rule: { id: "micro-ruleset.check", version: "1.0.0" },
+            rule: checkRule,
             random: { ...randomSource.metadata(), inputs },
             modifiers: [{ source: proposal.trait, value: modifier }],
             result: { diceTotal, total },

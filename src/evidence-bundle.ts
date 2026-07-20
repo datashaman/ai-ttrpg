@@ -588,12 +588,32 @@ const AUTHORED_RULES: readonly AuthoredRule[] = [
   },
 ];
 
-const applicableRules = (query: string): readonly EvidenceItem[] => {
+const publishedCheckRule = (view: ApplicationView): EvidenceItem | null => {
+  const rule = view.state.lastCheckResolution?.trace.rule;
+  if (rule === undefined || !("sourcePassages" in rule)) return null;
+  return {
+    id: `rule:${rule.id}@${rule.version}`,
+    sourceKind: "authority-rule",
+    sourceReference: `rule-package:micro-ruleset@${rule.version}#${rule.sourcePassages
+      .map(({ passageAnchor }) => passageAnchor)
+      .join(",")}`,
+    content: rule.sourcePassages.map(({ text }) => text).join(" "),
+    inclusionReason:
+      "This exact approved package rule and its source passages govern the committed Check outcome.",
+  };
+};
+
+const applicableRules = (
+  query: string,
+  view: ApplicationView,
+): readonly EvidenceItem[] => {
   const normalizedQuery = normalized(query);
   const matching = AUTHORED_RULES.filter((rule) =>
     rule.terms.some((term) => normalizedQuery.includes(normalized(term))),
   ).map((rule) => rule.item);
-  return matching.length > 0 ? matching : [AUTHORED_RULES[1]!.item];
+  const published = publishedCheckRule(view);
+  const selected = matching.length > 0 ? matching : [AUTHORED_RULES[1]!.item];
+  return published === null ? selected : [published, ...selected];
 };
 
 const RELEVANCE_STOP_WORDS = new Set([
@@ -699,7 +719,7 @@ export const assembleRulesExplanationEvidence = (
       maxItems: 64,
     }).items.filter((item) => item.id !== "rule:structured-play-authority"),
   );
-  const rules = applicableRules(input.utterance);
+  const rules = applicableRules(input.utterance, input.view);
   const ranked: RankedEvidenceItem[] = [
     ...rules.map((item, order) => ({ item, priority: 0, order })),
     ...contextual.map((item, order) => ({

@@ -91,8 +91,17 @@ const requestFrom = (context: PresentationContext): NarrationRequest =>
 
 const renderRule = (trace: ResolutionTrace): string | null => {
   if (trace === null) return null;
+  const sourceCitation =
+    "sourcePassages" in trace.rule
+      ? ` Sources: ${trace.rule.sourcePassages
+          .map(
+            ({ documentId, documentVersion, passageAnchor }) =>
+              `${documentId}@${documentVersion}#${passageAnchor}`,
+          )
+          .join(", ")}.`
+      : "";
   if (trace.rule.id === "micro-ruleset.check" && "total" in trace.result) {
-    return `${trace.rule.id}@${trace.rule.version}: total ${trace.result.total} resolved as ${trace.result.outcome}.`;
+    return `${trace.rule.id}@${trace.rule.version}: total ${trace.result.total} resolved as ${trace.result.outcome}.${sourceCitation}`;
   }
   if (trace.rule.id === "micro-ruleset.oracle" && "roll" in trace.result) {
     return `${trace.rule.id}@${trace.rule.version}: roll ${trace.result.roll} against ${trace.result.yesThreshold}% resolved ${trace.result.answer}.`;
