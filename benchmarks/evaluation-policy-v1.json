@@ -1,0 +1,37 @@
+{
+  "id": "evaluation-policy-v1",
+  "schemaVersion": 1,
+  "review": {
+    "reviewer": "project-maintainer",
+    "reviewedAt": "2026-07-21",
+    "rationale": "Milestone C no-regression baseline approved for issue #87."
+  },
+  "quality": {
+    "precision": { "direction": "minimum", "value": 0.9 },
+    "recall": { "direction": "minimum", "value": 0.9 },
+    "accuracy": { "direction": "minimum", "value": 0.95 },
+    "contradictionRate": { "direction": "maximum", "value": 0 },
+    "citationAccuracy": { "direction": "minimum", "value": 1 },
+    "forbiddenDataLeakage": { "direction": "maximum", "value": 0 }
+  },
+  "retrieval": {
+    "byKind": {
+      "entity": { "minimumPrecisionAtK": 1, "minimumRecallAtK": 0.9285714285714286, "minimumMeanReciprocalRank": 0.9 },
+      "relationship": { "minimumPrecisionAtK": 0.2857142857142857, "minimumRecallAtK": 0.5, "minimumMeanReciprocalRank": 0.5357142857142857 },
+      "rule": { "minimumPrecisionAtK": 1, "minimumRecallAtK": 0.6666666666666666, "minimumMeanReciprocalRank": 0.6666666666666666 },
+      "event": { "minimumPrecisionAtK": 0.8, "minimumRecallAtK": 1, "minimumMeanReciprocalRank": 1 }
+    },
+    "minimumUnambiguousEntityLinkAccuracy": 0.875,
+    "maximumForbiddenDataLeakage": 0
+  },
+  "operations": {
+    "maximumP95LatencyMs": 1000,
+    "maximumModelTasksPerTurn": 4,
+    "maximumCostUsdPerTurn": 0.01,
+    "maximumCostUsdPerSession": 0.05,
+    "maximumRetries": 2,
+    "maximumRepairs": 2,
+    "maximumFailures": 0,
+    "maximumP95EvidenceBundleItems": 12
+  }
+}

@@ -17,6 +17,7 @@ import { runNaturalLanguagePlay } from "../src/natural-language-play.js";
 import { createStructuredPlayApplication } from "../src/structured-play.js";
 import { beginAdventureFixture } from "./support/adventure-fixture.js";
 import { scriptedIO } from "./support/scripted-io.js";
+import { assertDeterministicReleaseCommand } from "./support/release-command.js";
 
 type BenchmarkExpectation =
   | "accepted-action"
@@ -125,7 +126,7 @@ test("required CI runs the complete deterministic release command without the Op
   );
   const releaseCommand = packageJson.scripts["verify:release"];
 
-  assert.equal(releaseCommand, "npm test && npm run typecheck");
+  assertDeterministicReleaseCommand(releaseCommand);
   assert.match(workflow, /run: npm run verify:release/);
   assert.doesNotMatch(releaseCommand, /openai|smoke|OPENAI_API_KEY/i);
   assert.doesNotMatch(workflow, /OPENAI_API_KEY|test:openai-smoke/);

@@ -1,0 +1,22 @@
+{
+  "id": "release-measurements-v1",
+  "schemaVersion": 1,
+  "policyId": "evaluation-policy-v1",
+  "mode": "deterministic-scripted",
+  "datasets": [
+    { "layer": "classification", "datasetId": "expanded-model-tasks-v1", "path": "benchmarks/expanded-model-tasks-v1.json", "sha256": "177f107d5d1bc0081f19ce16a160ea3e7f6f97ab8cd24ff332c542f9e42e61fa" },
+    { "layer": "intent-extraction", "datasetId": "locked-manor-utterances-v1", "path": "benchmarks/locked-manor-utterances-v1.json", "sha256": "f0925f7480740fb653fe2a68691a5ad0c0ea5300f9a0714ad7efdbef7489978f" },
+    { "layer": "rule-selection", "datasetId": "rule-extraction-v1", "path": "benchmarks/rule-extraction-v1.json", "sha256": "7bcad1f7a04dc6ff0279727b25fee864bf7a37deea24ec6f374cd5b96f21052d" },
+    { "layer": "retrieval", "datasetId": "actor-scoped-retrieval-v1", "path": "benchmarks/actor-scoped-retrieval-v1.json", "sha256": "a749441fc19c86e46994f33fa8cb83a716bf202ff25bc7d50f234aa71d7ba81d" },
+    { "layer": "citation", "datasetId": "locked-manor-utterances-v1", "path": "benchmarks/locked-manor-utterances-v1.json", "sha256": "f0925f7480740fb653fe2a68691a5ad0c0ea5300f9a0714ad7efdbef7489978f" },
+    { "layer": "proposal-validity", "datasetId": "expanded-model-tasks-v1", "path": "benchmarks/expanded-model-tasks-v1.json", "sha256": "177f107d5d1bc0081f19ce16a160ea3e7f6f97ab8cd24ff332c542f9e42e61fa" },
+    { "layer": "narration", "datasetId": "locked-manor-golden-campaign-v1", "path": "benchmarks/golden-campaign-v1.json", "sha256": "539cc6303cced59495e7d9a517a932eab388b617ef149f6d81aee9df45ea5b84" }
+  ],
+  "changeSurface": {
+    "models": ["golden-script-v1", "recorded-openai-v1"],
+    "promptVersions": ["interpret-player-input-v1", "classify-discourse-v1", "extract-intent-v1", "suggest-rule-match-v1", "propose-state-change-v1", "explain-rules-v1", "narrate-committed-outcome-v1"],
+    "providers": ["scripted", "openai"],
+    "retrievalPolicies": ["actor-scoped-retrieval-v1"],
+    "rulesets": ["micro-ruleset@1.0.0"]
+  }
+}

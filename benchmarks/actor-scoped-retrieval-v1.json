@@ -19,6 +19,16 @@
     "event precision@5 0.8000 < 0.9000",
     "unambiguous entity-link accuracy 0.8750 < 0.9500"
   ],
+  "expectedMeasurements": {
+    "byKind": {
+      "entity": { "caseCount": 10, "precisionAtK": 1, "recallAtK": 0.9285714285714286, "meanReciprocalRank": 0.9, "forbiddenDataLeakage": 0 },
+      "relationship": { "caseCount": 4, "precisionAtK": 0.2857142857142857, "recallAtK": 0.5, "meanReciprocalRank": 0.5357142857142857, "forbiddenDataLeakage": 0 },
+      "rule": { "caseCount": 3, "precisionAtK": 1, "recallAtK": 0.6666666666666666, "meanReciprocalRank": 0.6666666666666666, "forbiddenDataLeakage": 0 },
+      "event": { "caseCount": 2, "precisionAtK": 0.8, "recallAtK": 1, "meanReciprocalRank": 1, "forbiddenDataLeakage": 0 }
+    },
+    "unambiguousEntityLinkAccuracy": 0.875,
+    "totalForbiddenDataLeakage": 0
+  },
   "thresholds": {
     "minimumPrecisionAtK": 0.9,
     "minimumRecallAtK": 0.9,

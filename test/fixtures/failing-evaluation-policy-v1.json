@@ -1,0 +1,33 @@
+{
+  "id": "evaluation-policy-v1",
+  "schemaVersion": 1,
+  "review": { "reviewer": "test", "reviewedAt": "2026-07-21", "rationale": "Prove a configured operational tolerance blocks release." },
+  "quality": {
+    "precision": { "direction": "minimum", "value": 0 },
+    "recall": { "direction": "minimum", "value": 0 },
+    "accuracy": { "direction": "minimum", "value": 0 },
+    "contradictionRate": { "direction": "maximum", "value": 1 },
+    "citationAccuracy": { "direction": "minimum", "value": 0 },
+    "forbiddenDataLeakage": { "direction": "maximum", "value": 1 }
+  },
+  "retrieval": {
+    "byKind": {
+      "entity": { "minimumPrecisionAtK": 0, "minimumRecallAtK": 0, "minimumMeanReciprocalRank": 0 },
+      "relationship": { "minimumPrecisionAtK": 0, "minimumRecallAtK": 0, "minimumMeanReciprocalRank": 0 },
+      "rule": { "minimumPrecisionAtK": 0, "minimumRecallAtK": 0, "minimumMeanReciprocalRank": 0 },
+      "event": { "minimumPrecisionAtK": 0, "minimumRecallAtK": 0, "minimumMeanReciprocalRank": 0 }
+    },
+    "minimumUnambiguousEntityLinkAccuracy": 0,
+    "maximumForbiddenDataLeakage": 1
+  },
+  "operations": {
+    "maximumP95LatencyMs": 1000,
+    "maximumModelTasksPerTurn": 0,
+    "maximumCostUsdPerTurn": 1,
+    "maximumCostUsdPerSession": 1,
+    "maximumRetries": 10,
+    "maximumRepairs": 10,
+    "maximumFailures": 10,
+    "maximumP95EvidenceBundleItems": 100
+  }
+}

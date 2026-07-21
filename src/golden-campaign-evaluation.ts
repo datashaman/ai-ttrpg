@@ -138,6 +138,34 @@ export interface GoldenCampaignRun {
   readonly normalizedEvidence: readonly unknown[];
   readonly visibleClaims: readonly string[];
   readonly diagnostics: readonly GoldenCampaignDiagnostic[];
+  readonly operations: {
+    readonly turns: number;
+    readonly latencyMs: number;
+    readonly modelTasks: number;
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+    readonly retries: number;
+    readonly repairs: number;
+    readonly failures: number;
+    readonly evidenceBundleItems: number;
+    readonly costUsd: number;
+    readonly changeSurface: {
+      readonly providers: readonly string[];
+      readonly models: readonly string[];
+      readonly promptVersions: readonly string[];
+      readonly retrievalPolicies: readonly string[];
+      readonly rulesets: readonly string[];
+    };
+  } | null;
+  readonly quality: {
+    readonly intentExtractionCorrect: boolean;
+    readonly ruleSelectionCorrect: boolean;
+    readonly proposalValid: boolean;
+    readonly proposalContradiction: boolean;
+    readonly citationAccurate: boolean;
+    readonly narrationContradiction: boolean;
+    readonly forbiddenDataLeakage: number;
+  };
 }
 
 const invalidFixture = (): never => {
@@ -586,6 +614,16 @@ const failedRun = (
     normalizedEvidence: [],
     visibleClaims: [],
     diagnostics: [diagnostic],
+    operations: null,
+    quality: {
+      intentExtractionCorrect: false,
+      ruleSelectionCorrect: false,
+      proposalValid: false,
+      proposalContradiction: true,
+      citationAccurate: false,
+      narrationContradiction: true,
+      forbiddenDataLeakage: 1,
+    },
   });
 
 const runCombination = async ({
@@ -633,6 +671,11 @@ const runCombination = async ({
     const commands: StructuredPlayInput[] = [];
     let evidence: readonly unknown[] = [];
     let modelEvaluated = false;
+    let intentExtractionCorrect = false;
+    let ruleSelectionCorrect = false;
+    let proposalValid = false;
+    let proposalContradiction = false;
+    let forbiddenDataLeakage = 0;
     for (const step of fixture.steps) {
       if (step.type === "choose-action" && !modelEvaluated) {
         const bundle = retrieveModelEvidence({
@@ -642,6 +685,9 @@ const runCombination = async ({
           rulesetPackage,
         });
         evidence = normalizedEvidence(bundle.items);
+        forbiddenDataLeakage = bundle.items.filter(
+          ({ visibility }) => visibility !== "Player-visible",
+        ).length;
         let expanded: Awaited<ReturnType<typeof runExpandedModelTaskSet>>;
         try {
           expanded = await runExpandedModelTaskSet({
@@ -681,6 +727,17 @@ const runCombination = async ({
           break;
         }
         modelEvaluated = true;
+        intentExtractionCorrect =
+          expanded.intent?.capabilityId === step.actionId &&
+          expanded.intent.referencedEntityIds.includes("scene:arrival");
+        ruleSelectionCorrect = expanded.evidenceTrace.ruleIds.includes(
+          `rule:micro-ruleset.check@${fixture.rulesetVersion}`,
+        );
+        proposalValid =
+          expanded.candidateCommand?.type === "choose-action" &&
+          expanded.candidateCommand.actionId === step.actionId;
+        proposalContradiction =
+          expanded.candidateCommand !== null && !proposalValid;
         if (expanded.candidateCommand === null) {
           diagnostics.push({
             layer: "model",
@@ -729,6 +786,16 @@ const runCombination = async ({
         normalizedEvidence: evidence,
         visibleClaims: [],
         diagnostics,
+        operations: null,
+        quality: {
+          intentExtractionCorrect,
+          ruleSelectionCorrect,
+          proposalValid,
+          proposalContradiction,
+          citationAccurate: false,
+          narrationContradiction: true,
+          forbiddenDataLeakage,
+        },
       });
     }
     let claims: readonly string[] = [];
@@ -806,6 +873,56 @@ const runCombination = async ({
       normalizedEvidence: evidence,
       visibleClaims: claims,
       diagnostics,
+      operations: {
+        turns: 1,
+        latencyMs: modelCallRecords.reduce(
+          (total, record) => total + record.durationMs,
+          0,
+        ),
+        modelTasks: modelCallRecords.length,
+        inputTokens: modelCallRecords.reduce(
+          (total, record) => total + (record.usage?.inputTokens ?? 0),
+          0,
+        ),
+        outputTokens: modelCallRecords.reduce(
+          (total, record) => total + (record.usage?.outputTokens ?? 0),
+          0,
+        ),
+        retries: modelCallRecords.reduce(
+          (total, record) => total + record.retryCount,
+          0,
+        ),
+        repairs: modelCallRecords.filter(({ retryCount }) => retryCount > 0)
+          .length,
+        failures: modelCallRecords.filter(
+          ({ validation }) => validation.status === "rejected",
+        ).length,
+        evidenceBundleItems: Math.max(
+          0,
+          ...modelCallRecords.map(({ evidenceReferences }) =>
+            evidenceReferences.length
+          ),
+        ),
+        costUsd: 0,
+        changeSurface: {
+          providers: [...new Set(modelCallRecords.map(({ provider }) => provider))],
+          models: [...new Set(modelCallRecords.map(({ model }) => model))],
+          promptVersions: [
+            ...new Set(modelCallRecords.map(({ promptVersion }) => promptVersion)),
+          ],
+          retrievalPolicies: ["actor-scoped-retrieval-v1"],
+          rulesets: [rulesetPackage.id],
+        },
+      },
+      quality: {
+        intentExtractionCorrect,
+        ruleSelectionCorrect,
+        proposalValid,
+        proposalContradiction,
+        citationAccurate: same(evidence, fixture.expected.evidence),
+        narrationContradiction: !same(claims, fixture.expected.visibleClaims),
+        forbiddenDataLeakage,
+      },
     });
   } finally {
     resources.cleanup();
