@@ -218,6 +218,10 @@ test("the release command emits one passing report and is part of required CI", 
       readonly providers: readonly string[];
       readonly rulesets: readonly string[];
     };
+    readonly simulation: {
+      readonly status: string;
+      readonly turns: { readonly accepted: number };
+    };
   };
   const packageJson = JSON.parse(
     readFileSync(new URL("../package.json", import.meta.url), "utf8"),
@@ -230,6 +234,8 @@ test("the release command emits one passing report and is part of required CI", 
   ]);
   assert.deepEqual(report.changeSurface.providers, ["scripted", "openai"]);
   assert.deepEqual(report.changeSurface.rulesets, ["micro-ruleset@1.0.0"]);
+  assert.equal(report.simulation.status, "passed");
+  assert.equal(report.simulation.turns.accepted, 100);
   assert.equal(
     packageJson.scripts["verify:release"],
     "npm test && npm run typecheck && npm run evaluate:release",

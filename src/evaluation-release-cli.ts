@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
+import { runDurableAdventureSimulation } from "./adventure-simulation.js";
 import { assembleActorScopedModelTaskEvidence } from "./actor-scoped-retrieval.js";
 import {
   evaluateReleaseMeasurements,
@@ -20,6 +21,7 @@ import {
   createScriptedModelProvider,
   modelPromptVersions,
 } from "./model-gateway.js";
+import { immutableSnapshot } from "./model-boundary.js";
 import {
   captureAdversarialSafetyOutcomes,
   type ClassificationEvaluationCorpus,
@@ -317,6 +319,15 @@ const observations: EvaluationObservations = {
     usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
   }],
 };
-const report = evaluateReleaseMeasurements({ policy, suite, observations });
+const evaluation = evaluateReleaseMeasurements({ policy, suite, observations });
+const simulation = await runDurableAdventureSimulation();
+const report = immutableSnapshot({
+  ...evaluation,
+  status:
+    evaluation.status === "passed" && simulation.status === "passed"
+      ? ("passed" as const)
+      : ("failed" as const),
+  simulation,
+});
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 if (report.status === "failed") process.exitCode = 1;

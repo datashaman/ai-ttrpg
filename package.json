@@ -9,6 +9,7 @@
   "scripts": {
     "start": "tsx src/cli.ts",
     "evaluate:golden": "tsx src/golden-campaign-cli.ts",
+    "evaluate:simulation": "tsx src/adventure-simulation-cli.ts",
     "evaluate:release": "tsx src/evaluation-release-cli.ts",
     "test": "tsx --test test/**/*.test.ts",
     "test:openai-smoke": "node --env-file-if-exists=.env.local --import tsx --test test/openai-smoke.test.ts",
