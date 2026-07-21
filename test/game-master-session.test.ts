@@ -130,6 +130,63 @@ test("Game Master controls reject commands outside the work item's validated cap
   assert.equal(JSON.stringify(session.snapshot()), before);
 });
 
+test("ingestion approval publishes only the exact reviewed Rule Candidate version", async () => {
+  const session = createDeterministicGameMasterSession({ actor: GAME_MASTER });
+  const item = session
+    .workspace("locked-manor")
+    .queue.find(({ taskType }) => taskType === "Ingestion review")!;
+  const canonicalBefore = session.snapshot().canonicalEvents;
+
+  const result = await session.intervene("locked-manor", {
+    itemId: item.id,
+    expectedRevision: item.revision,
+    idempotencyKey: "gm-review:ingestion",
+    decision: "approve",
+  });
+
+  assert.equal(result.status, "accepted");
+  assert.deepEqual(result.committedEvents, []);
+  assert.equal(result.auditRecord?.submittedCommand?.type, "publish-rule-candidate");
+  assert.deepEqual(session.snapshot().publishedRulePackageVersions, ["1.1.0"]);
+  assert.deepEqual(session.snapshot().canonicalEvents, canonicalBefore);
+});
+
+test("Narration regeneration receives one immutable retained snapshot and stores its correlated Model Call", async () => {
+  let receivedFrozenSnapshot = false;
+  const session = createDeterministicGameMasterSession({
+    actor: GAME_MASTER,
+    regenerateNarration: async (request) => {
+      receivedFrozenSnapshot = Object.isFrozen(request) &&
+        Object.isFrozen(request.evidenceBundle) &&
+        Object.isFrozen(request.committedEvent);
+      return {
+        text: "Regenerated from the same committed outcome and Evidence Bundle.",
+        modelCall: {
+          id: "model-call:side-door:retry",
+          taskType: "narrate-committed-outcome",
+          provider: "scripted-provider",
+          model: "scripted-model",
+          promptVersion: "narrate-committed-outcome-v1",
+          evidenceBundleId: request.evidenceBundle.id,
+          validation: "accepted",
+          retryCount: 0,
+        },
+      };
+    },
+  });
+  const canonicalBefore = session.snapshot().canonicalEvents;
+
+  const result = await session.retryNarration("locked-manor", "outcome:side-door");
+  const trace = session.trace("locked-manor", "outcome:side-door");
+
+  assert.equal(result.status, "Retained");
+  assert.equal(receivedFrozenSnapshot, true);
+  assert.equal(trace.narration.text, "Regenerated from the same committed outcome and Evidence Bundle.");
+  assert.deepEqual(trace.narration.modelCallIds, ["model-call:side-door:retry"]);
+  assert.equal(trace.modelCall.id, "model-call:side-door:retry");
+  assert.deepEqual(session.snapshot().canonicalEvents, canonicalBefore);
+});
+
 test("presentation provider failure is recoverable and audit replay restores the same trace", async () => {
   const session = createDeterministicGameMasterSession({
     actor: GAME_MASTER,

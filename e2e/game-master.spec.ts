@@ -18,7 +18,7 @@ test("Game Master identifies and intervenes in review work from a retained Narra
   await expect(queue).toContainText("12 minutes old");
   await expect(queue).toContainText("evidence:side-door");
   await expect(queue).toContainText("Two supplied rules could govern");
-  await expect(page.getByLabel("Command for Rule conflict")).toHaveValue("survey-manor");
+  await expect(page.getByLabel("Command for Rule conflict")).toContainText("Survey the manor grounds");
   await expect(page.getByLabel("Command for Invalid proposal").locator("option")).not.toHaveCount(0);
 
   const narration = page.getByRole("region", { name: "Recent retained Narration" });
@@ -43,4 +43,29 @@ test("Game Master identifies and intervenes in review work from a retained Narra
   expect(await page.evaluate(
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
   )).toBe(false);
+});
+
+test("Game Master Narration regeneration focuses recoverable errors and restores the control", async ({ page }) => {
+  await page.goto("/gm");
+  await page.getByRole("button", { name: "Select Game Master scope" }).click();
+  await page.getByRole("region", { name: "Recent retained Narration" })
+    .getByRole("link", { name: "Trace outcome" }).click();
+
+  let fails = true;
+  await page.route("**/retry-narration", async (route) => {
+    await route.fulfill({
+      json: fails
+        ? { status: "Recoverable error", message: "Narration provider unavailable. The committed outcome is safe." }
+        : { status: "Retained", message: "Narration was regenerated from the committed presentation snapshot." },
+    });
+  });
+  const regenerate = page.getByRole("button", { name: "Regenerate Narration" });
+  await regenerate.click();
+  const recovery = page.getByRole("alert");
+  await expect(recovery).toBeFocused();
+  await expect(recovery).toContainText("Retry Regenerate Narration");
+
+  fails = false;
+  await regenerate.click();
+  await expect(regenerate).toBeFocused();
 });

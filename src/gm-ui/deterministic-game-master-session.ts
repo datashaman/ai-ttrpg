@@ -12,6 +12,7 @@ import {
   committedRandomPosition,
   createSeededRandomSourceAtPosition,
 } from "../random-source.js";
+import { createMicroRulesetPackage } from "../micro-ruleset-package.js";
 import type {
   GameMasterAuditRecord,
   GameMasterCommand,
@@ -33,6 +34,30 @@ export interface GameMasterSessionSnapshot {
   readonly canonicalEvents: readonly CanonicalEvent[];
   readonly projection: GameMasterProjection;
   readonly auditRecords: readonly GameMasterAuditRecord[];
+  readonly presentations: readonly GameMasterPresentationRecord[];
+  readonly publishedRulePackageVersions: readonly string[];
+}
+
+interface GameMasterPresentationRecord {
+  readonly outcomeId: string;
+  readonly narration: GameMasterOutcomeTrace["narration"];
+  readonly evidenceBundle: GameMasterOutcomeTrace["evidenceBundle"];
+  readonly rule: GameMasterOutcomeTrace["rule"];
+  readonly modelCall: GameMasterOutcomeTrace["modelCall"];
+}
+
+export interface GameMasterNarrationRegenerationRequest {
+  readonly outcomeId: string;
+  readonly narration: GameMasterOutcomeTrace["narration"];
+  readonly evidenceBundle: GameMasterOutcomeTrace["evidenceBundle"];
+  readonly rule: GameMasterOutcomeTrace["rule"];
+  readonly committedEvent: GameMasterOutcomeTrace["events"][number];
+  readonly projection: GameMasterProjection;
+}
+
+export interface GameMasterNarrationRegenerationResult {
+  readonly text: string;
+  readonly modelCall: GameMasterOutcomeTrace["modelCall"];
 }
 
 const knownCommands = (
@@ -46,7 +71,9 @@ const queueFixture = (
   application: StructuredPlayApplication,
 ): GameMasterQueueItem[] => {
   const commands = knownCommands(application);
-  const survey = commands.find(({ command }) => command.actionId === "survey-manor")?.command ?? null;
+  const survey = commands.find(
+    ({ command }) => command.type === "choose-action" && command.actionId === "survey-manor",
+  )?.command ?? null;
   return [
     {
       id: "review:ambiguous-intent", revision: 1, status: "Under review", taskType: "Ambiguous intent",
@@ -82,7 +109,12 @@ const queueFixture = (
       playerInput: "Review candidate micro-ruleset.check@1.1.0.",
       evidence: { bundleId: "evidence:rule-review", summary: "Rule Candidate, diff, and exact source passages", itemCount: 5 },
       validationFindings: ["One normalized field is an Authored Interpretation."],
-      allowedInterventions: ["reject"], candidateCommand: null, allowedCommands: [],
+      allowedInterventions: ["approve", "reject"],
+      candidateCommand: { type: "publish-rule-candidate", candidateId: "micro-ruleset.check@1.1.0" },
+      allowedCommands: [{
+        command: { type: "publish-rule-candidate", candidateId: "micro-ruleset.check@1.1.0" },
+        label: "Publish reviewed micro-ruleset.check 1.1.0",
+      }],
     },
   ];
 };
@@ -156,36 +188,49 @@ const projectionAt = (
   return projectionFrom(replay.application, bounded);
 };
 
-const traceFor = (events: readonly CanonicalEvent[]): GameMasterOutcomeTrace => {
+const presentationFixture = (
+  event: Extract<CanonicalEvent, { type: "CheckResolved" }>,
+): GameMasterPresentationRecord => immutableSnapshot({
+  outcomeId: TRACE_OUTCOME_ID,
+  narration: {
+    id: "narration:side-door", status: "Retained" as const, source: "Narrator" as const,
+    text: "The lock yields with a hard scrape. Beyond the opening, floorboards answer from deeper in the manor.",
+    modelCallIds: ["model-call:side-door"],
+  },
+  evidenceBundle: {
+    id: "evidence:side-door",
+    items: [
+      { id: "evidence-item:outcome", source: `Accepted event ${event.id}`, inclusionReason: "Ground the committed outcome.", citation: `timeline:locked-manor#${event.id}` },
+      { id: "evidence-item:rule", source: "Executable Ruleset Package", inclusionReason: "Explain the governing Check outcome.", citation: "micro-ruleset@1.0.0#checks.outcomes" },
+    ],
+  },
+  rule: {
+    id: "micro-ruleset.check", packageVersion: "micro-ruleset@1.0.0",
+    sourcePassages: [
+      { id: "passage:checks-procedure", citation: "micro-ruleset@1.0.0#checks.procedure", text: "Roll two six-sided dice and add the relevant Trait." },
+      { id: "passage:check-outcomes", citation: "micro-ruleset@1.0.0#checks.outcomes", text: "The final total selects Setback, Success with Cost, or Clean Success." },
+    ],
+  },
+  modelCall: {
+    id: "model-call:side-door", taskType: "narrate-committed-outcome" as const,
+    provider: "configured-provider", model: "configured-model", promptVersion: "narrate-committed-outcome-v1",
+    evidenceBundleId: "evidence:side-door", validation: "accepted" as const, retryCount: 0,
+  },
+});
+
+const traceFor = (
+  events: readonly CanonicalEvent[],
+  presentation: GameMasterPresentationRecord,
+): GameMasterOutcomeTrace => {
   const event = outcomeEvent(events);
   const traceEvents = events.slice(0, events.findIndex(({ id }) => id === event.id) + 1);
   const random = event.payload.trace.random;
   return immutableSnapshot({
     id: "trace:side-door",
-    narration: {
-      id: "narration:side-door", status: "Retained" as const, source: "Narrator" as const,
-      text: "The lock yields with a hard scrape. Beyond the opening, floorboards answer from deeper in the manor.",
-      modelCallIds: ["model-call:side-door"],
-    },
-    evidenceBundle: {
-      id: "evidence:side-door",
-      items: [
-        { id: "evidence-item:outcome", source: `Accepted event ${event.id}`, inclusionReason: "Ground the committed outcome.", citation: `timeline:locked-manor#${event.id}` },
-        { id: "evidence-item:rule", source: "Executable Ruleset Package", inclusionReason: "Explain the governing Check outcome.", citation: "micro-ruleset@1.0.0#checks.outcomes" },
-      ],
-    },
-    rule: {
-      id: "micro-ruleset.check", packageVersion: "micro-ruleset@1.0.0",
-      sourcePassages: [
-        { id: "passage:checks-procedure", citation: "micro-ruleset@1.0.0#checks.procedure", text: "Roll two six-sided dice and add the relevant Trait." },
-        { id: "passage:check-outcomes", citation: "micro-ruleset@1.0.0#checks.outcomes", text: "The final total selects Setback, Success with Cost, or Clean Success." },
-      ],
-    },
-    modelCall: {
-      id: "model-call:side-door", taskType: "narrate-committed-outcome" as const,
-      provider: "configured-provider", model: "configured-model", promptVersion: "narrate-committed-outcome-v1",
-      evidenceBundleId: "evidence:side-door", validation: "accepted" as const, retryCount: 0,
-    },
+    narration: presentation.narration,
+    evidenceBundle: presentation.evidenceBundle,
+    rule: presentation.rule,
+    modelCall: presentation.modelCall,
     command: {
       id: event.causationId,
       input: { type: "resolve-pending-check", summary: `Resolve ${event.payload.goal} without spending Resolve.` },
@@ -218,12 +263,23 @@ export const createDeterministicGameMasterSession = ({
 }: {
   readonly actor: { readonly kind: "Game Master"; readonly campaignIds: readonly string[] } | { readonly kind: "Player"; readonly playerCharacterId: string };
   readonly snapshot?: GameMasterSessionSnapshot;
-  readonly regenerateNarration?: () => Promise<string>;
+  readonly regenerateNarration?: (
+    request: GameMasterNarrationRegenerationRequest,
+  ) => Promise<GameMasterNarrationRegenerationResult>;
 }): DeterministicGameMasterSession => {
   const runtime = createApplication(snapshot?.canonicalEvents);
   if (snapshot === undefined) seedFixtureOutcome(runtime.application);
-  const narrationGenerator = regenerateNarration ??
-    (async () => traceFor(runtime.eventStore.readAll()).narration.text);
+  let presentations = structuredClone(
+    snapshot?.presentations ?? [presentationFixture(outcomeEvent(runtime.eventStore.readAll()))],
+  ) as GameMasterPresentationRecord[];
+  let publishedRulePackageVersions = [...(snapshot?.publishedRulePackageVersions ?? [])];
+  const narrationGenerator = regenerateNarration ?? (async (request) => ({
+    text: request.narration.text,
+    modelCall: {
+      ...presentations[0]!.modelCall,
+      id: `${presentations[0]!.modelCall.id}:regenerated`,
+    },
+  }));
   let queue = structuredClone(snapshot?.queue ?? queueFixture(runtime.application)) as GameMasterQueueItem[];
   let auditRecords = structuredClone(snapshot?.auditRecords ?? []) as GameMasterAuditRecord[];
 
@@ -239,7 +295,7 @@ export const createDeterministicGameMasterSession = ({
       queue: queue.filter(({ campaign }) => campaign.id === campaignId),
       recentNarration: {
         outcomeId: TRACE_OUTCOME_ID,
-        text: traceFor(runtime.eventStore.readAll()).narration.text,
+        text: presentations.find(({ outcomeId }) => outcomeId === TRACE_OUTCOME_ID)!.narration.text,
         traceHref: `/gm/campaigns/${campaignId}/outcomes/outcome%3Aside-door/trace`,
       },
     });
@@ -250,7 +306,9 @@ export const createDeterministicGameMasterSession = ({
     trace: (campaignId, requestedOutcomeId) => {
       assertAuthorized(campaignId);
       if (requestedOutcomeId !== TRACE_OUTCOME_ID) throw new Error("Outcome trace not found.");
-      return traceFor(runtime.eventStore.readAll());
+      const presentation = presentations.find(({ outcomeId }) => outcomeId === requestedOutcomeId);
+      if (presentation === undefined) throw new Error("Retained presentation not found.");
+      return traceFor(runtime.eventStore.readAll(), presentation);
     },
     intervene: async (campaignId, intervention) => {
       const reject = (code: Extract<GameMasterInterventionResult, { status: "rejected" }>["code"], message: string): GameMasterInterventionResult =>
@@ -282,8 +340,17 @@ export const createDeterministicGameMasterSession = ({
       }
       const beforeIds = new Set(runtime.eventStore.readAll().map(({ id }) => id));
       if (submittedCommand !== null) {
-        const result = runtime.application.submit(submittedCommand);
-        if (result.status === "rejected") return reject("COMMAND_REJECTED", result.message);
+        if (submittedCommand.type === "choose-action") {
+          const result = runtime.application.submit(submittedCommand);
+          if (result.status === "rejected") return reject("COMMAND_REJECTED", result.message);
+        } else {
+          const version = submittedCommand.candidateId.split("@").at(-1);
+          if (version === undefined || version === submittedCommand.candidateId) {
+            return reject("COMMAND_REJECTED", "The Rule Candidate version is invalid.");
+          }
+          const rulesetPackage = createMicroRulesetPackage(version);
+          publishedRulePackageVersions = [...publishedRulePackageVersions, rulesetPackage.manifest.version];
+        }
       }
       const committed = runtime.eventStore.readAll().filter(({ id }) => !beforeIds.has(id));
       queue[index] = { ...item, revision: item.revision + 1, status: "Committed" };
@@ -306,8 +373,28 @@ export const createDeterministicGameMasterSession = ({
       assertAuthorized(campaignId);
       if (requestedOutcomeId !== TRACE_OUTCOME_ID) throw new Error("Outcome trace not found.");
       try {
-        const text = await narrationGenerator();
-        if (text.trim().length === 0) throw new Error("Empty Narration");
+        const index = presentations.findIndex(({ outcomeId }) => outcomeId === requestedOutcomeId);
+        const presentation = presentations[index];
+        if (presentation === undefined) throw new Error("Retained presentation not found.");
+        const currentTrace = traceFor(runtime.eventStore.readAll(), presentation);
+        const regenerated = await narrationGenerator(immutableSnapshot({
+          outcomeId: requestedOutcomeId,
+          narration: presentation.narration,
+          evidenceBundle: presentation.evidenceBundle,
+          rule: presentation.rule,
+          committedEvent: currentTrace.events[0]!,
+          projection: currentTrace.projection,
+        }));
+        if (regenerated.text.trim().length === 0) throw new Error("Empty Narration");
+        presentations[index] = immutableSnapshot({
+          ...presentation,
+          narration: {
+            ...presentation.narration,
+            text: regenerated.text,
+            modelCallIds: [regenerated.modelCall.id],
+          },
+          modelCall: regenerated.modelCall,
+        });
         return immutableSnapshot({ status: "Retained" as const, message: "Narration was regenerated from the committed presentation snapshot." });
       } catch {
         return immutableSnapshot({ status: "Recoverable error" as const, message: "Narration is unavailable. The committed outcome is safe." });
@@ -328,7 +415,10 @@ export const createDeterministicGameMasterSession = ({
     },
     snapshot: () => {
       const events = runtime.eventStore.readAll();
-      return immutableSnapshot({ queue, canonicalEvents: events, projection: projectionFrom(runtime.application, events), auditRecords });
+      return immutableSnapshot({
+        queue, canonicalEvents: events, projection: projectionFrom(runtime.application, events),
+        auditRecords, presentations, publishedRulePackageVersions,
+      });
     },
   };
 };

@@ -244,8 +244,8 @@ deterministic committed summary visible. Retry and Regenerate Narration reuse
 the same post-commit snapshot, while reopening retains completed Narration
 without rerunning historical mechanics.
 
-The same local server exposes a separate Game Master workspace at
-`/gm/campaigns/locked-manor/work`. Its queue distinguishes ambiguous input,
+The same local server exposes a separate Game Master scope selector at `/gm`;
+selecting it opens `/gm/campaigns/locked-manor/work`. Its queue distinguishes ambiguous input,
 invalid State Proposals, rule conflicts, and ingestion review, with the
 evidence and validation findings that constrain each intervention. Approve,
 edit, reject, and override controls submit validated Game Master operations;

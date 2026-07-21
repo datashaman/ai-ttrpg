@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { createHttpApplicationClient } from "../../src/player-ui/http-application-client.js";
 import type {
   GameMasterDecision,
+  GameMasterCommand,
   GameMasterOutcomeTrace,
   GameMasterQueueItem,
   GameMasterWorkspace,
@@ -57,11 +58,11 @@ const QueueItem = ({
   readonly intervene: (
     item: GameMasterQueueItem,
     decision: GameMasterDecision,
-    actionId?: string,
+    command?: GameMasterCommand,
   ) => void;
 }) => {
-  const [actionId, setActionId] = useState(
-    item.candidateCommand?.actionId ?? item.allowedCommands[0]?.command.actionId ?? "",
+  const [commandValue, setCommandValue] = useState(
+    JSON.stringify(item.candidateCommand ?? item.allowedCommands[0]?.command ?? null),
   );
   const needsCommand = item.allowedInterventions.some(
     (decision) => decision === "edit" || decision === "override",
@@ -89,11 +90,11 @@ const QueueItem = ({
             <span>Validated command for edit or override</span>
             <select
               aria-label={`Command for ${item.taskType}`}
-              value={actionId}
-              onChange={(event) => setActionId(event.target.value)}
+              value={commandValue}
+              onChange={(event) => setCommandValue(event.target.value)}
             >
               {item.allowedCommands.map(({ command, label }) => (
-                <option key={command.actionId} value={command.actionId}>{label}</option>
+                <option key={JSON.stringify(command)} value={JSON.stringify(command)}>{label}</option>
               ))}
             </select>
           </label>
@@ -107,7 +108,9 @@ const QueueItem = ({
             onClick={() => intervene(
               item,
               decision,
-              decision === "edit" || decision === "override" ? actionId : undefined,
+              decision === "edit" || decision === "override"
+                ? item.allowedCommands.find(({ command }) => JSON.stringify(command) === commandValue)?.command
+                : undefined,
             )}
           >
             {decisionLabel[decision]} {item.taskType}
@@ -145,15 +148,13 @@ export const GameMasterWorkspaceRoute = () => {
   const intervene = async (
     item: GameMasterQueueItem,
     decision: GameMasterDecision,
-    actionId?: string,
+    selectedCommand?: GameMasterCommand,
   ) => {
     setBusy(true);
     setError(null);
     setMessage(null);
     try {
-      const command = actionId === undefined
-        ? undefined
-        : { type: "choose-action" as const, actionId };
+      const command = selectedCommand;
       const result = await client.intervene(campaignId, {
         itemId: item.id,
         expectedRevision: item.revision,
@@ -210,7 +211,9 @@ export const GameMasterTraceRoute = () => {
   const [trace, setTrace] = useState<GameMasterOutcomeTrace | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retryMessage, setRetryMessage] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
+  const regenerateButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     void client.readOutcomeTrace(campaignId, outcomeId)
       .then(setTrace)
@@ -221,8 +224,19 @@ export const GameMasterTraceRoute = () => {
   if (error !== null) return <main className="loading"><ErrorSummary title="Trace unavailable." message={error} /></main>;
   if (trace === null) return <main className="loading"><p role="status">Opening outcome trace…</p></main>;
   const retry = async () => {
-    const result = await client.retryNarration(campaignId, outcomeId);
-    setRetryMessage(result.message);
+    setRetryMessage(null);
+    setRetryError(null);
+    try {
+      const result = await client.retryNarration(campaignId, outcomeId);
+      if (result.status === "Recoverable error") {
+        setRetryError(`${result.message} Retry Regenerate Narration.`);
+      } else {
+        setRetryMessage(result.message);
+        requestAnimationFrame(() => regenerateButton.current?.focus());
+      }
+    } catch (reason) {
+      setRetryError(`${reason instanceof Error ? reason.message : "Narration is unavailable."} Retry Regenerate Narration.`);
+    }
   };
   return (
     <main className="gm-shell trace-page">
@@ -234,8 +248,9 @@ export const GameMasterTraceRoute = () => {
       </header>
       <TraceSection title="Retained Narration">
         <Status>{trace.narration.status}</Status><p>{trace.narration.text}</p>
-        <button onClick={retry}>Regenerate Narration</button>
+        <button ref={regenerateButton} onClick={retry}>Regenerate Narration</button>
         {retryMessage === null ? null : <p role="status">{retryMessage}</p>}
+        {retryError === null ? null : <ErrorSummary title="Recoverable error" message={retryError} />}
       </TraceSection>
       <TraceSection title="Evidence Bundle">
         <p><code>{trace.evidenceBundle.id}</code></p>

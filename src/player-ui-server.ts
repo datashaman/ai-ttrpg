@@ -136,10 +136,14 @@ const isGameMasterCommand = (
   value: unknown,
 ): value is NonNullable<GameMasterIntervention["command"]> =>
   isRecord(value) &&
-  hasExactKeys(value, ["type", "actionId"]) &&
+  ((hasExactKeys(value, ["type", "actionId"]) &&
     value.type === "choose-action" &&
     typeof value.actionId === "string" &&
-    value.actionId.length > 0;
+    value.actionId.length > 0) ||
+    (hasExactKeys(value, ["type", "candidateId"]) &&
+      value.type === "publish-rule-candidate" &&
+      typeof value.candidateId === "string" &&
+      value.candidateId.length > 0));
 
 const isGameMasterIntervention = (
   value: unknown,

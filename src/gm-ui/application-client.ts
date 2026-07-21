@@ -6,10 +6,9 @@ export type GameMasterTaskType =
 
 export type GameMasterDecision = "approve" | "edit" | "reject" | "override";
 
-export interface GameMasterCommand {
-  readonly type: "choose-action";
-  readonly actionId: string;
-}
+export type GameMasterCommand =
+  | { readonly type: "choose-action"; readonly actionId: string }
+  | { readonly type: "publish-rule-candidate"; readonly candidateId: string };
 
 export interface GameMasterQueueItem {
   readonly id: string;
