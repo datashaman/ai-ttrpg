@@ -109,7 +109,7 @@ const queueFixture = (
       createdAt: "2026-07-21T12:09:00.000Z", age: "9 minutes old",
       playerInput: "Review candidate micro-ruleset.check@1.1.0.",
       evidence: { bundleId: "evidence:rule-review", summary: "Rule Candidate, diff, and exact source passages", itemCount: 5 },
-      validationFindings: ["One normalized field is an Authored Interpretation."],
+      validationFindings: ["The valid Rule Candidate is awaiting exact-version approval."],
       allowedInterventions: ["approve", "reject"],
       candidateCommand: { type: "publish-rule-candidate", candidateId: pendingPublication.candidate.version },
       allowedCommands: [{
