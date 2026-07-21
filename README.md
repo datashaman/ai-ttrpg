@@ -244,6 +244,17 @@ deterministic committed summary visible. Retry and Regenerate Narration reuse
 the same post-commit snapshot, while reopening retains completed Narration
 without rerunning historical mechanics.
 
+The same local server exposes a separate Game Master workspace at
+`/gm/campaigns/locked-manor/work`. Its queue distinguishes ambiguous input,
+invalid State Proposals, rule conflicts, and ingestion review, with the
+evidence and validation findings that constrain each intervention. Approve,
+edit, reject, and override controls submit validated Game Master operations;
+they never edit an authoritative projection in the browser. Recent retained
+Narration links directly to an outcome trace that correlates its Evidence
+Bundle, approved rule and source passages, Model Call Record, actor-authorized
+command, accepted events, random trace, and replayed projection. Provider
+diagnostics and unfiltered World Knowledge remain absent from the workspace.
+
 Provider, model, credentials, and deadline are runtime configuration; they are
 not Adventure state. If any required setting is missing or the deadline is not
 a positive integer, Natural Language Play is unavailable and the CLI offers
