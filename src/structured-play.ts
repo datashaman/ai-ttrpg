@@ -364,6 +364,8 @@ interface EventEnvelope<EventType extends string, Payload> {
   readonly origin: "structured-play";
   readonly correlationId: string;
   readonly causationId: string;
+  /** Command type is persisted for causal inspection; absent only in legacy events. */
+  readonly commandType?: StructuredPlayInput["type"];
   readonly payload: Payload;
 }
 
@@ -1496,6 +1498,7 @@ const createEvent = <EventType extends keyof EventPayloads>(
   payload: EventPayloads[EventType],
   sequence: number,
   commandId: string,
+  commandType: StructuredPlayInput["type"],
 ): EventEnvelope<EventType, EventPayloads[EventType]> => ({
   id: randomUUID(),
   streamId: "adventure",
@@ -1506,6 +1509,7 @@ const createEvent = <EventType extends keyof EventPayloads>(
   origin: "structured-play",
   correlationId: commandId,
   causationId: commandId,
+  commandType,
   payload,
 });
 
@@ -1749,6 +1753,7 @@ export const createStructuredPlayApplication = (
 
   let pendingEvents: CanonicalEvent[] = [];
   let commandStartPosition = 0;
+  let currentCommandType: StructuredPlayInput["type"] | null = null;
   const currentEvents = (): readonly CanonicalEvent[] => [
     ...eventStore.readAll(),
     ...pendingEvents,
@@ -1802,11 +1807,15 @@ export const createStructuredPlayApplication = (
     payload: EventPayloads[EventType],
     commandId: string,
   ): EventEnvelope<EventType, EventPayloads[EventType]> => {
+    if (currentCommandType === null) {
+      throw new Error("Canonical events require an attributed command type.");
+    }
     const event = createEvent(
       type,
       payload,
       currentEvents().length + 1,
       commandId,
+      currentCommandType,
     );
     pendingEvents.push(event as CanonicalEvent);
     return event;
@@ -1997,6 +2006,7 @@ export const createStructuredPlayApplication = (
       commandStartPosition = events.length;
       const state = project(events);
       const commandId = randomUUID();
+      currentCommandType = input.type;
 
       if (input.type === "review-world-knowledge-reveal") {
         if (

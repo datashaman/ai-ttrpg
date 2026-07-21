@@ -9,6 +9,7 @@ import type {
   PlayerRetainedPresentation,
 } from "./player-presentation.js";
 import type { GameMasterApplicationClient } from "../gm-ui/application-client.js";
+import type { TimelineWorkspaceResult, TimelineWorkspaceView } from "../timeline-ui.js";
 
 export type PlayerAdventureCommand =
   | {
@@ -207,4 +208,20 @@ export interface ApplicationClient extends GameMasterApplicationClient {
       readonly signal?: AbortSignal;
     },
   ): AsyncIterable<PlayerPresentationEvent>;
+  readTimelineWorkspace(
+    adventureId: string,
+    actor: "Player" | "Game Master",
+    compareWith?: string,
+  ): Promise<TimelineWorkspaceView>;
+  branchTimeline(
+    adventureId: string,
+    actor: "Player" | "Game Master",
+    eventPosition: number,
+  ): Promise<TimelineWorkspaceResult>;
+  selectTimeline(
+    adventureId: string,
+    actor: "Player" | "Game Master",
+    timelineId: string,
+    compareWith?: string,
+  ): Promise<TimelineWorkspaceResult>;
 }

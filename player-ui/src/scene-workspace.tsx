@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { Link } from "react-router-dom";
 
 import type { PlayerAdventureProjection, PlayerCommand } from "../../src/player-ui/application-client.js";
 import { CharacterFolio } from "./character-folio.js";
@@ -49,7 +50,7 @@ export const SceneWorkspace = ({
     <div className="app-shell">
       <header className="topbar">
         <a className="wordmark" href={`/player/adventures/${projection.id}`}><span aria-hidden="true">✦</span> {projection.title}</a>
-        <nav aria-label="Player workspace"><strong>Scene</strong><span aria-disabled="true">Timeline</span></nav>
+        <nav aria-label="Player workspace"><strong>Scene</strong><Link to={`/player/adventures/${projection.id}/timelines`}>Timelines</Link></nav>
         <p><Status>{projection.inputMode === "structured" ? "Structured Play" : "Natural Language Play"}</Status></p>
       </header>
       <CharacterFolio projection={projection} />

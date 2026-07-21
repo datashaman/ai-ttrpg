@@ -1,5 +1,48 @@
 import { expect, test } from "@playwright/test";
 
+test("Player and Game Master inspect, branch, compare, and reopen actor-scoped Timelines", async ({ page }) => {
+  await page.goto("/player/adventures/locked-manor");
+  await page.getByLabel("Player Character name").fill("Mara Vey");
+  await page.getByLabel("Pronouns").fill("she/her");
+  await page.getByLabel("Motivation").fill("Find her missing sister");
+  await page.getByRole("button", { name: "Create Player Character" }).click();
+  await page.getByRole("button", { name: "Begin Adventure" }).click();
+  await page.getByRole("link", { name: "Timelines" }).click();
+
+  await expect(page.getByRole("heading", { name: "Timelines" })).toBeFocused();
+  await expect(page.getByText("timeline-main", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Current projection" })).toBeVisible();
+  await expect(page.getByText("Game Master-only", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Branch here" }).last().click();
+  await expect(page.getByRole("status")).toContainText("Created a new Timeline");
+  await expect(page.getByRole("heading", { name: /Compare Main Timeline with Branch/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Commands" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Events", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Rules" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "World Knowledge differences" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Resources" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Random stream" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Resulting projection" })).toBeVisible();
+
+  await page.getByRole("button", { name: /Main Timeline Root Timeline/ }).click();
+  await expect(page.getByText("Main Timeline active", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("Main Timeline active", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Branch .* From Main Timeline/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Compare Branch .* with Main Timeline/ })).toBeVisible();
+
+  await page.goto("/gm");
+  await page.getByRole("button", { name: "Select Game Master scope" }).click();
+  await page.getByRole("link", { name: "Inspect and compare Timelines" }).click();
+  await expect(page.getByRole("heading", { name: "Timelines" })).toBeFocused();
+  await expect(page.getByText("Game Master-only", { exact: true }).first()).toBeVisible();
+
+  await page.setViewportSize({ width: 320, height: 800 });
+  expect(await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  )).toBe(false);
+});
+
 test("a new Player recovers from setup error and completes the arrival Scene", async ({
   page,
 }) => {
