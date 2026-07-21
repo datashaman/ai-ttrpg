@@ -69,7 +69,7 @@ export type RulesExplanationEvidenceInput = InterpretationEvidenceInput;
 export interface NarrationEvidenceInput {
   readonly actorScope: PlayerWorldKnowledgeActorScope;
   readonly acceptedEvents: readonly CanonicalEvent[];
-  readonly resolutionTrace: CheckTrace | OracleTrace;
+  readonly resolutionTrace: CheckTrace | OracleTrace | null;
   readonly committedEvents: readonly CanonicalEvent[];
   readonly playerCharacter: PlayerCharacter | null;
   readonly activeScene: Scene | null;
@@ -431,26 +431,28 @@ export const assembleNarrationEvidence = (
       0,
     ),
   );
-  add(
-    {
-      id: "resolution:committed",
-      sourceKind: "resolution",
-      sourceReference: "projected-state:committed-resolution",
-      content: resolutionContent(input.resolutionTrace),
-      inclusionReason:
-        "This Player-visible accepted resolution trace defines the outcome.",
-    },
-    0,
-  );
-  add(narrationRule(input.resolutionTrace), 0);
+  if (input.resolutionTrace !== null) {
+    add(
+      {
+        id: "resolution:committed",
+        sourceKind: "resolution",
+        sourceReference: "projected-state:committed-resolution",
+        content: resolutionContent(input.resolutionTrace),
+        inclusionReason:
+          "This Player-visible accepted resolution trace defines the outcome.",
+      },
+      0,
+    );
+    add(narrationRule(input.resolutionTrace), 0);
+  }
 
-  const involvedEntity = directlyInvolvedEntity(
-    input.resolutionTrace,
-    committedEvents,
-  );
+  const involvedEntity = input.resolutionTrace === null
+    ? null
+    : directlyInvolvedEntity(input.resolutionTrace, committedEvents);
   if (involvedEntity !== null) add(involvedEntity, 1);
   if (
     input.playerCharacter !== null &&
+    input.resolutionTrace !== null &&
     input.resolutionTrace.rule.id === "micro-ruleset.check"
   ) {
     add(
@@ -484,7 +486,9 @@ export const assembleNarrationEvidence = (
 
   const committedContent = [
     ...committedEvents.map(acceptedEventContent),
-    resolutionContent(input.resolutionTrace),
+    ...(input.resolutionTrace === null
+      ? []
+      : [resolutionContent(input.resolutionTrace)]),
   ].join(" ");
   projectWorldKnowledge({
     actorScope: input.actorScope,

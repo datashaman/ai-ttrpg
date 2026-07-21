@@ -11,9 +11,11 @@ import {
   createInMemoryEventStore,
   createSeededRandomSource,
   createStructuredPlayApplication,
+  DEFAULT_PLAYER_ACTOR_SCOPE,
   type EventStore,
 } from "../src/structured-play.js";
 import { runStructuredPlay } from "../src/structured-play-runner.js";
+import { narrateCommittedOutcomeThroughGateway } from "../src/grounded-narration.js";
 import {
   assertLockedManorHiddenKnowledgeAbsent,
   LOCKED_MANOR_HIDDEN_KNOWLEDGE_ID,
@@ -66,6 +68,60 @@ const pendingOracleStore = (): EventStore => {
   assert.ok(recommended.state.pendingNarratorRecommendation);
   return eventStore;
 };
+
+test("a committed Free Action receives Narration grounded in its accepted event", async () => {
+  const eventStore = createInMemoryEventStore();
+  const app = createStructuredPlayApplication({ eventStore });
+  app.submit({
+    type: "configure-player-character",
+    name: "Mara Vey",
+    pronouns: "she/her",
+    motivation: "Find her missing sister",
+    traits: { Might: 0, Wits: 2, Presence: 1 },
+  });
+  app.submit({ type: "begin-adventure" });
+  const outcome = app.submit({ type: "choose-action", actionId: "survey-manor" });
+  const outcomeEvent = outcome.appendedEvents.find(
+    ({ type }) => type === "FreeActionCompleted",
+  );
+  assert.ok(outcomeEvent);
+  assert.equal(outcomeEvent.type, "FreeActionCompleted");
+  const committedEvents = [outcomeEvent];
+  const modelCallStore = createInMemoryModelCallRecordStore();
+
+  const presented = await narrateCommittedOutcomeThroughGateway({
+    actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
+    gateway: createModelGateway({
+      provider: createScriptedModelProvider({
+        model: "free-action-narration-v1",
+        responses: {
+          [`narrate-committed-outcome:${outcomeEvent.id}`]: {
+            segments: [{
+              text: outcomeEvent.payload.establishedFact.text,
+              evidenceItemIds: ["event:committed:0"],
+            }],
+          },
+        },
+      }),
+    }),
+    modelCallStore,
+    context: {
+      deterministicSummary: outcomeEvent.payload.establishedFact.text,
+      visibleEvidence: outcome.state.establishedFacts,
+      resolutionTrace: null,
+      committedEvents,
+    },
+    acceptedEvents: eventStore.readAll(),
+    state: outcome.state,
+    timeoutMs: 1_000,
+  });
+
+  assert.deepEqual(presented, {
+    source: "model",
+    text: "Fresh footprints lead from the manor gate toward a dark side entrance.",
+  });
+  assert.equal(modelCallStore.readAll()[0]?.validation.status, "accepted");
+});
 
 test("a committed Check receives original Narration from attributable evidence", async () => {
   const eventStore = pendingCheckStore();

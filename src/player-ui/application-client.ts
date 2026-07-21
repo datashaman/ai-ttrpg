@@ -4,6 +4,10 @@ import type {
   Trait,
   TraitRatings,
 } from "../structured-play.js";
+import type {
+  PlayerPresentationEvent,
+  PlayerRetainedPresentation,
+} from "./player-presentation.js";
 
 export type PlayerAdventureCommand =
   | {
@@ -187,8 +191,19 @@ export interface PlayerCommandResponse {
 
 export interface ApplicationClient {
   readPlayerAdventure(adventureId: string): Promise<PlayerAdventureProjection>;
+  readPlayerPresentations(
+    adventureId: string,
+  ): Promise<readonly PlayerRetainedPresentation[]>;
   submitPlayerCommand(
     adventureId: string,
     command: PlayerCommand,
   ): Promise<PlayerCommandResponse>;
+  streamPlayerPresentation(
+    adventureId: string,
+    outcomeEventId: string,
+    options?: {
+      readonly regenerate?: boolean;
+      readonly signal?: AbortSignal;
+    },
+  ): AsyncIterable<PlayerPresentationEvent>;
 }

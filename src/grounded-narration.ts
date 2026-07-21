@@ -130,6 +130,9 @@ const acceptedClaimsFrom = (
     if (event.type === "CheckResolved") {
       return [{ text: event.payload.committedStake.summary, evidenceItemId }];
     }
+    if (event.type === "FreeActionCompleted") {
+      return [{ text: event.payload.establishedFact.text, evidenceItemId }];
+    }
     if (event.type === "OracleAnswered") {
       return [
         { text: event.payload.establishedFact.text, evidenceItemId },
@@ -202,10 +205,14 @@ const validatedNarration = (
     : null;
 };
 
-const outcomeReferenceFrom = (trace: CheckTrace | OracleTrace): string =>
-  `${trace.rule.id}@${trace.rule.version}:${
-    "outcome" in trace.result ? trace.result.outcome : trace.result.answer
-  }`;
+const outcomeReferenceFrom = (
+  trace: CheckTrace | OracleTrace | null,
+  committedEvents: readonly CanonicalEvent[],
+): string => trace === null
+  ? committedEvents.map(({ id }) => id).join(",")
+  : `${trace.rule.id}@${trace.rule.version}:${
+      "outcome" in trace.result ? trace.result.outcome : trace.result.answer
+    }`;
 
 export const narrateCommittedOutcomeThroughGateway = async ({
   actorScope,
@@ -226,12 +233,6 @@ export const narrateCommittedOutcomeThroughGateway = async ({
   readonly timeoutMs: number;
   readonly evidenceBudget?: number;
 }): Promise<PresentedText> => {
-  if (context.resolutionTrace === null) {
-    return {
-      source: "deterministic-fallback",
-      text: context.deterministicSummary,
-    };
-  }
   const evidenceBundle = assembleNarrationEvidence({
     actorScope,
     acceptedEvents,
@@ -244,7 +245,12 @@ export const narrateCommittedOutcomeThroughGateway = async ({
   const execution = await gateway.execute(
     immutableSnapshot({
       type: "narrate-committed-outcome" as const,
-      input: { outcomeReference: outcomeReferenceFrom(context.resolutionTrace) },
+      input: {
+        outcomeReference: outcomeReferenceFrom(
+          context.resolutionTrace,
+          context.committedEvents,
+        ),
+      },
       evidenceBundle,
     }),
     {
