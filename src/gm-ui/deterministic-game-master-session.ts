@@ -12,7 +12,7 @@ import {
   committedRandomPosition,
   createSeededRandomSourceAtPosition,
 } from "../random-source.js";
-import { createMicroRulesetPackage } from "../micro-ruleset-package.js";
+import { createMicroRulesetPublication } from "../micro-ruleset-package.js";
 import type {
   GameMasterAuditRecord,
   GameMasterCommand,
@@ -35,7 +35,7 @@ export interface GameMasterSessionSnapshot {
   readonly projection: GameMasterProjection;
   readonly auditRecords: readonly GameMasterAuditRecord[];
   readonly presentations: readonly GameMasterPresentationRecord[];
-  readonly publishedRulePackageVersions: readonly string[];
+  readonly ruleVersionHistory: readonly ReturnType<typeof createMicroRulesetPublication>[];
 }
 
 interface GameMasterPresentationRecord {
@@ -71,6 +71,7 @@ const queueFixture = (
   application: StructuredPlayApplication,
 ): GameMasterQueueItem[] => {
   const commands = knownCommands(application);
+  const pendingPublication = createMicroRulesetPublication("1.1.0");
   const survey = commands.find(
     ({ command }) => command.type === "choose-action" && command.actionId === "survey-manor",
   )?.command ?? null;
@@ -110,9 +111,9 @@ const queueFixture = (
       evidence: { bundleId: "evidence:rule-review", summary: "Rule Candidate, diff, and exact source passages", itemCount: 5 },
       validationFindings: ["One normalized field is an Authored Interpretation."],
       allowedInterventions: ["approve", "reject"],
-      candidateCommand: { type: "publish-rule-candidate", candidateId: "micro-ruleset.check@1.1.0" },
+      candidateCommand: { type: "publish-rule-candidate", candidateId: pendingPublication.candidate.version },
       allowedCommands: [{
-        command: { type: "publish-rule-candidate", candidateId: "micro-ruleset.check@1.1.0" },
+        command: { type: "publish-rule-candidate", candidateId: pendingPublication.candidate.version },
         label: "Publish reviewed micro-ruleset.check 1.1.0",
       }],
     },
@@ -272,7 +273,9 @@ export const createDeterministicGameMasterSession = ({
   let presentations = structuredClone(
     snapshot?.presentations ?? [presentationFixture(outcomeEvent(runtime.eventStore.readAll()))],
   ) as GameMasterPresentationRecord[];
-  let publishedRulePackageVersions = [...(snapshot?.publishedRulePackageVersions ?? [])];
+  let ruleVersionHistory = structuredClone(snapshot?.ruleVersionHistory ?? []) as ReturnType<
+    typeof createMicroRulesetPublication
+  >[];
   const narrationGenerator = regenerateNarration ?? (async (request) => ({
     text: request.narration.text,
     modelCall: {
@@ -344,12 +347,11 @@ export const createDeterministicGameMasterSession = ({
           const result = runtime.application.submit(submittedCommand);
           if (result.status === "rejected") return reject("COMMAND_REJECTED", result.message);
         } else {
-          const version = submittedCommand.candidateId.split("@").at(-1);
-          if (version === undefined || version === submittedCommand.candidateId) {
-            return reject("COMMAND_REJECTED", "The Rule Candidate version is invalid.");
+          const publication = createMicroRulesetPublication("1.1.0");
+          if (publication.candidate.version !== submittedCommand.candidateId) {
+            return reject("COMMAND_REJECTED", "The Rule Approval does not match the exact reviewed Rule Candidate version.");
           }
-          const rulesetPackage = createMicroRulesetPackage(version);
-          publishedRulePackageVersions = [...publishedRulePackageVersions, rulesetPackage.manifest.version];
+          ruleVersionHistory = [...ruleVersionHistory, publication];
         }
       }
       const committed = runtime.eventStore.readAll().filter(({ id }) => !beforeIds.has(id));
@@ -417,7 +419,7 @@ export const createDeterministicGameMasterSession = ({
       const events = runtime.eventStore.readAll();
       return immutableSnapshot({
         queue, canonicalEvents: events, projection: projectionFrom(runtime.application, events),
-        auditRecords, presentations, publishedRulePackageVersions,
+        auditRecords, presentations, ruleVersionHistory,
       });
     },
   };

@@ -147,7 +147,16 @@ test("ingestion approval publishes only the exact reviewed Rule Candidate versio
   assert.equal(result.status, "accepted");
   assert.deepEqual(result.committedEvents, []);
   assert.equal(result.auditRecord?.submittedCommand?.type, "publish-rule-candidate");
-  assert.deepEqual(session.snapshot().publishedRulePackageVersions, ["1.1.0"]);
+  const history = session.snapshot().ruleVersionHistory;
+  assert.equal(history.length, 1);
+  assert.equal(history[0]?.review.candidateVersion, history[0]?.candidate.version);
+  assert.equal(history[0]?.approval.candidateVersion, history[0]?.candidate.version);
+  assert.equal(history[0]?.approval.reviewerId, "reviewer:rules");
+  assert.equal(history[0]?.approval.decision, "approved");
+  assert.equal(
+    history[0]?.rulesetPackage.manifest.rules[0].candidateVersion,
+    history[0]?.candidate.version,
+  );
   assert.deepEqual(session.snapshot().canonicalEvents, canonicalBefore);
 });
 
