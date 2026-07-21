@@ -1,0 +1,108 @@
+{
+  "id": "locked-manor-golden-campaign-v1",
+  "schemaVersion": 1,
+  "rulesetVersion": "1.0.0",
+  "randomSeed": 8601,
+  "propertyRandomSeeds": [0, 1, 2147483647, 4294967295],
+  "matrix": {
+    "repositories": ["in-memory", "local-durable"],
+    "modelProviders": ["scripted", "openai-recorded"],
+    "rulesetPackages": ["micro-ruleset@1.0.0"],
+    "presentations": ["deterministic", "grounded"]
+  },
+  "steps": [
+    {
+      "type": "configure-player-character",
+      "name": "Mara Vey",
+      "pronouns": "she/her",
+      "motivation": "Find her missing sister",
+      "traits": { "Might": 0, "Wits": 2, "Presence": 1 }
+    },
+    { "type": "begin-adventure" },
+    { "type": "choose-action", "actionId": "force-side-door" },
+    { "type": "confirm-pending-check" },
+    { "type": "resolve-pending-check", "choice": "decline" }
+  ],
+  "expected": {
+    "truth": {
+      "commands": [
+        { "type": "configure-player-character", "digest": "111bdb2280e6a9414fdd80697831523757a85d943a5950554fca7e5ec7f816b8" },
+        { "type": "begin-adventure", "digest": "aabd5756b1872cc3388e07280893e81eaa2060c2ee07980b185a3297491caf5e" },
+        { "type": "choose-action", "digest": "94ab50f050f23f0390dae02ce9721ecd9e987163030ebce02b8545440a7c6e11" },
+        { "type": "confirm-check-proposal", "digest": "b0aa1336a7a78feec34264be0004c44fe53b649281e79b578dce7e4f636a6021" },
+        { "type": "resolve-pending-check", "digest": "b66076fcd635bf9a58c3ab267b057f2a560bee85c9963b97a1e0b8a5cea50a1a" }
+      ],
+      "events": [
+        { "type": "PlayerCharacterConfigured", "payloadDigest": "2efb21a3cb2aa00d2301da350a2bd927cec78f84b87808ee54488b4384a0bf8e" },
+        { "type": "WorldKnowledgeEstablished", "payloadDigest": "c63f19af21c60969d4f5d45805020bb75aaac8f1e6d12b730c0fa4bcd9a33f03" },
+        { "type": "SceneStarted", "payloadDigest": "ac20e381696bd383d70031fdc258bcc738bc4de86fc5665b8dc8f91633fe7da5" },
+        { "type": "CheckProposalCreated", "payloadDigest": "40ed0bd96b7793423000dfb147617ee79e3a77af331c45d5548a6823a56fa5e3" },
+        { "type": "CheckRollRevealed", "payloadDigest": "10adc8627af0e3dbdf8c0510c6e39148039cad0f9017b590864ae2c763632491" },
+        { "type": "CheckResolved", "payloadDigest": "7097a5a2a8651e20a868edefa7b596dbd37dcc27fea0f7fe870a2e36a38ff942" }
+      ],
+      "projection": {
+        "digest": "c0e8fefa6f037b916f3be2dbf7e7d2b2370695f8e176d6c2aebd9672f9dd7019",
+        "activeScene": "arrival",
+        "adventureEnding": null,
+        "health": 3,
+        "resolve": 3,
+        "conditions": [],
+        "establishedFactIds": ["manor-alerted", "side-door-open"]
+      },
+      "rules": [
+        {
+          "id": "micro-ruleset.check",
+          "version": "1.0.0",
+          "packageChecksum": "9802c31716904bcd3672c00691f97fb2bab44548a2993ccc40eca6206a68c4e5",
+          "sourcePassageIds": [
+            "micro-ruleset@1.0.0#checks.procedure",
+            "micro-ruleset@1.0.0#checks.outcomes"
+          ]
+        }
+      ]
+    },
+    "evidence": [
+      {
+        "citation": "micro-ruleset@1.0.0#checks.definition,micro-ruleset@1.0.0#checks.exception,micro-ruleset@1.0.0#checks.procedure,micro-ruleset@1.0.0#checks.outcomes",
+        "id": "rule:micro-ruleset.check@1.0.0",
+        "inclusionReason": "This exact approved rule version matches the utterance's capability, trigger, terminology, Conditions, or rules question.",
+        "sourceKind": "authority-rule",
+        "sourceReference": "rule-package:micro-ruleset@1.0.0:9802c31716904bcd3672c00691f97fb2bab44548a2993ccc40eca6206a68c4e5",
+        "visibility": "Player-visible"
+      },
+      {
+        "citation": "player-character:primary",
+        "id": "entity:player-character:primary",
+        "inclusionReason": "The actor-scoped Player Character owns this Model Task request.",
+        "sourceKind": "player-character",
+        "sourceReference": "player-character:primary",
+        "visibility": "Player-visible"
+      },
+      {
+        "citation": "scene:arrival",
+        "id": "entity:scene:arrival",
+        "inclusionReason": "The active Scene bounds the currently available capabilities.",
+        "sourceKind": "active-scene",
+        "sourceReference": "scene:arrival",
+        "visibility": "Player-visible"
+      },
+      {
+        "citation": null,
+        "id": "capability:force-side-door",
+        "inclusionReason": "The Player utterance refers to this currently available capability.",
+        "sourceKind": "capability",
+        "sourceReference": "force-side-door",
+        "visibility": "Player-visible"
+      },
+      {
+        "citation": null,
+        "id": "capability:survey-manor",
+        "inclusionReason": "The Player utterance refers to this currently available capability.",
+        "sourceKind": "capability",
+        "sourceReference": "survey-manor",
+        "visibility": "Player-visible"
+      }
+    ],
+    "visibleClaims": ["The door opens, but the noise alerts the manor."]
+  }
+}

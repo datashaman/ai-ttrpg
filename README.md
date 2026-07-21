@@ -161,7 +161,14 @@ For development:
 ```sh
 npm test
 npm run typecheck
+npm run --silent evaluate:golden
 ```
+
+The golden evaluation command prints a machine-readable report for the
+versioned locked-manor campaign across every supported repository, scripted
+provider, executable ruleset package, and presentation combination. A non-zero
+exit status identifies a layer-specific mismatch against the committed golden
+outputs.
 
 ## OpenAI-backed Natural Language Play
 
