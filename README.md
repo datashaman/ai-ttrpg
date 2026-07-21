@@ -270,6 +270,7 @@ The central authority boundary is simple: the model may classify, extract, propo
 | [Implementation plan](docs/engine-implementation-plan.md) | Domain model, quality requirements, phased roadmap, acceptance criteria, risks, and success criteria. |
 | [v1 release report](docs/v1-release-report.md) | Completed automated and moderated release-gate evidence and the terminal-accessibility baseline. |
 | [Milestone B release report](docs/milestone-b-release-report.md) | Phase 5–9 evidence matrix, measured evaluations, provider-portability proof, and exit decision. |
+| [Durable Adventure simulation report](docs/adventure-simulation-release-report.md) | Deterministic 100-turn recovery, replay, leakage, and duplicate-event release evidence. |
 | [Actor-scoped retrieval evaluation](docs/retrieval-evaluation-report.md) | Labelled retrieval quality thresholds, results, and semantic-fallback decision. |
 | [Architecture decisions](docs/adr/) | Durable decisions whose trade-offs would otherwise be difficult to reconstruct. |
 | [System architecture](docs/system-architecture.html) | Interactive component and authority-boundary diagram. |
