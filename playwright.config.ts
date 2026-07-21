@@ -37,5 +37,8 @@ export default defineConfig({
     command: "npm run player-ui -- --strictPort",
     url: "http://127.0.0.1:4173",
     reuseExistingServer: !process.env.CI,
+    env: {
+      AI_TTRPG_PLAYER_LOG_PATH: "test-results/player-ui.jsonl",
+    },
   },
 });

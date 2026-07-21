@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "tsx src/cli.ts",
-    "player-ui": "tsx src/player-ui-server.ts",
+    "player-ui": "node --env-file-if-exists=.env.local --import tsx src/player-ui-server.ts",
     "player-ui:build": "vite build --config vite.player.config.ts",
     "evaluate:golden": "tsx src/golden-campaign-cli.ts",
     "evaluate:simulation": "tsx src/adventure-simulation-cli.ts",

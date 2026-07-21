@@ -1,4 +1,5 @@
 .env.local
+.ai-ttrpg/
 node_modules/
 player-ui/dist/
 test-results/

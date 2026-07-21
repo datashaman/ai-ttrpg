@@ -1,13 +1,20 @@
 import { createServer as createHttpServer } from "node:http";
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 import { createServer as createViteServer } from "vite";
 
 import { createDeterministicPlayerSession } from "./player-ui/deterministic-player-session.js";
 import type { PlayerCommand } from "./player-ui/application-client.js";
+import { createJsonlPlayerUiPlayLog } from "./player-ui-play-log.js";
 
 const host = "127.0.0.1";
 const port = 4173;
+const playLogPath =
+  process.env.AI_TTRPG_PLAYER_LOG_PATH?.trim() ||
+  join(homedir(), ".ai-ttrpg", "logs", "player-ui.jsonl");
+const playLog = createJsonlPlayerUiPlayLog({ path: playLogPath });
 type PlayerSession = ReturnType<typeof createDeterministicPlayerSession>;
 const sessions = new Map<string, PlayerSession>();
 
@@ -25,7 +32,14 @@ const sessionFor = (
     if (existing !== undefined) return existing;
   }
   const nextSessionId = randomUUID();
-  const session = createDeterministicPlayerSession();
+  const session = createDeterministicPlayerSession("locked-manor", {
+    sessionToken: nextSessionId,
+    playLog,
+    onPlayLogError: (error) => {
+      const message = error instanceof Error ? error.message : "unknown error";
+      process.stderr.write(`Player Interface play log failed: ${message}\n`);
+    },
+  });
   sessions.set(nextSessionId, session);
   response.setHeader(
     "Set-Cookie",
@@ -86,4 +100,5 @@ const server = createHttpServer(async (request, response) => {
 
 server.listen(port, host, () => {
   process.stdout.write(`Player Interface: http://${host}:${port}\n`);
+  process.stdout.write(`Player Interface play log: ${playLogPath}\n`);
 });

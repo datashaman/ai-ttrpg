@@ -15,9 +15,20 @@ import type {
 } from "./application-client.js";
 import { playerLedgerEntryFor } from "./player-ledger.js";
 import { projectPlayerAdventure } from "./player-projection.js";
+import type {
+  PlayerUiPlayLog,
+  PlayerUiPresentationStatus,
+} from "../player-ui-play-log.js";
+
+export interface DeterministicPlayerSessionOptions {
+  readonly sessionToken: string;
+  readonly playLog: PlayerUiPlayLog;
+  readonly onPlayLogError?: (error: unknown) => void;
+}
 
 export const createDeterministicPlayerSession = (
   adventureId = "locked-manor",
+  options?: DeterministicPlayerSessionOptions,
 ) => {
   const eventStore = createInMemoryEventStore();
   const app = createStructuredPlayApplication({
@@ -38,6 +49,8 @@ export const createDeterministicPlayerSession = (
     });
 
   const submit = (command: PlayerCommand): PlayerCommandResponse => {
+    const startedAt = performance.now();
+    const stateBefore = app.view().state;
     if (command.type === "choose-action") {
       const action = app
         .view()
@@ -47,6 +60,7 @@ export const createDeterministicPlayerSession = (
     }
     const fallbackEvidence = pendingEvidence ?? interpretationEvidence(command.type);
     const result = app.submit(command);
+    let presentationStatus: PlayerUiPresentationStatus = "not-requested";
     if (result.status === "accepted") {
       const entry = playerLedgerEntryFor({
         result,
@@ -54,13 +68,36 @@ export const createDeterministicPlayerSession = (
         fallbackEvidence,
         acceptedEvents: eventStore.readAll(),
       });
-      if (entry !== null) ledger.push(entry);
+      if (entry !== null) {
+        ledger.push(entry);
+        presentationStatus = "deterministic-summary";
+      }
       if (
         result.state.pendingCheckProposal === null &&
         result.state.pendingChoice === null &&
         result.state.pendingNarratorRecommendation === null
       ) {
         pendingEvidence = null;
+      }
+    }
+    if (options !== undefined) {
+      try {
+        options.playLog.recordCommand({
+          sessionToken: options.sessionToken,
+          adventureId,
+          commandType: command.type,
+          status: result.status,
+          errorCode: result.status === "rejected" ? result.code : null,
+          sceneBefore: stateBefore.activeScene,
+          sceneAfter: result.state.activeScene,
+          appendedEvents: result.appendedEvents,
+          pendingChoiceBefore: stateBefore.pendingChoice !== null,
+          pendingChoiceAfter: result.state.pendingChoice !== null,
+          presentationStatus,
+          durationMs: performance.now() - startedAt,
+        });
+      } catch (error) {
+        options.onPlayLogError?.(error);
       }
     }
     return {

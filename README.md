@@ -44,6 +44,21 @@ current Firefox and WebKit builds; CI also runs the current Microsoft Edge
 channel. WebKit provides early Safari compatibility feedback, while current
 Safari remains a manual verification target as defined by ADR-0014.
 
+The local server writes a redacted operational play log to
+`~/.ai-ttrpg/logs/player-ui.jsonl`. Each JSONL record identifies the anonymous
+session, command type, acceptance or error code, Scene before and after,
+appended event IDs and types, Pending Choice state, presentation status, and
+duration. It excludes Player Character setup text, cookies, event payloads,
+hidden World Knowledge, provider payloads, and credentials. Inspect it while
+playing with:
+
+```sh
+tail -f ~/.ai-ttrpg/logs/player-ui.jsonl
+```
+
+Set `AI_TTRPG_PLAYER_LOG_PATH` to override the path. A repo-local `.ai-ttrpg/`
+directory is ignored as a precaution.
+
 Adventures created by the CLI are durable. They are stored in the Player's
 default application-data directory, so no storage path or language model is
 required. List them and reopen one by its displayed id:
