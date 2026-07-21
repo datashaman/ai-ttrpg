@@ -36,7 +36,9 @@ jobs:
       - name: Install stable browser channels
         run: npx playwright install chrome msedge
 
+      - name: Prepare verification user
+        run: chown -R pwuser:pwuser "$GITHUB_WORKSPACE"
+
       - name: Verify release
-        run: |
-          chown -R pwuser:pwuser "$GITHUB_WORKSPACE"
-          runuser --user pwuser --preserve-environment -- npm run verify:release
+        shell: runuser --user pwuser --preserve-environment -- bash -e {0}
+        run: npm run verify:release
