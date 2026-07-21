@@ -1,5 +1,18 @@
 import { expect, test } from "@playwright/test";
 
+test("Game Master scope selection keeps a readable measure at a Retina-sized viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 851, height: 308 });
+  await page.goto("/gm");
+
+  const heading = page.getByRole("heading", { name: "Game Master workspace" });
+  await expect(heading).toBeFocused();
+  const bounds = await heading.boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.width).toBeLessThanOrEqual(560);
+  expect(bounds!.x).toBeGreaterThanOrEqual(24);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(827);
+});
+
 test("Game Master identifies and intervenes in review work from a retained Narration trace", async ({ page }) => {
   await page.goto("/gm/campaigns/locked-manor/work");
   await expect(page.getByRole("alert")).toBeFocused();

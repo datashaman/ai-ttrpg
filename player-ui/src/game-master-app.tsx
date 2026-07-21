@@ -31,7 +31,7 @@ export const GameMasterScopeSelectionRoute = () => {
     }
   };
   return (
-    <main className="threshold">
+    <main className="threshold scope-selection">
       <p className="eyebrow">Local actor scope</p>
       <h1 ref={heading} tabIndex={-1}>Game Master workspace</h1>
       <p className="lede">This trusted local session can inspect privileged campaign evidence and submit attributed interventions.</p>

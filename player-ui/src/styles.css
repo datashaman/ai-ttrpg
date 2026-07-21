@@ -50,6 +50,10 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: .78rem; ov
 .primary-action:disabled { color: rgb(255 250 240 / 70%); background: var(--oxblood); opacity: .6; }
 .loading, .threshold { display: grid; min-height: 100vh; place-content: center; padding: 32px; text-align: center; }
 .threshold .primary-action { justify-self: center; }
+.scope-selection { justify-items: center; }
+.scope-selection > * { min-width: 0; }
+.scope-selection h1 { max-width: 40rem; font-size: clamp(2.5rem, 6vw, 3.25rem); text-wrap: balance; }
+.scope-selection .lede { max-width: 36rem; margin-inline: auto; }
 .setup-shell { display: grid; min-height: 100vh; grid-template-columns: minmax(64px, .28fr) minmax(0, 1fr); }
 .setup-mark { display: grid; place-content: center; color: var(--oxblood); border-right: 1px solid var(--iron-line); font-family: Charter, Georgia, serif; font-size: clamp(4rem, 18vw, 12rem); font-style: italic; }
 .setup-panel { width: min(100%, 760px); padding: clamp(32px, 8vw, 96px); align-self: center; }
