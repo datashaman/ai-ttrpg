@@ -166,6 +166,7 @@ summary { width: fit-content; cursor: pointer; text-decoration: underline; text-
 .gm-page-heading > .eyebrow { grid-column: 1; grid-row: 1; margin-bottom: 0; align-self: center; }
 .gm-page-heading > .status { grid-column: 2; grid-row: 1; }
 .gm-page-heading > h1 { grid-column: 1 / -1; grid-row: 2; }
+.gm-page-heading > h1:focus { padding-left: 14px; outline: 0; box-shadow: inset 4px 0 var(--focus); }
 .gm-page-heading > .lede { grid-column: 1 / -1; grid-row: 3; }
 .gm-narration { margin-bottom: 40px; padding: 22px; border-left: 4px solid var(--moss); background: var(--parchment-raised); }
 .gm-narration > p:nth-of-type(2) { max-width: 48rem; font-family: Charter, Georgia, serif; font-size: 1.08rem; line-height: 1.6; }

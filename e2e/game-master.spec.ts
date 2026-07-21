@@ -20,6 +20,8 @@ test("Game Master workspace status does not overlap the focused heading frame", 
 
   const heading = page.getByRole("heading", { name: "Game Master work" });
   await expect(heading).toBeFocused();
+  await expect(heading).toHaveCSS("outline-style", "none");
+  await expect(heading).not.toHaveCSS("box-shadow", "none");
   const status = page.locator(".gm-page-heading > .status");
   const [headingBounds, statusBounds] = await Promise.all([
     heading.boundingBox(),
