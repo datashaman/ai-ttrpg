@@ -11,6 +11,7 @@ import type {
   RetainedPresentations,
 } from "./presentation-view-model.js";
 import { GameMasterScopeSelectionRoute, GameMasterTraceRoute, GameMasterWorkspaceRoute } from "./game-master-app.js";
+import { TimelineWorkspaceRoute } from "./timeline-app.js";
 
 const client = createHttpApplicationClient();
 
@@ -180,8 +181,10 @@ const PlayerAdventure = () => {
 export const PlayerApp = () => (
   <Routes>
     <Route path="/player/adventures/:adventureId" element={<PlayerAdventure />} />
+    <Route path="/player/adventures/:adventureId/timelines" element={<TimelineWorkspaceRoute actor="Player" />} />
     <Route path="/gm" element={<GameMasterScopeSelectionRoute />} />
     <Route path="/gm/campaigns/:campaignId/work" element={<GameMasterWorkspaceRoute />} />
+    <Route path="/gm/campaigns/:campaignId/timelines" element={<TimelineWorkspaceRoute actor="Game Master" />} />
     <Route path="/gm/campaigns/:campaignId/outcomes/:outcomeId/trace" element={<GameMasterTraceRoute />} />
     <Route path="*" element={<Navigate to="/player/adventures/locked-manor" replace />} />
   </Routes>

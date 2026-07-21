@@ -132,6 +132,13 @@ const readBody = async (request: import("node:http").IncomingMessage): Promise<u
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
 };
 
+const hasGameMasterScope = (
+  request: import("node:http").IncomingMessage,
+): boolean => request.headers.cookie
+  ?.split(";")
+  .map((part) => part.trim())
+  .includes("ai_ttrpg_actor=game-master") ?? false;
+
 const isGameMasterCommand = (
   value: unknown,
 ): value is NonNullable<GameMasterIntervention["command"]> =>
@@ -254,6 +261,70 @@ const server = createHttpServer(async (request, response) => {
       response.statusCode = 404;
       response.end(JSON.stringify({ message: "Outcome presentation not found." }));
     }
+    return;
+  }
+  const timelineMatch = url.pathname.match(
+    /^\/api\/(player\/adventures|gm\/campaigns)\/([^/]+)\/timelines(?:\/(branches|selection))?$/,
+  );
+  if (timelineMatch !== null) {
+    response.setHeader("Content-Type", "application/json; charset=utf-8");
+    const actor = timelineMatch[1] === "gm/campaigns" ? "Game Master" : "Player";
+    const adventureId = decodeURIComponent(timelineMatch[2]!);
+    if (adventureId !== "locked-manor") {
+      response.statusCode = 404;
+      response.end(JSON.stringify({ message: "Adventure not found." }));
+      return;
+    }
+    if (actor === "Game Master" && !hasGameMasterScope(request)) {
+      response.statusCode = 403;
+      response.end(JSON.stringify({ message: "Game Master scope has not been selected." }));
+      return;
+    }
+    const session = sessionFor(request, response);
+    if (request.method === "GET" && timelineMatch[3] === undefined) {
+      response.end(JSON.stringify(session.timelineWorkspace(
+        actor,
+        url.searchParams.get("compareWith") ?? undefined,
+      )));
+      return;
+    }
+    if (request.method === "POST" && timelineMatch[3] === "branches") {
+      try {
+        const body = await readBody(request);
+        if (!isRecord(body) || !hasExactKeys(body, ["eventPosition"]) || !Number.isInteger(body.eventPosition)) {
+          throw new Error("Invalid branch request.");
+        }
+        response.end(JSON.stringify(session.branchTimeline(actor, body.eventPosition as number)));
+      } catch {
+        response.statusCode = 400;
+        response.end(JSON.stringify({ message: "Invalid Timeline branch request." }));
+      }
+      return;
+    }
+    if (request.method === "POST" && timelineMatch[3] === "selection") {
+      try {
+        const body = await readBody(request);
+        if (
+          !isRecord(body) ||
+          !hasExactKeys(body, body.compareWith === undefined ? ["timelineId"] : ["compareWith", "timelineId"]) ||
+          typeof body.timelineId !== "string" ||
+          (body.compareWith !== undefined && typeof body.compareWith !== "string")
+        ) {
+          throw new Error("Invalid selection request.");
+        }
+        response.end(JSON.stringify(session.selectTimeline(
+          actor,
+          body.timelineId,
+          body.compareWith as string | undefined,
+        )));
+      } catch {
+        response.statusCode = 400;
+        response.end(JSON.stringify({ message: "Invalid Timeline selection request." }));
+      }
+      return;
+    }
+    response.statusCode = 405;
+    response.end(JSON.stringify({ message: "Method not allowed." }));
     return;
   }
   const presentationsMatch = url.pathname.match(

@@ -10,6 +10,13 @@ import { createHttpGameMasterApplicationClient } from "../gm-ui/http-application
 const adventurePath = (adventureId: string): string =>
   `/api/player/adventures/${encodeURIComponent(adventureId)}`;
 
+const timelinePath = (
+  adventureId: string,
+  actor: "Player" | "Game Master",
+): string => actor === "Game Master"
+  ? `/api/gm/campaigns/${encodeURIComponent(adventureId)}/timelines`
+  : `${adventurePath(adventureId)}/timelines`;
+
 const readJson = async <Value>(response: Response): Promise<Value> => {
   if (!response.ok) {
     throw new Error("The local Player Interface is unavailable. Try again.");
@@ -126,5 +133,30 @@ export const createHttpApplicationClient = (
         );
       },
     };
+  },
+  async readTimelineWorkspace(adventureId, actor, compareWith) {
+    const query = compareWith === undefined
+      ? ""
+      : `?compareWith=${encodeURIComponent(compareWith)}`;
+    return readJson(await fetcher(`${timelinePath(adventureId, actor)}${query}`, {
+      headers: { Accept: "application/json" },
+    }));
+  },
+  async branchTimeline(adventureId, actor, eventPosition) {
+    return readJson(await fetcher(`${timelinePath(adventureId, actor)}/branches`, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ eventPosition }),
+    }));
+  },
+  async selectTimeline(adventureId, actor, timelineId, compareWith) {
+    return readJson(await fetcher(`${timelinePath(adventureId, actor)}/selection`, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        timelineId,
+        ...(compareWith === undefined ? {} : { compareWith }),
+      }),
+    }));
   },
 });

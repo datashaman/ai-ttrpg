@@ -14,10 +14,10 @@ import type {
   PlayerUiPresentationStatus,
 } from "../player-ui-play-log.js";
 import {
-  createInMemoryEventStore,
-  createSeededRandomSource,
+  createInMemoryTimelineStore,
   createStructuredPlayApplication,
   DEFAULT_PLAYER_ACTOR_SCOPE,
+  GAME_MASTER_ACTOR_SCOPE,
   type AcceptedResult,
   type RejectedResult,
 } from "../structured-play.js";
@@ -39,6 +39,7 @@ import type {
   PlayerPresentationSnapshot,
   PlayerRetainedPresentation,
 } from "./player-presentation.js";
+import { createTimelineWorkspace } from "../timeline-ui.js";
 
 export interface DeterministicPlayerSessionOptions {
   readonly sessionToken?: string;
@@ -69,11 +70,9 @@ export const createDeterministicPlayerSession = (
   adventureId = "locked-manor",
   options: DeterministicPlayerSessionOptions = {},
 ) => {
-  const eventStore = createInMemoryEventStore();
-  const randomSource = createSeededRandomSource(1);
+  const timelineStore = createInMemoryTimelineStore({ seed: 1 });
   const app = createStructuredPlayApplication({
-    eventStore,
-    randomSource,
+    timelineStore,
   });
   const modelCallStore =
     options.modelCallStore ?? createInMemoryModelCallRecordStore();
@@ -106,7 +105,7 @@ export const createDeterministicPlayerSession = (
       actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
       utterance,
       view: app.view(),
-      acceptedEvents: eventStore.readAll(),
+      acceptedEvents: timelineStore.readAll(),
     });
 
   const record = ({
@@ -177,7 +176,7 @@ export const createDeterministicPlayerSession = (
         result,
         actionLabel: pendingActionLabel,
         fallbackEvidence,
-        acceptedEvents: eventStore.readAll(),
+        acceptedEvents: timelineStore.readAll(),
         inputMode: pendingActionMode,
         interpretation: pendingInterpretation,
       });
@@ -199,7 +198,7 @@ export const createDeterministicPlayerSession = (
             resolutionTrace,
             committedEvents: result.appendedEvents,
           },
-          acceptedEvents: eventStore.readAll(),
+          acceptedEvents: timelineStore.readAll(),
           state: result.state,
         }));
         presentationStatus = "deterministic-summary";
@@ -257,7 +256,7 @@ export const createDeterministicPlayerSession = (
     const interpreted = await interpretPlayerNaturalLanguage({
       utterance,
       view: app.view(),
-      acceptedEvents: eventStore.readAll(),
+      acceptedEvents: timelineStore.readAll(),
       modelGateway: options.modelGateway,
       modelCallStore,
     });
@@ -506,8 +505,8 @@ export const createDeterministicPlayerSession = (
   };
 
   const canonicalSnapshot = () => structuredClone({
-    events: eventStore.readAll(),
-    randomPosition: randomSource.position(),
+    events: timelineStore.readAll(),
+    randomPosition: timelineStore.position(),
     state: app.view().state,
     pendingChoice: app.view().state.pendingChoice,
   });
@@ -515,11 +514,23 @@ export const createDeterministicPlayerSession = (
   const presentations = (): readonly PlayerRetainedPresentation[] =>
     structuredClone([...retainedPresentations.values()]);
 
+  const timelines = (actor: "Player" | "Game Master") =>
+    createTimelineWorkspace({
+      timelineStore,
+      actorScope: actor === "Game Master" ? GAME_MASTER_ACTOR_SCOPE : DEFAULT_PLAYER_ACTOR_SCOPE,
+    });
+
   return {
     projection,
     presentations,
     submit,
     streamPresentation,
     canonicalSnapshot,
+    timelineWorkspace: (actor: "Player" | "Game Master", compareWith?: string) =>
+      timelines(actor).view(compareWith),
+    branchTimeline: (actor: "Player" | "Game Master", eventPosition: number) =>
+      timelines(actor).branch(eventPosition),
+    selectTimeline: (actor: "Player" | "Game Master", timelineId: string, compareWith?: string) =>
+      timelines(actor).select(timelineId, compareWith),
   };
 };

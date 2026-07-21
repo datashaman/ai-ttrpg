@@ -194,6 +194,7 @@ export const GameMasterWorkspaceRoute = () => {
         <p>{workspace.recentNarration.text}</p>
         <Link to={workspace.recentNarration.traceHref}>Trace outcome</Link>
       </section>
+      <p><Link to={`/gm/campaigns/${campaignId}/timelines`}>Inspect and compare Timelines</Link></p>
       <section className="gm-queue" aria-label="Intervention queue">
         <div className="section-heading"><div><p className="eyebrow">Action required</p><h2>Intervention queue</h2></div><span className="ledger-rule" /></div>
         {workspace.queue.map((item) => <QueueItem key={item.id} item={item} busy={busy} intervene={intervene} />)}

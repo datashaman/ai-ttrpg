@@ -424,6 +424,25 @@ export const isCanonicalEventEnvelope = (
     value.origin === "structured-play" &&
     isString(value.correlationId) &&
     isString(value.causationId) &&
+    (value.commandType === undefined ||
+      isOneOf(value.commandType, [
+        "configure-player-character",
+        "begin-adventure",
+        "choose-action",
+        "confirm-check-proposal",
+        "resolve-pending-check",
+        "correct-check-proposal",
+        "revise-check-action",
+        "withdraw-check-proposal",
+        "amend-check-stakes",
+        "recommend-likelihood",
+        "confirm-oracle-likelihood",
+        "use-field-kit",
+        "transition-scene",
+        "branch-timeline",
+        "select-timeline",
+        "review-world-knowledge-reveal",
+      ] as const)) &&
     isObject(value.payload) &&
     payloadValidators[type](value.payload)
   );
