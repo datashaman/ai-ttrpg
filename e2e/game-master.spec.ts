@@ -13,6 +13,25 @@ test("Game Master scope selection keeps a readable measure at a Retina-sized vie
   expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(827);
 });
 
+test("Game Master workspace status does not overlap the focused heading frame", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 249 });
+  await page.goto("/gm");
+  await page.getByRole("button", { name: "Select Game Master scope" }).click();
+
+  const heading = page.getByRole("heading", { name: "Game Master work" });
+  await expect(heading).toBeFocused();
+  const status = page.locator(".gm-page-heading > .status");
+  const [headingBounds, statusBounds] = await Promise.all([
+    heading.boundingBox(),
+    status.boundingBox(),
+  ]);
+  expect(headingBounds).not.toBeNull();
+  expect(statusBounds).not.toBeNull();
+  expect(statusBounds!.y + statusBounds!.height).toBeLessThanOrEqual(
+    headingBounds!.y - 4,
+  );
+});
+
 test("Game Master identifies and intervenes in review work from a retained Narration trace", async ({ page }) => {
   await page.goto("/gm/campaigns/locked-manor/work");
   await expect(page.getByRole("alert")).toBeFocused();
