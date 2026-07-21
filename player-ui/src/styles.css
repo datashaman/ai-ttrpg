@@ -169,6 +169,9 @@ summary { width: fit-content; cursor: pointer; text-decoration: underline; text-
 .gm-work-metadata div { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; padding: 10px 12px 10px 0; border-bottom: 1px solid var(--iron-soft); }
 .gm-work-metadata dt { color: var(--ink-tertiary); font-size: .72rem; font-weight: 750; text-transform: uppercase; }
 .gm-work-metadata dd { min-width: 0; margin: 0; color: var(--ink-secondary); overflow-wrap: anywhere; }
+.gm-command-choice { display: grid; max-width: 32rem; gap: 6px; margin-top: 18px; }
+.gm-command-choice select { width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; color: var(--soot); border: 1px solid var(--iron-strong); border-radius: var(--radius-small); background: var(--parchment-inset); }
+.gm-command-choice select:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 .operation-status { padding: 12px 14px; color: var(--moss); border-left: 3px solid var(--moss); background: rgb(79 97 75 / 5%); }
 .trace-page { max-width: 920px; }
 .trace-page > a { display: inline-block; margin-bottom: 28px; }

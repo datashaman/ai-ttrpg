@@ -8,6 +8,7 @@ import type {
   PlayerPresentationEvent,
   PlayerRetainedPresentation,
 } from "./player-presentation.js";
+import type { GameMasterApplicationClient } from "../gm-ui/application-client.js";
 
 export type PlayerAdventureCommand =
   | {
@@ -189,7 +190,7 @@ export interface PlayerCommandResponse {
   }[];
 }
 
-export interface ApplicationClient {
+export interface ApplicationClient extends GameMasterApplicationClient {
   readPlayerAdventure(adventureId: string): Promise<PlayerAdventureProjection>;
   readPlayerPresentations(
     adventureId: string,

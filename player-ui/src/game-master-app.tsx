@@ -1,16 +1,44 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
-import { createHttpGameMasterApplicationClient } from "../../src/gm-ui/http-application-client.js";
+import { createHttpApplicationClient } from "../../src/player-ui/http-application-client.js";
 import type {
   GameMasterDecision,
   GameMasterOutcomeTrace,
   GameMasterQueueItem,
   GameMasterWorkspace,
-} from "../../src/gm-ui/deterministic-game-master-session.js";
+} from "../../src/gm-ui/application-client.js";
 import { ErrorSummary, Status } from "./ui-primitives.js";
 
-const client = createHttpGameMasterApplicationClient();
+const client = createHttpApplicationClient();
+
+export const GameMasterScopeSelectionRoute = () => {
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => heading.current?.focus(), []);
+  const select = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await client.selectGameMasterScope();
+      navigate("/gm/campaigns/locked-manor/work");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Game Master scope could not be selected.");
+      setBusy(false);
+    }
+  };
+  return (
+    <main className="threshold">
+      <p className="eyebrow">Local actor scope</p>
+      <h1 ref={heading} tabIndex={-1}>Game Master workspace</h1>
+      <p className="lede">This trusted local session can inspect privileged campaign evidence and submit attributed interventions.</p>
+      {error === null ? null : <ErrorSummary title="Scope unavailable." message={error} />}
+      <button className="primary-action" disabled={busy} onClick={select}>Select Game Master scope</button>
+    </main>
+  );
+};
 
 const decisionLabel: Record<GameMasterDecision, string> = {
   approve: "Approve",
@@ -19,11 +47,6 @@ const decisionLabel: Record<GameMasterDecision, string> = {
   override: "Override",
 };
 
-const interventionCommand = (decision: GameMasterDecision) =>
-  decision === "edit" || decision === "override"
-    ? { type: "choose-action" as const, actionId: "survey-manor" }
-    : undefined;
-
 const QueueItem = ({
   item,
   busy,
@@ -31,8 +54,19 @@ const QueueItem = ({
 }: {
   readonly item: GameMasterQueueItem;
   readonly busy: boolean;
-  readonly intervene: (item: GameMasterQueueItem, decision: GameMasterDecision) => void;
-}) => (
+  readonly intervene: (
+    item: GameMasterQueueItem,
+    decision: GameMasterDecision,
+    actionId?: string,
+  ) => void;
+}) => {
+  const [actionId, setActionId] = useState(
+    item.candidateCommand?.actionId ?? item.allowedCommands[0]?.command.actionId ?? "",
+  );
+  const needsCommand = item.allowedInterventions.some(
+    (decision) => decision === "edit" || decision === "override",
+  );
+  return (
   <article className="gm-work-item">
     <header className="entry-heading">
       <div>
@@ -49,21 +83,42 @@ const QueueItem = ({
       <div><dt>Validation</dt><dd>{item.validationFindings.join(" ")}</dd></div>
     </dl>
     {item.status === "Under review" ? (
-      <div className="button-row" aria-label={`Allowed interventions for ${item.taskType}`}>
+      <div aria-label={`Allowed interventions for ${item.taskType}`}>
+        {needsCommand ? (
+          <label className="gm-command-choice">
+            <span>Validated command for edit or override</span>
+            <select
+              aria-label={`Command for ${item.taskType}`}
+              value={actionId}
+              onChange={(event) => setActionId(event.target.value)}
+            >
+              {item.allowedCommands.map(({ command, label }) => (
+                <option key={command.actionId} value={command.actionId}>{label}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        <div className="button-row">
         {item.allowedInterventions.map((decision) => (
           <button
             className={decision === "approve" ? "primary-action" : undefined}
             disabled={busy}
             key={decision}
-            onClick={() => intervene(item, decision)}
+            onClick={() => intervene(
+              item,
+              decision,
+              decision === "edit" || decision === "override" ? actionId : undefined,
+            )}
           >
             {decisionLabel[decision]} {item.taskType}
           </button>
         ))}
+        </div>
       </div>
     ) : null}
   </article>
-);
+  );
+};
 
 export const GameMasterWorkspaceRoute = () => {
   const { campaignId = "locked-manor" } = useParams();
@@ -87,12 +142,18 @@ export const GameMasterWorkspaceRoute = () => {
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { if (workspace !== null) heading.current?.focus(); }, [workspace === null]);
 
-  const intervene = async (item: GameMasterQueueItem, decision: GameMasterDecision) => {
+  const intervene = async (
+    item: GameMasterQueueItem,
+    decision: GameMasterDecision,
+    actionId?: string,
+  ) => {
     setBusy(true);
     setError(null);
     setMessage(null);
     try {
-      const command = interventionCommand(decision);
+      const command = actionId === undefined
+        ? undefined
+        : { type: "choose-action" as const, actionId };
       const result = await client.intervene(campaignId, {
         itemId: item.id,
         expectedRevision: item.revision,
@@ -114,7 +175,7 @@ export const GameMasterWorkspaceRoute = () => {
   };
 
   if (workspace === null && error !== null) {
-    return <main className="loading"><ErrorSummary title="Game Master workspace unavailable." message={error} /><button onClick={load}>Retry opening workspace</button></main>;
+    return <main className="loading"><ErrorSummary title="Game Master workspace unavailable." message={error} /><Link to="/gm">Select Game Master scope</Link></main>;
   }
   if (workspace === null) return <main className="loading"><p role="status">Opening Game Master work…</p></main>;
   return (

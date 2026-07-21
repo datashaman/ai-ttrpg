@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 
 test("Game Master identifies and intervenes in review work from a retained Narration trace", async ({ page }) => {
   await page.goto("/gm/campaigns/locked-manor/work");
+  await expect(page.getByRole("alert")).toBeFocused();
+  await page.getByRole("link", { name: "Select Game Master scope" }).click();
+  await expect(page.getByRole("heading", { name: "Game Master workspace" })).toBeFocused();
+  await page.getByRole("button", { name: "Select Game Master scope" }).click();
 
   await expect(page.getByRole("heading", { name: "Game Master work" })).toBeFocused();
   const queue = page.getByRole("region", { name: "Intervention queue" });
@@ -14,6 +18,8 @@ test("Game Master identifies and intervenes in review work from a retained Narra
   await expect(queue).toContainText("12 minutes old");
   await expect(queue).toContainText("evidence:side-door");
   await expect(queue).toContainText("Two supplied rules could govern");
+  await expect(page.getByLabel("Command for Rule conflict")).toHaveValue("survey-manor");
+  await expect(page.getByLabel("Command for Invalid proposal").locator("option")).not.toHaveCount(0);
 
   const narration = page.getByRole("region", { name: "Recent retained Narration" });
   await narration.getByRole("link", { name: "Trace outcome" }).click();

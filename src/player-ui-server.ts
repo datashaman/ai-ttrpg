@@ -18,8 +18,8 @@ import { DEFAULT_PLAYER_ACTOR_SCOPE } from "./structured-play.js";
 import type { PlayerPresentationGenerator } from "./player-ui/player-presentation.js";
 import {
   createDeterministicGameMasterSession,
-  type GameMasterIntervention,
 } from "./gm-ui/deterministic-game-master-session.js";
+import type { GameMasterIntervention } from "./gm-ui/application-client.js";
 import { hasExactKeys, isRecord } from "./model-boundary.js";
 
 const host = "127.0.0.1";
@@ -98,6 +98,13 @@ const gameMasterSessionFor = (
   request: import("node:http").IncomingMessage,
   response: import("node:http").ServerResponse,
 ): GameMasterSession => {
+  const hasGameMasterScope = request.headers.cookie
+    ?.split(";")
+    .map((part) => part.trim())
+    .includes("ai_ttrpg_actor=game-master") ?? false;
+  if (!hasGameMasterScope) {
+    throw new Error("Game Master scope has not been selected.");
+  }
   const sessionId = request.headers.cookie
     ?.split(";")
     .map((part) => part.trim())
@@ -129,12 +136,10 @@ const isGameMasterCommand = (
   value: unknown,
 ): value is NonNullable<GameMasterIntervention["command"]> =>
   isRecord(value) &&
-  ((hasExactKeys(value, ["type", "actionId"]) &&
+  hasExactKeys(value, ["type", "actionId"]) &&
     value.type === "choose-action" &&
-    typeof value.actionId === "string") ||
-    (hasExactKeys(value, ["type", "candidateId"]) &&
-      value.type === "publish-rule-candidate" &&
-      typeof value.candidateId === "string"));
+    typeof value.actionId === "string" &&
+    value.actionId.length > 0;
 
 const isGameMasterIntervention = (
   value: unknown,
@@ -161,6 +166,28 @@ const vite = await createViteServer({
 
 const server = createHttpServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${host}:${port}`);
+  if (url.pathname === "/api/local-session" && request.method === "POST") {
+    response.setHeader("Content-Type", "application/json; charset=utf-8");
+    try {
+      const selection = await readBody(request);
+      if (
+        !isRecord(selection) ||
+        !hasExactKeys(selection, ["actor"]) ||
+        selection.actor !== "Game Master"
+      ) {
+        throw new Error("Invalid local actor scope");
+      }
+      response.setHeader(
+        "Set-Cookie",
+        "ai_ttrpg_actor=game-master; Path=/; HttpOnly; SameSite=Strict",
+      );
+      response.end(JSON.stringify({ status: "selected" }));
+    } catch {
+      response.statusCode = 400;
+      response.end(JSON.stringify({ message: "Invalid local actor selection." }));
+    }
+    return;
+  }
   const gameMasterWorkspaceMatch = url.pathname.match(
     /^\/api\/gm\/campaigns\/([^/]+)\/workspace$/,
   );

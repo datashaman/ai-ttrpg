@@ -30,7 +30,10 @@ test("Game Master work queues expose scoped review evidence and a complete outco
 
   const trace = session.trace("locked-manor", "outcome:side-door");
   assert.equal(trace.narration.status, "Retained");
-  assert.equal(trace.evidenceBundle.id, trace.queueItem.evidence.bundleId);
+  assert.equal(
+    trace.evidenceBundle.id,
+    workspace.queue.find(({ taskType }) => taskType === "Rule conflict")?.evidence.bundleId,
+  );
   assert.ok(trace.rule.sourcePassages.every((passage) => passage.text.length > 0));
   assert.equal(trace.modelCall.evidenceBundleId, trace.evidenceBundle.id);
   assert.equal(trace.command.id, trace.events[0]?.commandId);
@@ -58,7 +61,9 @@ test("Game Master intervention dispatches one actor-authorized command and rejec
   assert.equal(accepted.status, "accepted");
   assert.equal(accepted.auditRecord?.decision, "approve");
   assert.equal(accepted.auditRecord?.actor.kind, "Game Master");
-  assert.equal(accepted.auditRecord?.command?.type, "choose-action");
+  assert.equal(accepted.auditRecord?.candidateCommand?.type, "choose-action");
+  assert.equal(accepted.auditRecord?.submittedCommand?.type, "choose-action");
+  assert.equal(accepted.auditRecord?.outcome, "accepted");
   assert.equal(accepted.committedEvents.length, 1);
   assert.notEqual(JSON.stringify(session.snapshot().canonicalEvents), canonicalBefore);
 
@@ -103,6 +108,25 @@ test("Game Master controls reject insufficient scope without changing canonical 
   });
   assert.equal(result.status, "rejected");
   assert.equal(result.code, "ACTOR_NOT_AUTHORIZED");
+  assert.equal(JSON.stringify(session.snapshot()), before);
+});
+
+test("Game Master controls reject commands outside the work item's validated capabilities", async () => {
+  const session = createDeterministicGameMasterSession({ actor: GAME_MASTER });
+  const item = session
+    .workspace("locked-manor")
+    .queue.find(({ taskType }) => taskType === "Ambiguous intent")!;
+  const before = JSON.stringify(session.snapshot());
+
+  const result = await session.intervene("locked-manor", {
+    itemId: item.id,
+    expectedRevision: item.revision,
+    idempotencyKey: "gm-review:unknown-capability",
+    decision: "override",
+    command: { type: "choose-action", actionId: "invent-a-secret-passage" },
+  });
+  assert.equal(result.status, "rejected");
+  assert.equal(result.code, "INVALID_INTERVENTION");
   assert.equal(JSON.stringify(session.snapshot()), before);
 });
 

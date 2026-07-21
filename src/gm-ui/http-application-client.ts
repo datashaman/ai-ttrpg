@@ -1,9 +1,9 @@
-import type { GameMasterApplicationClient } from "./application-client.js";
 import type {
+  GameMasterApplicationClient,
   GameMasterInterventionResult,
   GameMasterOutcomeTrace,
   GameMasterWorkspace,
-} from "./deterministic-game-master-session.js";
+} from "./application-client.js";
 
 const campaignPath = (campaignId: string): string =>
   `/api/gm/campaigns/${encodeURIComponent(campaignId)}`;
@@ -18,6 +18,15 @@ const readJson = async <Value>(response: Response): Promise<Value> => {
 export const createHttpGameMasterApplicationClient = (
   fetcher: typeof fetch = fetch,
 ): GameMasterApplicationClient => ({
+  async selectGameMasterScope() {
+    await readJson(
+      await fetcher("/api/local-session", {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ actor: "Game Master" }),
+      }),
+    );
+  },
   async readWorkspace(campaignId) {
     return readJson<GameMasterWorkspace>(
       await fetcher(`${campaignPath(campaignId)}/workspace`, {
