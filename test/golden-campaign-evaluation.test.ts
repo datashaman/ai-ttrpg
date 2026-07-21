@@ -45,6 +45,15 @@ test("the versioned golden campaign is reproducible across every supported adapt
   assert.equal(report.runs.length, 8);
   assert.ok(report.runs.every((run) => run.status === "passed"));
   assert.ok(report.runs.every((run) => run.diagnostics.length === 0));
+  assert.ok(report.runs.every((run) =>
+    run.quality.intentExtractionCorrect &&
+    run.quality.ruleSelectionCorrect &&
+    run.quality.proposalValid &&
+    !run.quality.proposalContradiction &&
+    run.quality.citationAccurate &&
+    !run.quality.narrationContradiction &&
+    run.quality.forbiddenDataLeakage === 0
+  ));
   assert.deepEqual(
     new Set(report.runs.map((run) => JSON.stringify(run.normalizedTruth))),
     new Set([JSON.stringify(fixture.expected.truth)]),
@@ -109,6 +118,7 @@ test("a presentation mismatch identifies its layer without reporting canonical d
       (run) => JSON.stringify(run.normalizedTruth) === JSON.stringify(fixture.expected.truth),
     ),
   );
+  assert.ok(report.runs.every((run) => run.quality.narrationContradiction));
 });
 
 test("provider failure is attributed to the model layer without changing truth", async () => {
@@ -139,6 +149,8 @@ test("provider failure is attributed to the model layer without changing truth",
   assert.equal(report.runs[0]!.status, "failed");
   assert.ok(report.runs[0]!.diagnostics.some(({ layer }) => layer === "model"));
   assert.ok(report.runs[0]!.diagnostics.every(({ layer }) => layer === "model"));
+  assert.equal(report.runs[0]!.quality.intentExtractionCorrect, false);
+  assert.equal(report.runs[0]!.quality.proposalValid, false);
   assert.deepEqual(
     report.runs[0]!.normalizedTruth.commands.map((command) =>
       (command as { readonly type: string }).type

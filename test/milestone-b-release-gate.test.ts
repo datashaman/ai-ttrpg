@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { assertDeterministicReleaseCommand } from "./support/release-command.js";
+
 const readProjectFile = (path: string): string =>
   readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -44,7 +46,7 @@ test("the required release command is credential-free and excludes optional prov
   const report = readProjectFile("docs/milestone-b-release-report.md");
   const releaseCommand = packageJson.scripts["verify:release"];
 
-  assert.equal(releaseCommand, "npm test && npm run typecheck");
+  assertDeterministicReleaseCommand(releaseCommand);
   assert.match(workflow, /run: npm run verify:release/);
   assert.doesNotMatch(releaseCommand, /openai|smoke|OPENAI_API_KEY/i);
   assert.doesNotMatch(workflow, /OPENAI_API_KEY|test:openai-smoke/);

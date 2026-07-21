@@ -186,6 +186,9 @@ const DEFAULT_PROMPT_VERSIONS: Readonly<Record<ModelTask["type"], string>> = {
   "narrate-committed-outcome": "narrate-committed-outcome-v1",
 };
 
+export const modelPromptVersions = (): readonly string[] =>
+  immutableSnapshot(Object.values(DEFAULT_PROMPT_VERSIONS));
+
 export const createModelGateway = ({
   provider,
   promptVersion,

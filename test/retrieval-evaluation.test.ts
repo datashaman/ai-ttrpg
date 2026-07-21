@@ -9,6 +9,7 @@ import {
 import {
   evaluateRetrieval,
   type RetrievalEvaluationCase,
+  type RetrievalEvaluationReport,
 } from "../src/retrieval-evaluation.js";
 import {
   ingestAnchoredRuleSource,
@@ -165,6 +166,11 @@ interface RetrievalBenchmark {
   };
   readonly semanticFallbackDecision: "accept" | "reject";
   readonly expectedDeterministicBaselineFailures: readonly string[];
+  readonly expectedMeasurements: {
+    readonly byKind: RetrievalEvaluationReport["byKind"];
+    readonly unambiguousEntityLinkAccuracy: number;
+    readonly totalForbiddenDataLeakage: number;
+  };
   readonly thresholds: {
     readonly minimumPrecisionAtK: number;
     readonly minimumRecallAtK: number;
@@ -824,36 +830,13 @@ test("the versioned campaign corpus measures retrieval gaps against approved thr
   );
   assert.equal(report.passed, false);
   assert.equal(fixture.semanticFallbackDecision, "accept");
-  assert.equal(report.unambiguousEntityLinkAccuracy, 0.875);
-  assert.equal(report.totalForbiddenDataLeakage, 0);
-  assert.deepEqual(report.byKind, {
-    entity: {
-      caseCount: 10,
-      precisionAtK: 1,
-      recallAtK: 13 / 14,
-      meanReciprocalRank: 0.9,
-      forbiddenDataLeakage: 0,
-    },
-    relationship: {
-      caseCount: 4,
-      precisionAtK: 2 / 7,
-      recallAtK: 0.5,
-      meanReciprocalRank: 15 / 28,
-      forbiddenDataLeakage: 0,
-    },
-    rule: {
-      caseCount: 3,
-      precisionAtK: 1,
-      recallAtK: 2 / 3,
-      meanReciprocalRank: 2 / 3,
-      forbiddenDataLeakage: 0,
-    },
-    event: {
-      caseCount: 2,
-      precisionAtK: 0.8,
-      recallAtK: 1,
-      meanReciprocalRank: 1,
-      forbiddenDataLeakage: 0,
-    },
-  });
+  assert.equal(
+    report.unambiguousEntityLinkAccuracy,
+    fixture.expectedMeasurements.unambiguousEntityLinkAccuracy,
+  );
+  assert.equal(
+    report.totalForbiddenDataLeakage,
+    fixture.expectedMeasurements.totalForbiddenDataLeakage,
+  );
+  assert.deepEqual(report.byKind, fixture.expectedMeasurements.byKind);
 });
