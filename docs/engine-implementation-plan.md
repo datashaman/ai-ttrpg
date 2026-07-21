@@ -557,6 +557,10 @@ Measure correctness, consistency, experience quality, safety, latency, and cost 
 
 ## Phase 11 — User Interface and GM Control Surface
 
+The interface architecture, accessibility target, supported environment, and
+replacement boundaries are defined by
+[ADR-0014](adr/0014-use-a-browser-first-local-alpha-interface.md).
+
 ### Objective
 
 Expose play, evidence, state, and intervention controls without overwhelming players.
