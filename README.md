@@ -9,12 +9,55 @@ The engine will interpret natural-language player input, retrieve relevant rules
 
 ## Try the current slice
 
-Requirements: Node.js 20 or newer.
+Requirements: Node.js 24 or newer.
 
 ```sh
 npm install
 npm start -- create "The Locked Manor"
 ```
+
+The browser-first Player Interface runs locally and completes the arrival
+Scene entirely through Structured Play—no model provider or credentials are
+required:
+
+```sh
+npm run player-ui
+```
+
+Open `http://127.0.0.1:4173/player/adventures/locked-manor`. Configure the
+Player Character, recover from any setup error in place, then use the authored
+actions to confirm an Oracle Likelihood and Check Proposal, resolve the recorded
+Pending Choice, and enter the next Scene. Each committed outcome exposes a
+compact rule trace and its Player-visible Evidence Bundle references. The
+interface is responsive from 320 CSS pixels and keeps Inventory Items,
+Conditions, Clocks, and relevant relationships in a separate character folio.
+
+Build the locally bundled interface or run its browser journey with:
+
+```sh
+npm run player-ui:build
+npm run test:browser
+```
+
+The browser journey runs against the current local Chrome and Playwright's
+current Firefox and WebKit builds; CI also runs the current Microsoft Edge
+channel. WebKit provides early Safari compatibility feedback, while current
+Safari remains a manual verification target as defined by ADR-0014.
+
+The local server writes a redacted operational play log to
+`~/.ai-ttrpg/logs/player-ui.jsonl`. Each JSONL record identifies the anonymous
+session, command type, acceptance or error code, Scene before and after,
+appended event IDs and types, Pending Choice state, presentation status, and
+duration. It excludes Player Character setup text, cookies, event payloads,
+hidden World Knowledge, provider payloads, and credentials. Inspect it while
+playing with:
+
+```sh
+tail -f ~/.ai-ttrpg/logs/player-ui.jsonl
+```
+
+Set `AI_TTRPG_PLAYER_LOG_PATH` to override the path. A repo-local `.ai-ttrpg/`
+directory is ignored as a precaution.
 
 Adventures created by the CLI are durable. They are stored in the Player's
 default application-data directory, so no storage path or language model is

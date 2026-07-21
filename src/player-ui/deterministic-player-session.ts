@@ -1,0 +1,111 @@
+import {
+  assembleInterpretationEvidence,
+  type EvidenceBundle,
+} from "../evidence-bundle.js";
+import {
+  createInMemoryEventStore,
+  createSeededRandomSource,
+  createStructuredPlayApplication,
+  DEFAULT_PLAYER_ACTOR_SCOPE,
+} from "../structured-play.js";
+import type {
+  PlayerCommand,
+  PlayerCommandResponse,
+  PlayerLedgerEntry,
+} from "./application-client.js";
+import { playerLedgerEntryFor } from "./player-ledger.js";
+import { projectPlayerAdventure } from "./player-projection.js";
+import type {
+  PlayerUiPlayLog,
+  PlayerUiPresentationStatus,
+} from "../player-ui-play-log.js";
+
+export interface DeterministicPlayerSessionOptions {
+  readonly sessionToken: string;
+  readonly playLog: PlayerUiPlayLog;
+  readonly onPlayLogError?: (error: unknown) => void;
+}
+
+export const createDeterministicPlayerSession = (
+  adventureId = "locked-manor",
+  options?: DeterministicPlayerSessionOptions,
+) => {
+  const eventStore = createInMemoryEventStore();
+  const app = createStructuredPlayApplication({
+    eventStore,
+    randomSource: createSeededRandomSource(1),
+  });
+  const ledger: PlayerLedgerEntry[] = [];
+  let pendingActionLabel = "Authored action";
+  let pendingEvidence: EvidenceBundle | null = null;
+
+  const projection = () => projectPlayerAdventure({ adventureId, app, ledger });
+  const interpretationEvidence = (utterance: string): EvidenceBundle =>
+    assembleInterpretationEvidence({
+      actorScope: DEFAULT_PLAYER_ACTOR_SCOPE,
+      utterance,
+      view: app.view(),
+      acceptedEvents: eventStore.readAll(),
+    });
+
+  const submit = (command: PlayerCommand): PlayerCommandResponse => {
+    const startedAt = performance.now();
+    const stateBefore = app.view().state;
+    if (command.type === "choose-action") {
+      const action = app
+        .view()
+        .availableActions.find((candidate) => candidate.id === command.actionId);
+      pendingActionLabel = action?.label ?? "Authored action";
+      pendingEvidence = interpretationEvidence(pendingActionLabel);
+    }
+    const fallbackEvidence = pendingEvidence ?? interpretationEvidence(command.type);
+    const result = app.submit(command);
+    let presentationStatus: PlayerUiPresentationStatus = "not-requested";
+    if (result.status === "accepted") {
+      const entry = playerLedgerEntryFor({
+        result,
+        actionLabel: pendingActionLabel,
+        fallbackEvidence,
+        acceptedEvents: eventStore.readAll(),
+      });
+      if (entry !== null) {
+        ledger.push(entry);
+        presentationStatus = "deterministic-summary";
+      }
+      if (
+        result.state.pendingCheckProposal === null &&
+        result.state.pendingChoice === null &&
+        result.state.pendingNarratorRecommendation === null
+      ) {
+        pendingEvidence = null;
+      }
+    }
+    if (options !== undefined) {
+      try {
+        options.playLog.recordCommand({
+          sessionToken: options.sessionToken,
+          adventureId,
+          commandType: command.type,
+          status: result.status,
+          errorCode: result.status === "rejected" ? result.code : null,
+          sceneBefore: stateBefore.activeScene,
+          sceneAfter: result.state.activeScene,
+          appendedEvents: result.appendedEvents,
+          pendingChoiceBefore: stateBefore.pendingChoice !== null,
+          pendingChoiceAfter: result.state.pendingChoice !== null,
+          presentationStatus,
+          durationMs: performance.now() - startedAt,
+        });
+      } catch (error) {
+        options.onPlayLogError?.(error);
+      }
+    }
+    return {
+      status: result.status,
+      message: result.message,
+      projection: projection(),
+    };
+  };
+
+  return { projection, submit };
+};

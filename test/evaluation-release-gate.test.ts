@@ -238,7 +238,7 @@ test("the release command emits one passing report and is part of required CI", 
   assert.equal(report.simulation.turns.accepted, 100);
   assert.equal(
     packageJson.scripts["verify:release"],
-    "npm test && npm run typecheck && npm run evaluate:release",
+    "npm test && npm run typecheck && npm run player-ui:build && npm run test:browser && npm run evaluate:release",
   );
 });
 
