@@ -105,9 +105,12 @@ export const isValidatedExpandedModelTaskResult = (
 const isStringArray = (value: unknown): value is readonly string[] =>
   Array.isArray(value) && value.every((item) => typeof item === "string");
 
-const uniqueNonEmptyStrings = (value: unknown): value is readonly string[] =>
+const uniqueNonBlankStrings = (
+  value: unknown,
+  { allowEmpty = false }: { readonly allowEmpty?: boolean } = {},
+): value is readonly string[] =>
   isStringArray(value) &&
-  value.length > 0 &&
+  (allowEmpty || value.length > 0) &&
   new Set(value).size === value.length &&
   value.every((item) => item.trim().length > 0);
 
@@ -172,8 +175,8 @@ export const validateIntentExtraction = (
       "evidenceItemIds",
     ]) ||
     typeof output.capabilityId !== "string" ||
-    !uniqueNonEmptyStrings(output.referencedEntityIds) ||
-    !uniqueNonEmptyStrings(output.evidenceItemIds)
+    !uniqueNonBlankStrings(output.referencedEntityIds) ||
+    !uniqueNonBlankStrings(output.evidenceItemIds)
   ) {
     return null;
   }
@@ -221,7 +224,7 @@ export const validateRuleMatchSuggestion = (
     if (
       !hasExactKeys(output, ["status", "ruleId", "evidenceItemIds"]) ||
       typeof output.ruleId !== "string" ||
-      !uniqueNonEmptyStrings(output.evidenceItemIds) ||
+      !uniqueNonBlankStrings(output.evidenceItemIds) ||
       !rules.has(output.ruleId) ||
       !output.evidenceItemIds.includes(output.ruleId) ||
       !referencesExist(output.evidenceItemIds, evidenceIds(bundle))
@@ -237,7 +240,7 @@ export const validateRuleMatchSuggestion = (
   if (
     output.status === "needs-adjudication" &&
     hasExactKeys(output, ["status", "candidateRuleIds"]) &&
-    uniqueNonEmptyStrings(output.candidateRuleIds) &&
+    uniqueNonBlankStrings(output.candidateRuleIds) &&
     output.candidateRuleIds.length >= 2 &&
     referencesExist(output.candidateRuleIds, rules)
   ) {
@@ -315,11 +318,11 @@ export const validateStateProposal = (
     ]) ||
     output.status !== "proposed" ||
     typeof output.capabilityId !== "string" ||
-    !uniqueNonEmptyStrings(output.referencedEntityIds) ||
-    !uniqueNonEmptyStrings(output.evidenceItemIds) ||
+    !uniqueNonBlankStrings(output.referencedEntityIds) ||
+    !uniqueNonBlankStrings(output.evidenceItemIds) ||
     typeof output.intentEvidenceItemId !== "string" ||
-    !uniqueNonEmptyStrings(output.ruleEvidenceItemIds) ||
-    !uniqueNonEmptyStrings(output.stateEvidenceItemIds) ||
+    !uniqueNonBlankStrings(output.ruleEvidenceItemIds, { allowEmpty: true }) ||
+    !uniqueNonBlankStrings(output.stateEvidenceItemIds) ||
     typeof output.rulesetVersion !== "string" ||
     !isRecord(output.command) ||
     !hasExactKeys(output.command, ["type", "actionId"]) ||
@@ -338,6 +341,7 @@ export const validateStateProposal = (
     const item = context.evidenceBundle.items.find((candidate) => candidate.id === id);
     return item === undefined ? [] : [item];
   });
+  const applicableRuleIds = authorityRuleIds(context.evidenceBundle);
   const stateEvidenceItems = output.stateEvidenceItemIds.flatMap((id) => {
     const item = context.evidenceBundle.items.find((candidate) => candidate.id === id);
     return item === undefined ? [] : [item];
@@ -370,6 +374,7 @@ export const validateStateProposal = (
     intentEvidenceItem.content !== canonicalJson(context.validatedIntent) ||
     !citedEvidenceIds.includes(output.intentEvidenceItemId) ||
     ruleEvidenceItems.length !== output.ruleEvidenceItemIds.length ||
+    (applicableRuleIds.size > 0 && output.ruleEvidenceItemIds.length === 0) ||
     !ruleEvidenceItems.every((item) => item.sourceKind === "authority-rule") ||
     !output.ruleEvidenceItemIds.every((id) => citedEvidenceIds.includes(id)) ||
     stateEvidenceItems.length !== output.stateEvidenceItemIds.length ||

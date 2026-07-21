@@ -149,7 +149,7 @@ const stateProposalSchema: JsonSchema = exactObject({
   referencedEntityIds: { ...stringArraySchema, minItems: 1 },
   evidenceItemIds: { ...stringArraySchema, minItems: 1 },
   intentEvidenceItemId: { type: "string", minLength: 1 },
-  ruleEvidenceItemIds: { ...stringArraySchema, minItems: 1 },
+  ruleEvidenceItemIds: stringArraySchema,
   stateEvidenceItemIds: { ...stringArraySchema, minItems: 1 },
   rulesetVersion: { type: "string", minLength: 1 },
   command: exactObject({
@@ -209,7 +209,7 @@ const modelTaskDefinitions: Readonly<
     name: "propose_state_change",
     schema: stateProposalSchema,
     instructions:
-      "Propose one candidate command using only the supplied validated intent, exact ruleset version, entities, capabilities, and evidence. Do not apply a Mechanical Effect or append an event. Return JSON matching the supplied schema.",
+      "Propose one candidate command using only the supplied validated intent, exact ruleset version, entities, capabilities, and evidence. Cite every applicable approved rule; use an empty ruleEvidenceItemIds array only when the Evidence Bundle contains no applicable approved rule. Do not apply a Mechanical Effect or append an event. Return JSON matching the supplied schema.",
     normalizeOutput: unchangedOutput,
   },
   "explain-rules": {

@@ -29,7 +29,7 @@ export const SceneWorkspace = ({ projection, submit, busy, error }: {
       <header className="topbar">
         <a className="wordmark" href={`/player/adventures/${projection.id}`}><span aria-hidden="true">✦</span> {projection.title}</a>
         <nav aria-label="Player workspace"><strong>Scene</strong><span aria-disabled="true">Timeline</span></nav>
-        <p><Status>Structured Play</Status></p>
+        <p><Status>{projection.inputMode === "structured" ? "Structured Play" : "Natural Language Play"}</Status></p>
       </header>
       <CharacterFolio projection={projection} />
       <main className="scene-workspace">

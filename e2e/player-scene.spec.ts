@@ -124,3 +124,135 @@ test("an Adventure load failure offers an explicit retry", async ({ page }) => {
     page.getByRole("heading", { name: "Enter the locked manor" }),
   ).toBeVisible();
 });
+
+test("Natural Language Play confirms an evidenced action before it enters the ledger", async ({ page }) => {
+  const evidence = {
+    id: "rule:micro-ruleset.check@1.0.0",
+    sourceKind: "authority-rule",
+    sourceReference: "rule-package:micro-ruleset@1.0.0:checksum",
+    content: "Roll 2d6 and add the relevant Trait.",
+    inclusionReason: "This exact approved rule governs the interpreted Check.",
+    citation: "micro-ruleset@1.0.0#checks.procedure",
+  };
+  let projection = {
+    id: "locked-manor",
+    title: "The Locked Manor",
+    playerCharacter: {
+      name: "Mara Vey",
+      pronouns: "she/her",
+      motivation: "Find her missing sister",
+      traits: { Might: 0, Wits: 2, Presence: 1 },
+      health: 3,
+      resolve: 3,
+      inventory: [],
+    },
+    activeScene: { id: "arrival", title: "Arrival" },
+    conditions: [],
+    clocks: [],
+    relationships: [],
+    availableActions: [
+      { id: "force-side-door", label: "Force the side door", kind: "Check" },
+    ],
+    pendingCheckProposal: null,
+    pendingChoice: null,
+    oracleConfirmation: null,
+    ledger: [] as Record<string, unknown>[],
+    inputMode: "structured",
+    naturalLanguage: {
+      available: true,
+      pendingProposal: null as Record<string, unknown> | null,
+      response: null,
+    },
+  };
+  await page.route("**/api/player/adventures/locked-manor**", async (route) => {
+    const request = route.request();
+    if (request.method() === "GET") {
+      await route.fulfill({ json: projection });
+      return;
+    }
+    const command = request.postDataJSON() as { type: string; mode?: string; proposalId?: string };
+    if (command.type === "set-input-mode") {
+      projection = { ...projection, inputMode: command.mode ?? "structured" };
+    }
+    if (command.type === "submit-natural-language") {
+      projection = {
+        ...projection,
+        inputMode: "natural-language",
+        naturalLanguage: {
+          ...projection.naturalLanguage,
+          pendingProposal: {
+            id: "proposal:1",
+            utterance: "I force the side door.",
+            actionLabel: "Force the side door",
+            command: { type: "choose-action", actionId: "force-side-door" },
+            modelCallIds: ["model-call:1"],
+            evidenceBundleIds: ["evidence:1"],
+            bundleItemIds: [evidence.id],
+            citedEvidenceItemIds: [evidence.id],
+            ruleIds: [evidence.id],
+            evidence: [evidence],
+          },
+        },
+      };
+    }
+    if (command.type === "confirm-natural-language-command") {
+      projection = {
+        ...projection,
+        naturalLanguage: { ...projection.naturalLanguage, pendingProposal: null },
+        ledger: [{
+          id: "event:1",
+          status: "Committed",
+          action: "Force the side door",
+          presentation: "Deterministic summary",
+          narrationStatus: "Unavailable",
+          inputMode: "Natural Language Play",
+          interpretation: {
+            modelCallIds: ["model-call:1"],
+            evidenceBundleIds: ["evidence:1"],
+            bundleItemIds: [evidence.id],
+            citedEvidenceItemIds: [evidence.id],
+            ruleIds: [evidence.id],
+            evidence: [evidence],
+          },
+          summary: "The side door gives way.",
+          mechanic: {
+            ruleReference: "micro-ruleset.check@1.0.0",
+            calculation: "3 + 4 + Might 0 = 7",
+            evidenceBundle: { id: "evidence:1", references: [evidence.sourceReference] },
+          },
+        }],
+      };
+    }
+    await route.fulfill({
+      json: {
+        status: "accepted",
+        message: "Accepted.",
+        projection,
+        canonicalCommand: null,
+        canonicalEventTypes: [],
+        canonicalEvents: [],
+      },
+    });
+  });
+
+  await page.goto("/player/adventures/locked-manor");
+  await page.getByRole("button", { name: "Natural Language Play" }).click();
+  await expect(page.getByRole("region", { name: "Scene ledger" })).toContainText(
+    "Your committed outcomes will gather here.",
+  );
+  await page.getByLabel("Describe an action or ask a rules question").fill(
+    "I force the side door.",
+  );
+  await page.getByRole("button", { name: "Interpret input" }).click();
+
+  const confirmation = page.getByRole("region", { name: "Confirm interpreted action" });
+  await expect(confirmation).toContainText("No Adventure event has been committed yet.");
+  await confirmation.getByText("Inspect interpretation evidence").click();
+  await expect(confirmation).toContainText("micro-ruleset@1.0.0#checks.procedure");
+  await expect(confirmation).toContainText("model-call:1");
+  await confirmation.getByRole("button", { name: "Confirm interpreted action" }).click();
+
+  const ledger = page.getByRole("region", { name: "Scene ledger" });
+  await expect(ledger).toContainText("The side door gives way.");
+  await expect(ledger).toContainText("Chosen through Natural Language Play");
+});

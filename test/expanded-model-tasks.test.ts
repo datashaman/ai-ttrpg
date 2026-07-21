@@ -196,6 +196,13 @@ test("state proposals become candidate commands only after every authority check
     actionId: "survey-manor",
   });
   assert.equal(
+    validateStateProposal(
+      { ...proposal, ruleEvidenceItemIds: [] },
+      context,
+    ),
+    null,
+  );
+  assert.equal(
     validateStateProposal(proposal, {
       ...context,
       authorizedCapabilityIds: [],

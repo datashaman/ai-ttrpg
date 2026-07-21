@@ -65,11 +65,15 @@ export const playerLedgerEntryFor = ({
   actionLabel,
   fallbackEvidence,
   acceptedEvents,
+  inputMode,
+  interpretation,
 }: {
   readonly result: AcceptedResult;
   readonly actionLabel: string;
   readonly fallbackEvidence: EvidenceBundle;
   readonly acceptedEvents: readonly CanonicalEvent[];
+  readonly inputMode: PlayerLedgerEntry["inputMode"];
+  readonly interpretation: PlayerLedgerEntry["interpretation"];
 }): PlayerLedgerEntry | null => {
   const outcome = describeOutcome(result);
   if (outcome === null) return null;
@@ -91,6 +95,8 @@ export const playerLedgerEntryFor = ({
     action: actionLabel,
     presentation: "Deterministic summary",
     narrationStatus: "Unavailable",
+    inputMode,
+    interpretation,
     summary: outcome.summary,
     mechanic: {
       ruleReference: outcome.ruleReference,
