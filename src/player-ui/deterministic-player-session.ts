@@ -33,6 +33,12 @@ import type {
 import { playerLedgerEntryFor } from "./player-ledger.js";
 import { interpretPlayerNaturalLanguage } from "./player-natural-language.js";
 import { projectPlayerAdventure } from "./player-projection.js";
+import type {
+  PlayerPresentationEvent,
+  PlayerPresentationGenerator,
+  PlayerPresentationSnapshot,
+  PlayerRetainedPresentation,
+} from "./player-presentation.js";
 
 export interface DeterministicPlayerSessionOptions {
   readonly sessionToken?: string;
@@ -40,6 +46,7 @@ export interface DeterministicPlayerSessionOptions {
   readonly onPlayLogError?: (error: unknown) => void;
   readonly modelGateway?: ModelGateway;
   readonly modelCallStore?: ModelCallRecordStore;
+  readonly presentationGenerator?: PlayerPresentationGenerator;
 }
 
 const playerEvidence = (
@@ -63,13 +70,16 @@ export const createDeterministicPlayerSession = (
   options: DeterministicPlayerSessionOptions = {},
 ) => {
   const eventStore = createInMemoryEventStore();
+  const randomSource = createSeededRandomSource(1);
   const app = createStructuredPlayApplication({
     eventStore,
-    randomSource: createSeededRandomSource(1),
+    randomSource,
   });
   const modelCallStore =
     options.modelCallStore ?? createInMemoryModelCallRecordStore();
   const ledger: PlayerLedgerEntry[] = [];
+  const presentationSnapshots = new Map<string, PlayerPresentationSnapshot>();
+  const retainedPresentations = new Map<string, PlayerRetainedPresentation>();
   let inputMode: "structured" | "natural-language" = "structured";
   let naturalLanguageAvailable = options.modelGateway !== undefined;
   let naturalLanguageProposal: PlayerNaturalLanguageProposal | null = null;
@@ -173,6 +183,25 @@ export const createDeterministicPlayerSession = (
       });
       if (entry !== null) {
         ledger.push(entry);
+        const outcome = result.appendedEvents.find(
+          (event) => event.id === entry.id,
+        );
+        const resolutionTrace =
+          outcome?.type === "CheckResolved" || outcome?.type === "OracleAnswered"
+            ? outcome.payload.trace
+            : null;
+        presentationSnapshots.set(entry.id, structuredClone({
+          outcomeEventId: entry.id,
+          deterministicSummary: entry.summary,
+          context: {
+            deterministicSummary: entry.summary,
+            visibleEvidence: result.state.establishedFacts,
+            resolutionTrace,
+            committedEvents: result.appendedEvents,
+          },
+          acceptedEvents: eventStore.readAll(),
+          state: result.state,
+        }));
         presentationStatus = "deterministic-summary";
       }
       if (
@@ -386,5 +415,111 @@ export const createDeterministicPlayerSession = (
     return submitAdventureCommand(command);
   };
 
-  return { projection, submit };
+  const streamPresentation = async function* (
+    outcomeEventId: string,
+    { regenerate = false }: { readonly regenerate?: boolean } = {},
+  ): AsyncGenerator<PlayerPresentationEvent> {
+    const entryIndex = ledger.findIndex(({ id }) => id === outcomeEventId);
+    const entry = ledger[entryIndex];
+    const snapshot = presentationSnapshots.get(outcomeEventId);
+    if (entry === undefined || snapshot === undefined) {
+      throw new Error("That committed outcome has no presentation snapshot.");
+    }
+    const streamId = randomUUID();
+    const correlationId = outcomeEventId;
+    let sequence = 0;
+    const retained = retainedPresentations.get(outcomeEventId);
+    if (!regenerate && retained !== undefined) {
+      yield {
+        type: "completed",
+        streamId,
+        correlationId,
+        sequence,
+        presentation: retained,
+      };
+      return;
+    }
+    if (options.presentationGenerator === undefined) {
+      yield {
+        type: "failed",
+        streamId,
+        correlationId,
+        sequence,
+        message: "Narration is unavailable. The committed outcome is safe.",
+        deterministicSummary: snapshot.deterministicSummary,
+      };
+      return;
+    }
+    let text = "";
+    const recordsBefore = modelCallStore.readAll().length;
+    try {
+      for await (const chunk of options.presentationGenerator.generate(
+        structuredClone(snapshot),
+      )) {
+        if (chunk.length === 0) continue;
+        text += chunk;
+        yield {
+          type: "segment",
+          streamId,
+          correlationId,
+          sequence,
+          segment: {
+            id: `${streamId}:segment:${sequence}`,
+            source: "Narrator",
+            status: "Provisional",
+            text: chunk,
+          },
+        };
+        sequence += 1;
+      }
+      if (text.trim().length === 0) throw new Error("Empty Narration");
+      const narration: PlayerRetainedPresentation = {
+        id: `${outcomeEventId}:narration`,
+        outcomeEventId,
+        source: "Narrator" as const,
+        status: "Retained",
+        text,
+        modelCallIds: modelCallStore
+          .readAll()
+          .slice(recordsBefore)
+          .filter((record) => record.acceptedEventIds.includes(outcomeEventId))
+          .map(({ id }) => id),
+      };
+      retainedPresentations.set(outcomeEventId, narration);
+      yield {
+        type: "completed",
+        streamId,
+        correlationId,
+        sequence,
+        presentation: narration,
+      };
+    } catch {
+      yield {
+        type: "failed",
+        streamId,
+        correlationId,
+        sequence,
+        message: "Narration was interrupted. The committed outcome is safe.",
+        deterministicSummary: snapshot.deterministicSummary,
+      };
+    }
+  };
+
+  const canonicalSnapshot = () => structuredClone({
+    events: eventStore.readAll(),
+    randomPosition: randomSource.position(),
+    state: app.view().state,
+    pendingChoice: app.view().state.pendingChoice,
+  });
+
+  const presentations = (): readonly PlayerRetainedPresentation[] =>
+    structuredClone([...retainedPresentations.values()]);
+
+  return {
+    projection,
+    presentations,
+    submit,
+    streamPresentation,
+    canonicalSnapshot,
+  };
 };

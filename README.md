@@ -237,7 +237,12 @@ The same configuration enables Natural Language Play in the browser-first
 Player Interface. Start it with `npm run player-ui`, open the local URL, and
 switch input modes from the shared Player input panel. Interpreted actions must
 be confirmed before they can append canonical events; provider failure leaves
-the current Structured Play choices available.
+the current Structured Play choices available. After an outcome commits,
+model-assisted Narration streams in a separately labelled provisional region.
+Cancelling it or losing the connection discards the partial prose and keeps the
+deterministic committed summary visible. Retry and Regenerate Narration reuse
+the same post-commit snapshot, while reopening retains completed Narration
+without rerunning historical mechanics.
 
 Provider, model, credentials, and deadline are runtime configuration; they are
 not Adventure state. If any required setting is missing or the deadline is not

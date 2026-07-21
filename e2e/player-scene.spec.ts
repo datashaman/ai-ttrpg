@@ -166,6 +166,10 @@ test("Natural Language Play confirms an evidenced action before it enters the le
   };
   await page.route("**/api/player/adventures/locked-manor**", async (route) => {
     const request = route.request();
+    if (request.url().endsWith("/presentations")) {
+      await route.fulfill({ json: [] });
+      return;
+    }
     if (request.method() === "GET") {
       await route.fulfill({ json: projection });
       return;
@@ -255,4 +259,132 @@ test("Natural Language Play confirms an evidenced action before it enters the le
   const ledger = page.getByRole("region", { name: "Scene ledger" });
   await expect(ledger).toContainText("The side door gives way.");
   await expect(ledger).toContainText("Chosen through Natural Language Play");
+});
+
+test("interrupted Narration preserves the committed outcome and can be retried", async ({ page }) => {
+  let streamFails = true;
+  let streamRequests = 0;
+  const entry = {
+    id: "event:survey",
+    status: "Committed",
+    action: "Survey the manor grounds",
+    presentation: "Deterministic summary",
+    narrationStatus: "Unavailable",
+    inputMode: "Structured Play",
+    interpretation: null,
+    summary: "Fresh footprints lead from the manor gate toward the side door.",
+    mechanic: {
+      ruleReference: null,
+      calculation: null,
+      evidenceBundle: { id: "evidence:survey", references: [] },
+    },
+  };
+  let retainedPresentations: Record<string, unknown>[] = [];
+  let projection = {
+    id: "locked-manor",
+    title: "The Locked Manor",
+    playerCharacter: {
+      name: "Mara Vey",
+      pronouns: "she/her",
+      motivation: "Find her missing sister",
+      traits: { Might: 0, Wits: 2, Presence: 1 },
+      health: 3,
+      resolve: 3,
+      inventory: [],
+    },
+    activeScene: { id: "arrival", title: "Arrival" },
+    conditions: [],
+    clocks: [],
+    relationships: [],
+    availableActions: [
+      { id: "survey-manor", label: "Survey the manor grounds", kind: "Free Action" },
+    ],
+    pendingCheckProposal: null,
+    pendingChoice: null,
+    oracleConfirmation: null,
+    ledger: [] as (typeof entry)[],
+    inputMode: "structured",
+    naturalLanguage: { available: false, pendingProposal: null, response: null },
+  };
+  await page.route("**/api/player/adventures/locked-manor**", async (route) => {
+    const request = route.request();
+    if (request.url().includes("/presentations/")) {
+      streamRequests += 1;
+      if (streamFails) {
+        await route.abort("failed");
+        return;
+      }
+      const narration = {
+        id: "event:survey:narration",
+        outcomeEventId: entry.id,
+        source: "Narrator",
+        status: "Retained",
+        text: "Rain silvering the gate reveals fresh tracks toward the side door.",
+        modelCallIds: ["model-call:survey"],
+      };
+      retainedPresentations = [narration];
+      const event = {
+        type: "completed",
+        streamId: "stream:retry",
+        correlationId: entry.id,
+        sequence: 0,
+        presentation: narration,
+      };
+      await route.fulfill({
+        contentType: "text/event-stream",
+        body: `event: completed\ndata: ${JSON.stringify(event)}\n\n`,
+      });
+      return;
+    }
+    if (request.url().endsWith("/presentations")) {
+      await route.fulfill({ json: retainedPresentations });
+      return;
+    }
+    if (request.method() === "POST") {
+      projection = { ...projection, ledger: [entry] };
+      await route.fulfill({
+        json: {
+          status: "accepted",
+          message: "Accepted.",
+          projection,
+          canonicalCommand: { type: "choose-action", actionId: "survey-manor" },
+          canonicalEventTypes: ["FreeActionCompleted"],
+          canonicalEvents: [{ type: "FreeActionCompleted", payload: {} }],
+        },
+      });
+      return;
+    }
+    await route.fulfill({ json: projection });
+  });
+
+  await page.goto("/player/adventures/locked-manor");
+  await page.getByRole("button", { name: "Survey the manor grounds" }).click();
+
+  const recovery = page.getByRole("alert");
+  await expect(recovery).toBeFocused();
+  await expect(recovery).toContainText("The committed outcome is safe");
+  await expect(recovery).toContainText(entry.summary);
+  await expect(page.getByRole("region", { name: "Scene ledger" })).toContainText("Committed");
+
+  streamFails = false;
+  await recovery.getByRole("button", { name: "Retry Narration" }).click();
+  await expect(
+    page.getByRole("region", { name: "Retained Narration for Survey the manor grounds" }),
+  ).toContainText("Rain silvering the gate reveals fresh tracks");
+  const completion = page.getByText("Narration complete and retained.");
+  await expect(completion).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Scene ledger" })
+      .getByRole("button", { name: "Regenerate Narration" }),
+  ).toBeFocused();
+  await page.setViewportSize({ width: 320, height: 800 });
+  expect(await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  )).toBe(false);
+  await expect(page.locator("body")).not.toContainText("stream:retry");
+  await page.reload();
+  await expect(
+    page.getByRole("region", { name: "Retained Narration for Survey the manor grounds" }),
+  ).toContainText("Rain silvering the gate reveals fresh tracks");
+  expect(streamRequests).toBe(2);
 });
