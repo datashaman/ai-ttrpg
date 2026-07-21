@@ -16,6 +16,11 @@ import {
 } from "./model-gateway.js";
 import { DEFAULT_PLAYER_ACTOR_SCOPE } from "./structured-play.js";
 import type { PlayerPresentationGenerator } from "./player-ui/player-presentation.js";
+import {
+  createDeterministicGameMasterSession,
+} from "./gm-ui/deterministic-game-master-session.js";
+import type { GameMasterIntervention } from "./gm-ui/application-client.js";
+import { hasExactKeys, isRecord } from "./model-boundary.js";
 
 const host = "127.0.0.1";
 const port = 4173;
@@ -51,6 +56,8 @@ const presentationGeneratorFor = (
       };
 type PlayerSession = ReturnType<typeof createDeterministicPlayerSession>;
 const sessions = new Map<string, PlayerSession>();
+type GameMasterSession = ReturnType<typeof createDeterministicGameMasterSession>;
+const gameMasterSessions = new Map<string, GameMasterSession>();
 
 const sessionFor = (
   request: import("node:http").IncomingMessage,
@@ -87,10 +94,72 @@ const sessionFor = (
   return session;
 };
 
-const readBody = async (request: import("node:http").IncomingMessage) => {
+const gameMasterSessionFor = (
+  request: import("node:http").IncomingMessage,
+  response: import("node:http").ServerResponse,
+): GameMasterSession => {
+  const hasGameMasterScope = request.headers.cookie
+    ?.split(";")
+    .map((part) => part.trim())
+    .includes("ai_ttrpg_actor=game-master") ?? false;
+  if (!hasGameMasterScope) {
+    throw new Error("Game Master scope has not been selected.");
+  }
+  const sessionId = request.headers.cookie
+    ?.split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith("ai_ttrpg_gm_session="))
+    ?.slice("ai_ttrpg_gm_session=".length);
+  if (sessionId !== undefined) {
+    const existing = gameMasterSessions.get(sessionId);
+    if (existing !== undefined) return existing;
+  }
+  const nextSessionId = randomUUID();
+  const session = createDeterministicGameMasterSession({
+    actor: { kind: "Game Master", campaignIds: ["locked-manor"] },
+  });
+  gameMasterSessions.set(nextSessionId, session);
+  response.setHeader(
+    "Set-Cookie",
+    `ai_ttrpg_gm_session=${nextSessionId}; Path=/; HttpOnly; SameSite=Strict`,
+  );
+  return session;
+};
+
+const readBody = async (request: import("node:http").IncomingMessage): Promise<unknown> => {
   const chunks: Buffer[] = [];
   for await (const chunk of request) chunks.push(Buffer.from(chunk));
-  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as PlayerCommand;
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+};
+
+const isGameMasterCommand = (
+  value: unknown,
+): value is NonNullable<GameMasterIntervention["command"]> =>
+  isRecord(value) &&
+  ((hasExactKeys(value, ["type", "actionId"]) &&
+    value.type === "choose-action" &&
+    typeof value.actionId === "string" &&
+    value.actionId.length > 0) ||
+    (hasExactKeys(value, ["type", "candidateId"]) &&
+      value.type === "publish-rule-candidate" &&
+      typeof value.candidateId === "string" &&
+      value.candidateId.length > 0));
+
+const isGameMasterIntervention = (
+  value: unknown,
+): value is GameMasterIntervention => {
+  if (!isRecord(value)) return false;
+  const keys = value.command === undefined
+    ? ["decision", "expectedRevision", "idempotencyKey", "itemId"]
+    : ["command", "decision", "expectedRevision", "idempotencyKey", "itemId"];
+  return (
+    hasExactKeys(value, keys) &&
+    typeof value.itemId === "string" &&
+    Number.isInteger(value.expectedRevision) &&
+    typeof value.idempotencyKey === "string" &&
+    ["approve", "edit", "reject", "override"].includes(String(value.decision)) &&
+    (value.command === undefined || isGameMasterCommand(value.command))
+  );
 };
 
 const vite = await createViteServer({
@@ -101,6 +170,92 @@ const vite = await createViteServer({
 
 const server = createHttpServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${host}:${port}`);
+  if (url.pathname === "/api/local-session" && request.method === "POST") {
+    response.setHeader("Content-Type", "application/json; charset=utf-8");
+    try {
+      const selection = await readBody(request);
+      if (
+        !isRecord(selection) ||
+        !hasExactKeys(selection, ["actor"]) ||
+        selection.actor !== "Game Master"
+      ) {
+        throw new Error("Invalid local actor scope");
+      }
+      response.setHeader(
+        "Set-Cookie",
+        "ai_ttrpg_actor=game-master; Path=/; HttpOnly; SameSite=Strict",
+      );
+      response.end(JSON.stringify({ status: "selected" }));
+    } catch {
+      response.statusCode = 400;
+      response.end(JSON.stringify({ message: "Invalid local actor selection." }));
+    }
+    return;
+  }
+  const gameMasterWorkspaceMatch = url.pathname.match(
+    /^\/api\/gm\/campaigns\/([^/]+)\/workspace$/,
+  );
+  if (gameMasterWorkspaceMatch !== null && request.method === "GET") {
+    response.setHeader("Content-Type", "application/json; charset=utf-8");
+    const campaignId = decodeURIComponent(gameMasterWorkspaceMatch[1]!);
+    try {
+      response.end(JSON.stringify(gameMasterSessionFor(request, response).workspace(campaignId)));
+    } catch {
+      response.statusCode = 403;
+      response.end(JSON.stringify({ message: "Campaign scope is not authorized." }));
+    }
+    return;
+  }
+  const gameMasterTraceMatch = url.pathname.match(
+    /^\/api\/gm\/campaigns\/([^/]+)\/outcomes\/([^/]+)\/trace$/,
+  );
+  if (gameMasterTraceMatch !== null && request.method === "GET") {
+    response.setHeader("Content-Type", "application/json; charset=utf-8");
+    try {
+      response.end(JSON.stringify(gameMasterSessionFor(request, response).trace(
+        decodeURIComponent(gameMasterTraceMatch[1]!),
+        decodeURIComponent(gameMasterTraceMatch[2]!),
+      )));
+    } catch {
+      response.statusCode = 404;
+      response.end(JSON.stringify({ message: "Outcome trace not found." }));
+    }
+    return;
+  }
+  const gameMasterInterventionMatch = url.pathname.match(
+    /^\/api\/gm\/campaigns\/([^/]+)\/interventions$/,
+  );
+  if (gameMasterInterventionMatch !== null && request.method === "POST") {
+    response.setHeader("Content-Type", "application/json; charset=utf-8");
+    try {
+      const intervention = await readBody(request);
+      if (!isGameMasterIntervention(intervention)) throw new Error("Invalid intervention");
+      response.end(JSON.stringify(await gameMasterSessionFor(request, response).intervene(
+        decodeURIComponent(gameMasterInterventionMatch[1]!),
+        intervention,
+      )));
+    } catch {
+      response.statusCode = 400;
+      response.end(JSON.stringify({ message: "Invalid Game Master intervention." }));
+    }
+    return;
+  }
+  const gameMasterRetryMatch = url.pathname.match(
+    /^\/api\/gm\/campaigns\/([^/]+)\/outcomes\/([^/]+)\/retry-narration$/,
+  );
+  if (gameMasterRetryMatch !== null && request.method === "POST") {
+    response.setHeader("Content-Type", "application/json; charset=utf-8");
+    try {
+      response.end(JSON.stringify(await gameMasterSessionFor(request, response).retryNarration(
+        decodeURIComponent(gameMasterRetryMatch[1]!),
+        decodeURIComponent(gameMasterRetryMatch[2]!),
+      )));
+    } catch {
+      response.statusCode = 404;
+      response.end(JSON.stringify({ message: "Outcome presentation not found." }));
+    }
+    return;
+  }
   const presentationsMatch = url.pathname.match(
     /^\/api\/player\/adventures\/([^/]+)\/presentations$/,
   );
@@ -178,7 +333,7 @@ const server = createHttpServer(async (request, response) => {
       try {
         const session = sessionFor(request, response);
         response.end(
-          JSON.stringify(await session.submit(await readBody(request))),
+          JSON.stringify(await session.submit((await readBody(request)) as PlayerCommand)),
         );
       } catch {
         response.statusCode = 400;

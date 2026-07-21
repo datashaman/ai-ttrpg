@@ -5,6 +5,7 @@ import type {
   PlayerCommandResponse,
 } from "./application-client.js";
 import type { PlayerPresentationEvent } from "./player-presentation.js";
+import { createHttpGameMasterApplicationClient } from "../gm-ui/http-application-client.js";
 
 const adventurePath = (adventureId: string): string =>
   `/api/player/adventures/${encodeURIComponent(adventureId)}`;
@@ -85,6 +86,7 @@ const streamEvents = async function* (
 export const createHttpApplicationClient = (
   fetcher: typeof fetch = fetch,
 ): ApplicationClient => ({
+  ...createHttpGameMasterApplicationClient(fetcher),
   async readPlayerAdventure(adventureId) {
     return readJson<PlayerAdventureProjection>(
       await fetcher(adventurePath(adventureId), {

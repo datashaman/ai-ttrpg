@@ -13,7 +13,7 @@ const cited = <Value>(value: Value, ...passageAnchors: string[]) => ({
   attribution: { kind: "source-citation" as const, passageAnchors },
 });
 
-export const createMicroRulesetPackage = (version = "1.0.0") => {
+export const createMicroRulesetPublication = (version = "1.0.0") => {
   const source = {
     format: "ai-ttrpg-rule-source-v1" as const,
     document: {
@@ -86,11 +86,15 @@ export const createMicroRulesetPackage = (version = "1.0.0") => {
     decision: "approved",
     decidedAt: "2026-07-20T00:00:00.000Z",
   });
-  return publishApprovedRulePackage({
+  const rulesetPackage = publishApprovedRulePackage({
     candidate,
     review,
     decision,
     packageVersion: version,
     license: { spdxId: "CC-BY-4.0", sourceUrl: "https://example.test/rules" },
   });
+  return { candidate, review, approval: decision, rulesetPackage };
 };
+
+export const createMicroRulesetPackage = (version = "1.0.0") =>
+  createMicroRulesetPublication(version).rulesetPackage;
