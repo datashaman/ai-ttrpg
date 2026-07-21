@@ -29,10 +29,14 @@ export const projectPlayerAdventure = ({
   adventureId,
   app,
   ledger,
+  inputMode,
+  naturalLanguage,
 }: {
   readonly adventureId: string;
   readonly app: StructuredPlayApplication;
   readonly ledger: readonly PlayerLedgerEntry[];
+  readonly inputMode: PlayerAdventureProjection["inputMode"];
+  readonly naturalLanguage: PlayerAdventureProjection["naturalLanguage"];
 }): PlayerAdventureProjection => {
   const view = app.view();
   const playerCharacter = view.state.playerCharacter;
@@ -112,5 +116,7 @@ export const projectPlayerAdventure = ({
             supportingFacts: oracle.evidence.map((fact) => fact.text),
           },
     ledger: [...ledger],
+    inputMode,
+    naturalLanguage,
   };
 };

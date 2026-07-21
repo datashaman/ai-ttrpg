@@ -8,6 +8,7 @@ import { createServer as createViteServer } from "vite";
 import { createDeterministicPlayerSession } from "./player-ui/deterministic-player-session.js";
 import type { PlayerCommand } from "./player-ui/application-client.js";
 import { createJsonlPlayerUiPlayLog } from "./player-ui-play-log.js";
+import { createModelRuntimeFromEnvironment } from "./model-runtime.js";
 
 const host = "127.0.0.1";
 const port = 4173;
@@ -15,6 +16,7 @@ const playLogPath =
   process.env.AI_TTRPG_PLAYER_LOG_PATH?.trim() ||
   join(homedir(), ".ai-ttrpg", "logs", "player-ui.jsonl");
 const playLog = createJsonlPlayerUiPlayLog({ path: playLogPath });
+const modelRuntime = createModelRuntimeFromEnvironment(process.env);
 type PlayerSession = ReturnType<typeof createDeterministicPlayerSession>;
 const sessions = new Map<string, PlayerSession>();
 
@@ -39,6 +41,9 @@ const sessionFor = (
       const message = error instanceof Error ? error.message : "unknown error";
       process.stderr.write(`Player Interface play log failed: ${message}\n`);
     },
+    ...(modelRuntime === undefined
+      ? {}
+      : { modelGateway: modelRuntime.modelGateway }),
   });
   sessions.set(nextSessionId, session);
   response.setHeader(
@@ -81,7 +86,9 @@ const server = createHttpServer(async (request, response) => {
     if (request.method === "POST" && adventureMatch[2] === "/commands") {
       try {
         const session = sessionFor(request, response);
-        response.end(JSON.stringify(session.submit(await readBody(request))));
+        response.end(
+          JSON.stringify(await session.submit(await readBody(request))),
+        );
       } catch {
         response.statusCode = 400;
         response.end(JSON.stringify({ message: "Invalid Player command." }));

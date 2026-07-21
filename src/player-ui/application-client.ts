@@ -5,7 +5,7 @@ import type {
   TraitRatings,
 } from "../structured-play.js";
 
-export type PlayerCommand =
+export type PlayerAdventureCommand =
   | {
       readonly type: "configure-player-character";
       readonly name: string;
@@ -25,6 +25,18 @@ export type PlayerCommand =
       readonly type: "confirm-oracle-likelihood";
       readonly recommendationId: string;
       readonly likelihood: Likelihood;
+    };
+
+export type PlayerCommand =
+  | PlayerAdventureCommand
+  | {
+      readonly type: "set-input-mode";
+      readonly mode: "structured" | "natural-language";
+    }
+  | { readonly type: "submit-natural-language"; readonly utterance: string }
+  | {
+      readonly type: "confirm-natural-language-command";
+      readonly proposalId: string;
     };
 
 export interface PlayerActionOption {
@@ -48,8 +60,50 @@ export interface PlayerLedgerEntry {
   readonly action: string;
   readonly presentation: "Deterministic summary";
   readonly narrationStatus: "Unavailable";
+  readonly inputMode: "Structured Play" | "Natural Language Play";
+  readonly interpretation: PlayerEvidenceTrace | null;
   readonly summary: string;
   readonly mechanic: PlayerMechanicTrace;
+}
+
+export interface PlayerEvidenceItem {
+  readonly id: string;
+  readonly sourceKind: string;
+  readonly sourceReference: string;
+  readonly content: string;
+  readonly inclusionReason: string;
+  readonly citation: string | null;
+}
+
+export interface PlayerEvidenceTrace {
+  readonly modelCallIds: readonly string[];
+  readonly evidenceBundleIds: readonly string[];
+  readonly bundleItemIds: readonly string[];
+  readonly citedEvidenceItemIds: readonly string[];
+  readonly ruleIds: readonly string[];
+  readonly evidence: readonly PlayerEvidenceItem[];
+}
+
+export interface PlayerNaturalLanguageProposal extends PlayerEvidenceTrace {
+  readonly id: string;
+  readonly utterance: string;
+  readonly actionLabel: string;
+  readonly command: { readonly type: "choose-action"; readonly actionId: string };
+}
+
+export interface PlayerNaturalLanguageResponse extends PlayerEvidenceTrace {
+  readonly kind:
+    | "clarification"
+    | "rules-answer"
+    | "acknowledgement"
+    | "provider-failure"
+    | "provider-unavailable";
+  readonly status:
+    | "Action required"
+    | "Provisional"
+    | "Recoverable error"
+    | "Unavailable";
+  readonly message: string;
 }
 
 export interface PlayerCheckProposal {
@@ -111,12 +165,24 @@ export interface PlayerAdventureProjection {
   readonly pendingChoice: PlayerPendingChoice | null;
   readonly oracleConfirmation: PlayerOracleConfirmation | null;
   readonly ledger: readonly PlayerLedgerEntry[];
+  readonly inputMode: "structured" | "natural-language";
+  readonly naturalLanguage: {
+    readonly available: boolean;
+    readonly pendingProposal: PlayerNaturalLanguageProposal | null;
+    readonly response: PlayerNaturalLanguageResponse | null;
+  };
 }
 
 export interface PlayerCommandResponse {
   readonly status: "accepted" | "rejected";
   readonly message: string;
   readonly projection: PlayerAdventureProjection;
+  readonly canonicalCommand: PlayerAdventureCommand | null;
+  readonly canonicalEventTypes: readonly string[];
+  readonly canonicalEvents: readonly {
+    readonly type: string;
+    readonly payload: unknown;
+  }[];
 }
 
 export interface ApplicationClient {

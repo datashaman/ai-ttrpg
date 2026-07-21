@@ -1,5 +1,6 @@
 import type { PlayerAdventureProjection } from "../../src/player-ui/application-client.js";
 import { Status } from "./ui-primitives.js";
+import { EvidenceTrace } from "./evidence-trace.js";
 
 export const SceneLedger = ({ projection }: { readonly projection: PlayerAdventureProjection }) => (
   <section className="ledger" aria-label="Scene ledger">
@@ -15,8 +16,10 @@ export const SceneLedger = ({ projection }: { readonly projection: PlayerAdventu
             <article>
               <div className="entry-heading"><h3>{entry.action}</h3><Status>{entry.status}</Status></div>
               <p className="presentation-label">{entry.presentation}</p>
+              <p className="input-origin">Chosen through {entry.inputMode}</p>
               <p>{entry.summary}</p>
               <p className="narration-status">Narration {entry.narrationStatus.toLocaleLowerCase("en")}</p>
+              {entry.interpretation === null ? null : <EvidenceTrace {...entry.interpretation} summary="Inspect Natural Language interpretation" />}
               <details>
                 <summary>Inspect mechanic and evidence</summary>
                 <div className="trace">

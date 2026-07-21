@@ -233,6 +233,12 @@ npm start -- --mode natural-language create "The Locked Manor"
 npm start -- --mode natural-language open <adventure-id>
 ```
 
+The same configuration enables Natural Language Play in the browser-first
+Player Interface. Start it with `npm run player-ui`, open the local URL, and
+switch input modes from the shared Player input panel. Interpreted actions must
+be confirmed before they can append canonical events; provider failure leaves
+the current Structured Play choices available.
+
 Provider, model, credentials, and deadline are runtime configuration; they are
 not Adventure state. If any required setting is missing or the deadline is not
 a positive integer, Natural Language Play is unavailable and the CLI offers
