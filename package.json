@@ -4,21 +4,34 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "scripts": {
     "start": "tsx src/cli.ts",
+    "player-ui": "tsx src/player-ui-server.ts",
+    "player-ui:build": "vite build --config vite.player.config.ts",
     "evaluate:golden": "tsx src/golden-campaign-cli.ts",
     "evaluate:simulation": "tsx src/adventure-simulation-cli.ts",
     "evaluate:release": "tsx src/evaluation-release-cli.ts",
     "test": "tsx --test test/**/*.test.ts",
+    "test:browser": "playwright test",
     "test:openai-smoke": "node --env-file-if-exists=.env.local --import tsx --test test/openai-smoke.test.ts",
     "typecheck": "tsc --noEmit",
-    "verify:release": "npm test && npm run typecheck && npm run evaluate:release"
+    "verify:release": "npm test && npm run typecheck && npm run player-ui:build && npm run test:browser && npm run evaluate:release"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/node": "^24.0.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
     "tsx": "^4.20.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "vite": "^8.1.5"
+  },
+  "dependencies": {
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-router-dom": "^7.18.1"
   }
 }
